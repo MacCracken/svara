@@ -1,0 +1,294 @@
+//! Glottal source model using the Rosenberg glottal pulse.
+//!
+//! The glottal source generates the excitation signal that drives the vocal
+//! tract. It models the opening and closing of the vocal folds, with parameters
+//! for jitter (frequency perturbation), shimmer (amplitude perturbation), and
+//! breathiness (noise mixing).
+
+use serde::{Deserialize, Serialize};
+use tracing::trace;
+
+use crate::error::{Result, SvaraError};
+
+/// A simple linear-congruential PRNG for noise generation when naad is not available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SimpleRng {
+    state: u64,
+}
+
+impl SimpleRng {
+    fn new(seed: u64) -> Self {
+        Self {
+            state: seed.wrapping_add(1),
+        }
+    }
+
+    /// Returns a value in [-1.0, 1.0].
+    #[inline]
+    fn next_f32(&mut self) -> f32 {
+        // LCG parameters from Numerical Recipes
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        // Convert upper bits to float in [-1, 1]
+        let bits = (self.state >> 33) as i32;
+        bits as f32 / (i32::MAX as f32)
+    }
+
+    /// Returns a value in [0.0, 1.0].
+    #[inline]
+    fn next_f32_unsigned(&mut self) -> f32 {
+        (self.next_f32() + 1.0) * 0.5
+    }
+}
+
+/// Glottal source generator using the Rosenberg pulse model.
+///
+/// Produces a periodic glottal waveform with configurable voice quality
+/// parameters including jitter, shimmer, and breathiness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlottalSource {
+    /// Fundamental frequency in Hz.
+    f0: f32,
+    /// Audio sample rate in Hz.
+    sample_rate: f32,
+    /// Open quotient (fraction of cycle where glottis is open). Range: 0.4-0.7.
+    open_quotient: f32,
+    /// Spectral tilt in dB/octave. Higher values produce breathier voice.
+    spectral_tilt: f32,
+    /// Jitter: random perturbation of f0, as a fraction (0.0-0.02 typical).
+    jitter: f32,
+    /// Shimmer: random perturbation of amplitude, as a fraction (0.0-0.04 typical).
+    shimmer: f32,
+    /// Breathiness: mix ratio of noise (0.0 = pure pulse, 1.0 = pure noise).
+    breathiness: f32,
+    /// Current phase within the glottal period [0, period_samples).
+    phase: f32,
+    /// Current period length in samples (may vary due to jitter).
+    current_period: f32,
+    /// Amplitude for the current period (may vary due to shimmer).
+    current_amplitude: f32,
+    /// PRNG for jitter, shimmer, and noise.
+    rng: SimpleRng,
+}
+
+impl GlottalSource {
+    /// Creates a new glottal source with the given fundamental frequency and sample rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError::InvalidPitch` if `f0` is not in the range [20, 2000] Hz.
+    /// Returns `SvaraError::InvalidFormant` if `sample_rate` is not positive.
+    pub fn new(f0: f32, sample_rate: f32) -> Result<Self> {
+        if !(20.0..=2000.0).contains(&f0) {
+            return Err(SvaraError::InvalidPitch(format!(
+                "f0 must be in [20, 2000] Hz, got {f0}"
+            )));
+        }
+        if sample_rate <= 0.0 {
+            return Err(SvaraError::InvalidFormant(
+                "sample_rate must be positive".to_string(),
+            ));
+        }
+
+        let period = sample_rate / f0;
+        trace!(f0, sample_rate, period, "created glottal source");
+
+        Ok(Self {
+            f0,
+            sample_rate,
+            open_quotient: 0.6,
+            spectral_tilt: 0.0,
+            jitter: 0.01,
+            shimmer: 0.02,
+            breathiness: 0.0,
+            phase: 0.0,
+            current_period: period,
+            current_amplitude: 1.0,
+            rng: SimpleRng::new(42),
+        })
+    }
+
+    /// Sets the fundamental frequency.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError::InvalidPitch` if `f0` is not in [20, 2000] Hz.
+    pub fn set_f0(&mut self, f0: f32) -> Result<()> {
+        if !(20.0..=2000.0).contains(&f0) {
+            return Err(SvaraError::InvalidPitch(format!(
+                "f0 must be in [20, 2000] Hz, got {f0}"
+            )));
+        }
+        self.f0 = f0;
+        Ok(())
+    }
+
+    /// Sets the breathiness amount (0.0 = pure pulse, 1.0 = pure noise).
+    pub fn set_breathiness(&mut self, amount: f32) {
+        self.breathiness = amount.clamp(0.0, 1.0);
+    }
+
+    /// Sets the open quotient (0.4-0.7).
+    pub fn set_open_quotient(&mut self, oq: f32) {
+        self.open_quotient = oq.clamp(0.4, 0.7);
+    }
+
+    /// Sets the jitter amount (0.0-0.05).
+    pub fn set_jitter(&mut self, j: f32) {
+        self.jitter = j.clamp(0.0, 0.05);
+    }
+
+    /// Sets the shimmer amount (0.0-0.1).
+    pub fn set_shimmer(&mut self, s: f32) {
+        self.shimmer = s.clamp(0.0, 0.1);
+    }
+
+    /// Sets the spectral tilt in dB/octave.
+    pub fn set_spectral_tilt(&mut self, tilt: f32) {
+        self.spectral_tilt = tilt;
+    }
+
+    /// Returns the current fundamental frequency.
+    #[must_use]
+    #[inline]
+    pub fn f0(&self) -> f32 {
+        self.f0
+    }
+
+    /// Returns the sample rate.
+    #[must_use]
+    #[inline]
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
+    /// Returns the current period in samples.
+    #[must_use]
+    #[inline]
+    pub fn period_samples(&self) -> f32 {
+        self.current_period
+    }
+
+    /// Generates the next audio sample from the glottal source.
+    ///
+    /// The output is a mix of the Rosenberg glottal pulse and noise,
+    /// controlled by the breathiness parameter.
+    #[inline]
+    pub fn next_sample(&mut self) -> f32 {
+        let t = self.phase / self.current_period;
+
+        // Rosenberg pulse model
+        let pulse = self.rosenberg_pulse(t);
+
+        // Apply spectral tilt (simple low-pass approximation)
+        let pulse = if self.spectral_tilt > 0.0 {
+            // Approximate spectral tilt with a simple one-pole filter coefficient
+            let alpha = (-self.spectral_tilt * 0.01).exp();
+            pulse * alpha
+        } else {
+            pulse
+        };
+
+        // Apply shimmer (amplitude variation)
+        let pulse = pulse * self.current_amplitude;
+
+        // Mix with noise for breathiness
+        let noise = self.rng.next_f32();
+        let sample = pulse * (1.0 - self.breathiness) + noise * self.breathiness * 0.3;
+
+        // Advance phase
+        self.phase += 1.0;
+        if self.phase >= self.current_period {
+            self.phase -= self.current_period;
+            self.new_period();
+        }
+
+        sample
+    }
+
+    /// Computes the Rosenberg glottal pulse at normalized time t in [0, 1).
+    #[inline]
+    fn rosenberg_pulse(&self, t: f32) -> f32 {
+        let oq = self.open_quotient;
+        if t < oq {
+            // Open phase: polynomial rise and fall
+            let t_norm = t / oq;
+            let pi_t = std::f32::consts::PI * t_norm;
+            // Rosenberg B pulse: 3t^2 - 2t^3 during open phase
+            let val = 3.0 * t_norm * t_norm - 2.0 * t_norm * t_norm * t_norm;
+            // Apply sinusoidal shaping for smoother waveform
+            val * pi_t.sin().abs().sqrt()
+        } else {
+            // Closed phase: glottis is closed, no airflow
+            0.0
+        }
+    }
+
+    /// Begins a new glottal period, applying jitter and shimmer.
+    fn new_period(&mut self) {
+        // Apply jitter to period length
+        let base_period = self.sample_rate / self.f0;
+        let jitter_offset = self.rng.next_f32() * self.jitter * base_period;
+        self.current_period = (base_period + jitter_offset).max(1.0);
+
+        // Apply shimmer to amplitude
+        let shimmer_offset = self.rng.next_f32() * self.shimmer;
+        self.current_amplitude = (1.0 + shimmer_offset).max(0.01);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_glottal_source_creation() {
+        let gs = GlottalSource::new(120.0, 44100.0);
+        assert!(gs.is_ok());
+        let gs = gs.unwrap();
+        assert!((gs.f0() - 120.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_invalid_f0() {
+        assert!(GlottalSource::new(5.0, 44100.0).is_err());
+        assert!(GlottalSource::new(3000.0, 44100.0).is_err());
+    }
+
+    #[test]
+    fn test_generates_samples() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        let samples: Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
+        // Should produce non-zero output
+        assert!(samples.iter().any(|&s| s.abs() > 0.001));
+        // Should not produce NaN or infinity
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_period_approximately_correct() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_jitter(0.0);
+        // Period at 120Hz with 44100 sample rate ≈ 367.5 samples
+        let expected_period = 44100.0 / 120.0;
+        assert!((gs.period_samples() - expected_period).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_breathiness() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_breathiness(1.0);
+        let samples: Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_serde_roundtrip() {
+        let gs = GlottalSource::new(150.0, 44100.0).unwrap();
+        let json = serde_json::to_string(&gs).unwrap();
+        let gs2: GlottalSource = serde_json::from_str(&json).unwrap();
+        assert!((gs2.f0() - 150.0).abs() < f32::EPSILON);
+    }
+}
