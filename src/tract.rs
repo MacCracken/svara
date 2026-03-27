@@ -6,7 +6,15 @@
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
+use crate::error::Result;
 use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
+
+/// Nasal anti-formant center frequency (Hz) — models the nasal sinus zero.
+const NASAL_ANTIFORMANT_FREQ: f32 = 250.0;
+/// Nasal anti-formant bandwidth (Hz).
+const NASAL_ANTIFORMANT_BW: f32 = 100.0;
+/// Lip radiation coefficient (first-order high-pass approximation).
+const DEFAULT_LIP_RADIATION: f32 = 0.97;
 use crate::glottal::GlottalSource;
 
 /// A vocal tract model that processes glottal excitation into speech.
@@ -112,7 +120,8 @@ impl VocalTract {
                 .expect("fallback formant filter must succeed")
         });
 
-        let nasal_antiformant = NasalAntiformant::new(250.0, 100.0, sample_rate);
+        let nasal_antiformant =
+            NasalAntiformant::new(NASAL_ANTIFORMANT_FREQ, NASAL_ANTIFORMANT_BW, sample_rate);
 
         trace!(sample_rate, "created vocal tract with neutral vowel");
 
@@ -121,28 +130,39 @@ impl VocalTract {
             nasal_coupling: 0.0,
             nasal_antiformant,
             lip_prev: 0.0,
-            lip_radiation: 0.97,
+            lip_radiation: DEFAULT_LIP_RADIATION,
             sample_rate,
         }
     }
 
     /// Configures the vocal tract for a specific vowel.
-    pub fn set_vowel(&mut self, vowel: Vowel) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError::InvalidFormant` if the formants are invalid for the sample rate.
+    pub fn set_vowel(&mut self, vowel: Vowel) -> Result<()> {
         let target = VowelTarget::from_vowel(vowel);
-        self.set_formants_from_target(&target);
+        self.set_formants_from_target(&target)
     }
 
     /// Directly sets formant targets on the tract.
-    pub fn set_formants(&mut self, formants: &[Formant]) {
-        if let Ok(f) = FormantFilter::new(formants, self.sample_rate) {
-            self.filter = f;
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError::InvalidFormant` if the formants are invalid.
+    pub fn set_formants(&mut self, formants: &[Formant]) -> Result<()> {
+        self.filter = FormantFilter::new(formants, self.sample_rate)?;
+        Ok(())
     }
 
     /// Sets formants from a VowelTarget.
-    pub fn set_formants_from_target(&mut self, target: &VowelTarget) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError::InvalidFormant` if the formants are invalid.
+    pub fn set_formants_from_target(&mut self, target: &VowelTarget) -> Result<()> {
         let formants = target.to_formants();
-        self.set_formants(&formants);
+        self.set_formants(&formants)
     }
 
     /// Sets the nasal coupling coefficient (0.0 = oral, 1.0 = fully nasal).
@@ -214,7 +234,7 @@ mod tests {
     #[test]
     fn test_synthesize() {
         let mut vt = VocalTract::new(44100.0);
-        vt.set_vowel(Vowel::A);
+        vt.set_vowel(Vowel::A).unwrap();
         let mut glottal = GlottalSource::new(120.0, 44100.0).unwrap();
         let samples = vt.synthesize(&mut glottal, 1024);
         assert_eq!(samples.len(), 1024);
@@ -226,7 +246,7 @@ mod tests {
     #[test]
     fn test_nasal_coupling() {
         let mut vt = VocalTract::new(44100.0);
-        vt.set_vowel(Vowel::A);
+        vt.set_vowel(Vowel::A).unwrap();
         vt.set_nasal_coupling(0.5);
         let mut glottal = GlottalSource::new(120.0, 44100.0).unwrap();
         let samples = vt.synthesize(&mut glottal, 512);

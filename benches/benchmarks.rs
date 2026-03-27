@@ -32,7 +32,7 @@ fn bench_formant_filter_1024(c: &mut Criterion) {
 fn bench_vocal_tract_1024(c: &mut Criterion) {
     c.bench_function("vocal_tract_1024", |b| {
         let mut tract = VocalTract::new(44100.0);
-        tract.set_vowel(Vowel::A);
+        tract.set_vowel(Vowel::A).unwrap();
         let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
 
         b.iter(|| {

@@ -10,6 +10,15 @@ use tracing::trace;
 
 use crate::error::{Result, SvaraError};
 
+/// Default PRNG seed for deterministic noise generation.
+const DEFAULT_RNG_SEED: u64 = 42;
+/// Default open quotient (fraction of glottal cycle where folds are open).
+const DEFAULT_OPEN_QUOTIENT: f32 = 0.6;
+/// Default jitter (cycle-to-cycle f0 perturbation fraction).
+const DEFAULT_JITTER: f32 = 0.01;
+/// Default shimmer (cycle-to-cycle amplitude perturbation fraction).
+const DEFAULT_SHIMMER: f32 = 0.02;
+
 /// A simple linear-congruential PRNG for noise generation when naad is not available.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SimpleRng {
@@ -107,10 +116,10 @@ impl GlottalSource {
         Ok(Self {
             f0,
             sample_rate,
-            open_quotient: 0.6,
+            open_quotient: DEFAULT_OPEN_QUOTIENT,
             spectral_tilt: 0.0,
-            jitter: 0.01,
-            shimmer: 0.02,
+            jitter: DEFAULT_JITTER,
+            shimmer: DEFAULT_SHIMMER,
             breathiness: 0.0,
             vibrato_rate: 0.0,
             vibrato_depth: 0.0,
@@ -119,7 +128,7 @@ impl GlottalSource {
             phase: 0.0,
             current_period: period,
             current_amplitude: 1.0,
-            rng: SimpleRng::new(42),
+            rng: SimpleRng::new(DEFAULT_RNG_SEED),
         })
     }
 

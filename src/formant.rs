@@ -10,7 +10,7 @@ use tracing::trace;
 use crate::error::{Result, SvaraError};
 
 /// A single formant resonance specification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Formant {
     /// Center frequency in Hz.
     pub frequency: f32,
@@ -60,8 +60,11 @@ pub enum Vowel {
     NearU,
 }
 
-/// Formant frequency targets for a vowel (F1 through F5).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Formant frequency and bandwidth targets for a vowel (F1 through F5).
+///
+/// Frequencies are based on Hillenbrand et al. (1995) for adult male speakers.
+/// Bandwidths vary per vowel and formant, reflecting measured acoustic data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VowelTarget {
     /// First formant frequency (Hz).
     pub f1: f32,
@@ -73,48 +76,130 @@ pub struct VowelTarget {
     pub f4: f32,
     /// Fifth formant frequency (Hz).
     pub f5: f32,
+    /// First formant bandwidth (Hz).
+    pub b1: f32,
+    /// Second formant bandwidth (Hz).
+    pub b2: f32,
+    /// Third formant bandwidth (Hz).
+    pub b3: f32,
+    /// Fourth formant bandwidth (Hz).
+    pub b4: f32,
+    /// Fifth formant bandwidth (Hz).
+    pub b5: f32,
 }
 
+/// Default bandwidths (Hz) for formants F1-F5, used when specific values are not available.
+const DEFAULT_BANDWIDTHS: [f32; 5] = [60.0, 80.0, 100.0, 120.0, 140.0];
+
+/// Default amplitudes (linear) for formants F1-F5 in the parallel filter bank.
+const DEFAULT_AMPLITUDES: [f32; 5] = [1.0, 0.8, 0.5, 0.3, 0.2];
+
 impl VowelTarget {
-    /// Creates a new vowel target with specified formant frequencies.
+    /// Creates a new vowel target with specified formant frequencies and default bandwidths.
     #[must_use]
     pub fn new(f1: f32, f2: f32, f3: f32, f4: f32, f5: f32) -> Self {
-        Self { f1, f2, f3, f4, f5 }
+        Self {
+            f1,
+            f2,
+            f3,
+            f4,
+            f5,
+            b1: DEFAULT_BANDWIDTHS[0],
+            b2: DEFAULT_BANDWIDTHS[1],
+            b3: DEFAULT_BANDWIDTHS[2],
+            b4: DEFAULT_BANDWIDTHS[3],
+            b5: DEFAULT_BANDWIDTHS[4],
+        }
+    }
+
+    /// Creates a vowel target with specified frequencies and bandwidths.
+    ///
+    /// `freqs` and `bws` are `[F1, F2, F3, F4, F5]` in Hz.
+    #[must_use]
+    pub fn with_bandwidths(freqs: [f32; 5], bws: [f32; 5]) -> Self {
+        Self {
+            f1: freqs[0],
+            f2: freqs[1],
+            f3: freqs[2],
+            f4: freqs[3],
+            f5: freqs[4],
+            b1: bws[0],
+            b2: bws[1],
+            b3: bws[2],
+            b4: bws[3],
+            b5: bws[4],
+        }
     }
 
     /// Returns the formant targets for a given vowel.
     ///
-    /// Frequencies from Peterson & Barney (1952) for adult male speakers,
-    /// with F4 and F5 estimated.
+    /// Frequencies from Hillenbrand et al. (1995) for adult male speakers.
+    /// Bandwidths are per-vowel estimates based on Hillenbrand and Hawks & Miller (1995).
+    /// F4 and F5 frequencies are estimated from typical male vocal tract resonances.
     #[must_use]
     pub fn from_vowel(vowel: Vowel) -> Self {
+        // Hillenbrand et al. (1995) male averages for F1-F3, with per-vowel bandwidths.
+        // B1 ranges ~40-90 Hz depending on vowel openness (wider for open vowels).
+        // B2 ranges ~60-120 Hz. B3 ranges ~80-150 Hz.
+        // F4/F5 and B4/B5 are speaker-dependent estimates.
         match vowel {
-            Vowel::A => Self::new(730.0, 1090.0, 2440.0, 3300.0, 3750.0),
-            Vowel::E => Self::new(530.0, 1840.0, 2480.0, 3300.0, 3750.0),
-            Vowel::I => Self::new(270.0, 2290.0, 3010.0, 3300.0, 3750.0),
-            Vowel::O => Self::new(570.0, 840.0, 2410.0, 3300.0, 3750.0),
-            Vowel::U => Self::new(300.0, 870.0, 2240.0, 3300.0, 3750.0),
-            Vowel::Schwa => Self::new(500.0, 1500.0, 2500.0, 3300.0, 3750.0),
-            Vowel::OpenO => Self::new(590.0, 880.0, 2540.0, 3300.0, 3750.0),
-            Vowel::Ash => Self::new(660.0, 1720.0, 2410.0, 3300.0, 3750.0),
-            Vowel::NearI => Self::new(390.0, 1990.0, 2550.0, 3300.0, 3750.0),
-            Vowel::NearU => Self::new(440.0, 1020.0, 2240.0, 3300.0, 3750.0),
+            // Hillenbrand et al. (1995) male averages: [F1, F2, F3, F4, F5], [B1, B2, B3, B4, B5]
+            Vowel::A => Self::with_bandwidths(
+                [768.0, 1333.0, 2522.0, 3300.0, 3750.0],
+                [90.0, 100.0, 120.0, 140.0, 160.0],
+            ),
+            Vowel::E => Self::with_bandwidths(
+                [476.0, 2089.0, 2691.0, 3300.0, 3750.0],
+                [55.0, 80.0, 100.0, 120.0, 140.0],
+            ),
+            Vowel::I => Self::with_bandwidths(
+                [342.0, 2322.0, 3000.0, 3657.0, 3750.0],
+                [40.0, 70.0, 90.0, 120.0, 140.0],
+            ),
+            Vowel::O => Self::with_bandwidths(
+                [497.0, 910.0, 2459.0, 3300.0, 3750.0],
+                [65.0, 70.0, 100.0, 120.0, 140.0],
+            ),
+            Vowel::U => Self::with_bandwidths(
+                [378.0, 997.0, 2343.0, 3300.0, 3750.0],
+                [45.0, 65.0, 90.0, 120.0, 140.0],
+            ),
+            Vowel::Schwa => Self::with_bandwidths(
+                [523.0, 1588.0, 2469.0, 3300.0, 3750.0],
+                [60.0, 80.0, 100.0, 120.0, 140.0],
+            ),
+            Vowel::OpenO => Self::with_bandwidths(
+                [652.0, 997.0, 2538.0, 3300.0, 3750.0],
+                [80.0, 75.0, 110.0, 130.0, 150.0],
+            ),
+            Vowel::Ash => Self::with_bandwidths(
+                [669.0, 1880.0, 2489.0, 3300.0, 3750.0],
+                [80.0, 90.0, 110.0, 130.0, 150.0],
+            ),
+            Vowel::NearI => Self::with_bandwidths(
+                [427.0, 2034.0, 2684.0, 3300.0, 3750.0],
+                [50.0, 75.0, 95.0, 120.0, 140.0],
+            ),
+            Vowel::NearU => Self::with_bandwidths(
+                [469.0, 1122.0, 2434.0, 3300.0, 3750.0],
+                [55.0, 70.0, 95.0, 120.0, 140.0],
+            ),
         }
     }
 
-    /// Converts vowel target to a Vec of Formant specifications with default bandwidths.
+    /// Converts vowel target to a fixed-size array of Formant specifications.
     #[must_use]
-    pub fn to_formants(&self) -> Vec<Formant> {
-        vec![
-            Formant::new(self.f1, 60.0, 1.0),
-            Formant::new(self.f2, 80.0, 0.8),
-            Formant::new(self.f3, 100.0, 0.5),
-            Formant::new(self.f4, 120.0, 0.3),
-            Formant::new(self.f5, 140.0, 0.2),
+    pub fn to_formants(&self) -> [Formant; 5] {
+        [
+            Formant::new(self.f1, self.b1, DEFAULT_AMPLITUDES[0]),
+            Formant::new(self.f2, self.b2, DEFAULT_AMPLITUDES[1]),
+            Formant::new(self.f3, self.b3, DEFAULT_AMPLITUDES[2]),
+            Formant::new(self.f4, self.b4, DEFAULT_AMPLITUDES[3]),
+            Formant::new(self.f5, self.b5, DEFAULT_AMPLITUDES[4]),
         ]
     }
 
-    /// Linearly interpolates between two vowel targets.
+    /// Linearly interpolates between two vowel targets (frequencies and bandwidths).
     ///
     /// `t` is clamped to [0.0, 1.0]. At t=0.0, returns `from`; at t=1.0, returns `to`.
     #[must_use]
@@ -127,6 +212,11 @@ impl VowelTarget {
             f3: lerp(from.f3, to.f3),
             f4: lerp(from.f4, to.f4),
             f5: lerp(from.f5, to.f5),
+            b1: lerp(from.b1, to.b1),
+            b2: lerp(from.b2, to.b2),
+            b3: lerp(from.b3, to.b3),
+            b4: lerp(from.b4, to.b4),
+            b5: lerp(from.b5, to.b5),
         }
     }
 }
@@ -212,14 +302,53 @@ impl BiquadResonator {
     }
 }
 
+/// One-pole DC-blocking high-pass filter.
+///
+/// Removes DC offset that accumulates from numerical drift in cascaded/parallel
+/// biquad filters. Implements: `y[n] = x[n] - x[n-1] + α * y[n-1]`
+/// with α chosen for a ~20 Hz cutoff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DcBlocker {
+    alpha: f32,
+    x_prev: f32,
+    y_prev: f32,
+}
+
+impl DcBlocker {
+    fn new(sample_rate: f32) -> Self {
+        // α = 1 - (2π * fc / fs), fc ≈ 20 Hz
+        let alpha = 1.0 - (std::f32::consts::TAU * 20.0 / sample_rate);
+        Self {
+            alpha,
+            x_prev: 0.0,
+            y_prev: 0.0,
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, input: f32) -> f32 {
+        let output = input - self.x_prev + self.alpha * self.y_prev;
+        self.x_prev = input;
+        self.y_prev = output;
+        output
+    }
+
+    fn reset(&mut self) {
+        self.x_prev = 0.0;
+        self.y_prev = 0.0;
+    }
+}
+
 /// A parallel bank of biquad filters tuned to formant frequencies.
 ///
 /// Processes an input signal (typically from [`GlottalSource`](crate::glottal::GlottalSource))
-/// through parallel formant resonators and sums the weighted outputs.
+/// through parallel formant resonators, sums the weighted outputs, and applies
+/// a DC-blocking filter to prevent numerical drift.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormantFilter {
     filters: Vec<BiquadResonator>,
     amplitudes: Vec<f32>,
+    dc_blocker: DcBlocker,
     sample_rate: f32,
 }
 
@@ -266,6 +395,7 @@ impl FormantFilter {
         Ok(Self {
             filters,
             amplitudes,
+            dc_blocker: DcBlocker::new(sample_rate),
             sample_rate,
         })
     }
@@ -292,22 +422,23 @@ impl FormantFilter {
 
     /// Processes a single input sample through the parallel formant filter bank.
     ///
-    /// Runs the input through all formant resonators in parallel and sums the
-    /// weighted outputs.
+    /// Runs the input through all formant resonators in parallel, sums the
+    /// weighted outputs, and applies DC blocking.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
         let mut output = 0.0;
         for (filter, &amp) in self.filters.iter_mut().zip(self.amplitudes.iter()) {
             output += filter.process(input) * amp;
         }
-        output
+        self.dc_blocker.process(output)
     }
 
-    /// Resets all filter states.
+    /// Resets all filter states including the DC blocker.
     pub fn reset(&mut self) {
         for filter in &mut self.filters {
             filter.reset();
         }
+        self.dc_blocker.reset();
     }
 
     /// Returns the number of formant resonators.
@@ -323,9 +454,12 @@ mod tests {
 
     #[test]
     fn test_vowel_targets() {
+        // Hillenbrand et al. (1995) male averages
         let target = VowelTarget::from_vowel(Vowel::A);
-        assert!((target.f1 - 730.0).abs() < f32::EPSILON);
-        assert!((target.f2 - 1090.0).abs() < f32::EPSILON);
+        assert!((target.f1 - 768.0).abs() < f32::EPSILON);
+        assert!((target.f2 - 1333.0).abs() < f32::EPSILON);
+        // Should have per-vowel bandwidths
+        assert!((target.b1 - 90.0).abs() < f32::EPSILON);
     }
 
     #[test]

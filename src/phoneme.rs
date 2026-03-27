@@ -102,6 +102,16 @@ pub enum Phoneme {
     /// /ŋ/ velar nasal
     NasalNg,
 
+    // Affricates
+    /// /tʃ/ voiceless postalveolar affricate (as in "church")
+    AffricateCh,
+    /// /dʒ/ voiced postalveolar affricate (as in "judge")
+    AffricateJ,
+
+    // Glottal
+    /// /ʔ/ glottal stop
+    GlottalStop,
+
     // Approximants
     /// /l/ alveolar lateral
     LateralL,
@@ -129,6 +139,8 @@ pub enum PhonemeClass {
     Nasal,
     /// Vowel-like consonant with open vocal tract.
     Approximant,
+    /// Stop + fricative combination (e.g., /tʃ/, /dʒ/).
+    Affricate,
     /// Airflow around sides of tongue.
     Lateral,
     /// Pure vowel.
@@ -185,6 +197,10 @@ impl Phoneme {
 
             Self::NasalM | Self::NasalN | Self::NasalNg => PhonemeClass::Nasal,
 
+            Self::AffricateCh | Self::AffricateJ => PhonemeClass::Affricate,
+
+            Self::GlottalStop => PhonemeClass::Plosive,
+
             Self::LateralL => PhonemeClass::Lateral,
 
             Self::ApproximantR | Self::ApproximantW | Self::ApproximantJ => {
@@ -208,6 +224,8 @@ impl Phoneme {
             | Self::FricativeSh
             | Self::FricativeTh
             | Self::FricativeH
+            | Self::AffricateCh
+            | Self::GlottalStop
             | Self::Silence => false,
             // Everything else is voiced
             _ => true,
@@ -223,12 +241,22 @@ impl Phoneme {
 pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
     match phoneme {
         // Vowels map directly
-        Phoneme::VowelA | Phoneme::VowelOpenA => VowelTarget::from_vowel(Vowel::A),
+        Phoneme::VowelA => VowelTarget::from_vowel(Vowel::A),
+        // /ɑ/ — open back unrounded, lower F2 than /a/
+        Phoneme::VowelOpenA => VowelTarget::with_bandwidths(
+            [745.0, 1100.0, 2440.0, 3300.0, 3750.0],
+            [85.0, 90.0, 110.0, 130.0, 150.0],
+        ),
         Phoneme::VowelE => VowelTarget::from_vowel(Vowel::E),
         Phoneme::VowelI | Phoneme::VowelLongI => VowelTarget::from_vowel(Vowel::I),
         Phoneme::VowelO => VowelTarget::from_vowel(Vowel::O),
         Phoneme::VowelU => VowelTarget::from_vowel(Vowel::U),
-        Phoneme::VowelSchwa | Phoneme::VowelBird => VowelTarget::from_vowel(Vowel::Schwa),
+        Phoneme::VowelSchwa => VowelTarget::from_vowel(Vowel::Schwa),
+        // /ɜ/ — open-mid central, higher F1 and more centralized F2 than schwa
+        Phoneme::VowelBird => VowelTarget::with_bandwidths(
+            [580.0, 1400.0, 2500.0, 3300.0, 3750.0],
+            [70.0, 80.0, 100.0, 120.0, 140.0],
+        ),
         Phoneme::VowelOpenO => VowelTarget::from_vowel(Vowel::OpenO),
         Phoneme::VowelAsh => VowelTarget::from_vowel(Vowel::Ash),
         Phoneme::VowelNearI => VowelTarget::from_vowel(Vowel::NearI),
@@ -275,6 +303,14 @@ pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
         // Glottal fricative
         Phoneme::FricativeH => VowelTarget::from_vowel(Vowel::Schwa),
 
+        // Affricates (postalveolar locus)
+        Phoneme::AffricateCh | Phoneme::AffricateJ => {
+            VowelTarget::new(350.0, 1600.0, 2500.0, 3300.0, 3750.0)
+        }
+
+        // Glottal stop: neutral tract position
+        Phoneme::GlottalStop => VowelTarget::from_vowel(Vowel::Schwa),
+
         // Approximants
         Phoneme::ApproximantR => VowelTarget::new(350.0, 1300.0, 1600.0, 3300.0, 3750.0),
         Phoneme::ApproximantW => VowelTarget::new(300.0, 700.0, 2200.0, 3300.0, 3750.0),
@@ -294,6 +330,7 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
         PhonemeClass::Plosive => 0.08,
         PhonemeClass::Fricative => 0.10,
         PhonemeClass::Nasal => 0.08,
+        PhonemeClass::Affricate => 0.12,
         PhonemeClass::Approximant | PhonemeClass::Lateral => 0.07,
         PhonemeClass::Silence => 0.05,
     }
@@ -375,6 +412,9 @@ pub fn synthesize_phoneme(
                 synthesize_fricative(phoneme, voice, sample_rate, num_samples)
             }
             PhonemeClass::Nasal => synthesize_nasal(phoneme, voice, sample_rate, num_samples),
+            PhonemeClass::Affricate => {
+                synthesize_affricate(phoneme, voice, sample_rate, num_samples)
+            }
             PhonemeClass::Approximant | PhonemeClass::Lateral => {
                 synthesize_approximant(phoneme, voice, sample_rate, num_samples)
             }
@@ -391,7 +431,7 @@ fn synthesize_vowel(
 ) -> Result<Vec<f32>> {
     let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
     let mut tract = VocalTract::new(sample_rate);
-    tract.set_formants_from_target(&target);
+    tract.set_formants_from_target(&target)?;
 
     let mut glottal = voice
         .create_glottal_source(sample_rate)
@@ -421,7 +461,7 @@ fn synthesize_diphthong(
     for i in 0..num_samples {
         let t = i as f32 / num_samples as f32;
         let current = VowelTarget::interpolate(&start_target, &end_target, t);
-        tract.set_formants_from_target(&current);
+        tract.set_formants_from_target(&current)?;
         let excitation = glottal.next_sample();
         output.push(tract.process_sample(excitation));
     }
@@ -461,7 +501,7 @@ fn synthesize_plosive(
             .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
         glottal.set_breathiness(0.4); // Override: plosive voicing onset is breathier
         let mut tract = VocalTract::new(sample_rate);
-        tract.set_formants_from_target(&target);
+        tract.set_formants_from_target(&target)?;
 
         for sample in output.iter_mut().skip(burst_end) {
             let excitation = glottal.next_sample();
@@ -500,7 +540,7 @@ fn synthesize_fricative(
             .create_glottal_source(sample_rate)
             .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
         let mut tract = VocalTract::new(sample_rate);
-        tract.set_formants_from_target(&target);
+        tract.set_formants_from_target(&target)?;
 
         for _ in 0..num_samples {
             let n = noise.next_f32() * 0.5;
@@ -547,6 +587,11 @@ fn fricative_formants(phoneme: &Phoneme, _sample_rate: f32) -> Vec<Formant> {
             Formant::new(1500.0, 800.0, 0.4),
             Formant::new(2500.0, 800.0, 0.3),
         ],
+        // /tʃ/ /dʒ/: postalveolar frication, similar to /ʃ/ /ʒ/
+        Phoneme::AffricateCh | Phoneme::AffricateJ => vec![
+            Formant::new(2800.0, 600.0, 1.0),
+            Formant::new(5000.0, 800.0, 0.6),
+        ],
         _ => vec![Formant::new(3000.0, 1000.0, 0.5)],
     }
 }
@@ -563,7 +608,7 @@ fn synthesize_nasal(
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
 
     let mut tract = VocalTract::new(sample_rate);
-    tract.set_formants_from_target(&target);
+    tract.set_formants_from_target(&target)?;
     tract.set_nasal_coupling(0.8);
 
     let mut output = tract.synthesize(&mut glottal, num_samples);
@@ -584,7 +629,7 @@ fn synthesize_approximant(
     glottal.set_breathiness(voice.breathiness.max(0.1)); // Approximants need slight breathiness
 
     let mut tract = VocalTract::new(sample_rate);
-    tract.set_formants_from_target(&target);
+    tract.set_formants_from_target(&target)?;
 
     let mut output = tract.synthesize(&mut glottal, num_samples);
 
@@ -592,6 +637,55 @@ fn synthesize_approximant(
     for sample in &mut output {
         *sample *= 0.7;
     }
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_affricate(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+) -> Result<Vec<f32>> {
+    // Affricate = plosive closure/burst (first third) + fricative release (remaining)
+    let mut output = vec![0.0; num_samples];
+    let mut noise = NoiseGen::new(23);
+
+    let closure_end = num_samples / 4;
+    let burst_end = closure_end + (num_samples / 8).max(1);
+
+    // Burst: short noise burst at postalveolar locus
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let fric_formants = fricative_formants(phoneme, sample_rate);
+    let mut filter = FormantFilter::new(&fric_formants, sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+    for sample in output.iter_mut().take(burst_end).skip(closure_end) {
+        let n = noise.next_f32() * 0.8;
+        *sample = filter.process_sample(n);
+    }
+
+    // Fricative release phase
+    if phoneme.is_voiced() {
+        let mut glottal = voice
+            .create_glottal_source(sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+        let mut tract = VocalTract::new(sample_rate);
+        tract.set_formants_from_target(&target)?;
+
+        for sample in output.iter_mut().skip(burst_end) {
+            let exc = glottal.next_sample();
+            let voiced = tract.process_sample(exc);
+            let fric = filter.process_sample(noise.next_f32() * 0.5);
+            *sample = voiced * 0.5 + fric * 0.5;
+        }
+    } else {
+        for sample in output.iter_mut().skip(burst_end) {
+            let n = noise.next_f32() * 0.6;
+            *sample = filter.process_sample(n);
+        }
+    }
+
     apply_amplitude_envelope(&mut output, num_samples);
     Ok(output)
 }

@@ -30,25 +30,25 @@
 
 ### Correctness & Quality
 
-- [ ] Per-vowel bandwidths from Hillenbrand et al. (1995) instead of fixed 60/80/100/120/140
-- [ ] Fix vowel aliasing: VowelOpenA != VowelA, VowelBird != Schwa (distinct formant targets)
-- [ ] DC-blocking filter at formant bank output (single-pole HPF ~20Hz)
+- [x] Per-vowel bandwidths from Hillenbrand et al. (1995) — done 2026-03-27
+- [x] Fix vowel aliasing: VowelOpenA != VowelA, VowelBird != Schwa — done 2026-03-27
+- [x] DC-blocking filter at formant bank output — done 2026-03-27
+- [x] Proper error propagation in tract.rs set_formants() — done 2026-03-27
 - [ ] Aspiration noise gated by glottal cycle phase, not constant mix
 - [ ] Bandwidth scaling by f0 for female/child voices
-- [ ] Proper error propagation in tract.rs set_formants() (currently silent fallback)
 
 ### Phoneme Inventory
 
-- [ ] Affricates: /tʃ/ (church), /dʒ/ (judge)
-- [ ] Glottal stop /ʔ/
+- [x] Affricates: /tʃ/ (church), /dʒ/ (judge) — done 2026-03-27
+- [x] Glottal stop /ʔ/ — done 2026-03-27
 - [ ] Tap/flap /ɾ/
 
 ### API Quality
 
-- [ ] `#[must_use]` on all pure functions (process_sample, process, etc.)
-- [ ] PartialEq/Eq on Formant, VowelTarget
-- [ ] `to_formants()` returns `[Formant; 5]` instead of `Vec<Formant>` (avoids allocation)
-- [ ] Named constants for magic numbers (PRNG seed, nasal antiformant freq, lip radiation coeff)
+- [x] `#[must_use]` on all pure functions — already covered in scaffold
+- [x] PartialEq on Formant, VowelTarget — done 2026-03-27
+- [x] `to_formants()` returns `[Formant; 5]` — done 2026-03-27
+- [x] Named constants for magic numbers — done 2026-03-27
 
 ### Coarticulation
 

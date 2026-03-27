@@ -38,21 +38,21 @@ fn test_glottal_period_at_120hz() {
 
 #[test]
 fn test_male_vowel_a_f1_spectral_energy() {
-    // Male /a/ should have F1 energy near 730Hz.
-    // We use a simple spectral energy check: the formant filter at 730Hz
+    // Male /a/ should have F1 energy near 768Hz (Hillenbrand et al. 1995).
+    // We use a simple spectral energy check: the formant filter at F1
     // should produce more energy than at 200Hz (well below F1).
     let voice = VoiceProfile::new_male();
     let sample_rate = 44100.0;
     let samples = synthesize_phoneme(&Phoneme::VowelA, &voice, sample_rate, 0.5).unwrap();
 
     // Simple energy-at-frequency using Goertzel algorithm
-    let energy_at_f1 = goertzel_magnitude(&samples, 730.0, sample_rate);
+    let energy_at_f1 = goertzel_magnitude(&samples, 768.0, sample_rate);
     let energy_below_f1 = goertzel_magnitude(&samples, 200.0, sample_rate);
 
     // F1 energy should be at least somewhat present
     assert!(
         energy_at_f1 > 0.0,
-        "should have energy at F1 (730Hz): got {energy_at_f1}"
+        "should have energy at F1 (768Hz): got {energy_at_f1}"
     );
 
     // F1 should have more energy than well below it
@@ -269,6 +269,9 @@ fn test_all_consonant_classes_synthesize() {
         Phoneme::LateralL,
         Phoneme::ApproximantR,
         Phoneme::ApproximantW,
+        Phoneme::AffricateCh,
+        Phoneme::AffricateJ,
+        Phoneme::GlottalStop,
     ];
     for c in &consonants {
         let result = synthesize_phoneme(c, &voice, 44100.0, 0.08);
