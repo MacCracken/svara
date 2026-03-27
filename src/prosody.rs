@@ -158,35 +158,21 @@ impl ProsodyContour {
             return self.f0_points[0].1;
         }
 
-        let t = t.clamp(0.0, 1.0);
+        let t = t.clamp(0.0, 1.0) as f64;
 
-        if t <= self.f0_points[0].0 {
-            return self.f0_points[0].1;
-        }
-        if t >= self.f0_points.last().map_or(1.0, |p| p.0) {
-            return self.f0_points.last().map_or(1.0, |p| p.1);
-        }
+        // Use hisab's monotone cubic interpolation (Fritsch-Carlson).
+        // Guarantees no overshoot — critical for f0 contours where
+        // overshooting pitch targets produces unnatural artifacts.
+        let xs: Vec<f64> = self.f0_points.iter().map(|p| p.0 as f64).collect();
+        let ys: Vec<f64> = self.f0_points.iter().map(|p| p.1 as f64).collect();
 
-        for i in 0..self.f0_points.len() - 1 {
-            let (t0, v0) = self.f0_points[i];
-            let (t1, v1) = self.f0_points[i + 1];
-            if t >= t0 && t <= t1 {
-                let frac = if (t1 - t0).abs() < f32::EPSILON {
-                    0.0
-                } else {
-                    (t - t0) / (t1 - t0)
-                };
-                return v0 + (v1 - v0) * frac;
-            }
-        }
-
-        self.f0_points.last().map_or(1.0, |p| p.1)
+        hisab::calc::monotone_cubic(&xs, &ys, t).unwrap_or(1.0) as f32
     }
 
     /// Returns the interpolated f0 multiplier at normalized time `t`.
     ///
-    /// Uses linear interpolation between defined points.
-    /// Time is clamped to [0.0, 1.0].
+    /// Uses Catmull-Rom spline interpolation for smooth, natural pitch curves.
+    /// Time is clamped to `[0.0, 1.0]`.
     #[must_use]
     #[inline]
     pub fn f0_at(&self, t: f32) -> f32 {

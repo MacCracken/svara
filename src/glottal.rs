@@ -75,37 +75,52 @@ impl LfParams {
     }
 }
 
-/// A simple linear-congruential PRNG for noise generation when naad is not available.
+/// PCG32-based PRNG for noise generation (jitter, shimmer, breathiness).
+///
+/// Uses the PCG (Permuted Congruential Generator) algorithm from hisab for
+/// high-quality, deterministic random numbers. Serializable for state persistence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SimpleRng {
+struct Rng {
     state: u64,
+    inc: u64,
 }
 
-impl SimpleRng {
+impl Rng {
     fn new(seed: u64) -> Self {
-        Self {
-            state: seed.wrapping_add(1),
-        }
+        // PCG32 initialization (same as hisab::num::Pcg32)
+        let inc = (seed << 1) | 1;
+        let mut rng = Self { state: 0, inc };
+        rng.next_u32();
+        rng.state = rng.state.wrapping_add(seed);
+        rng.next_u32();
+        rng
+    }
+
+    /// Generates the next u32 using PCG32 algorithm.
+    #[inline]
+    fn next_u32(&mut self) -> u32 {
+        let old_state = self.state;
+        self.state = old_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(self.inc);
+        let xor_shifted = (((old_state >> 18) ^ old_state) >> 27) as u32;
+        let rot = (old_state >> 59) as u32;
+        (xor_shifted >> rot) | (xor_shifted << (rot.wrapping_neg() & 31))
     }
 
     /// Returns a value in [-1.0, 1.0].
     #[inline]
     fn next_f32(&mut self) -> f32 {
-        // LCG parameters from Numerical Recipes
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        // Convert upper bits to float in [-1, 1]
-        let bits = (self.state >> 33) as i32;
-        bits as f32 / (i32::MAX as f32)
+        // Fast conversion: use upper bits as signed i32, divide by i32::MAX
+        let bits = (self.next_u32() >> 1) as i32;
+        bits as f32 * (1.0 / i32::MAX as f32)
     }
 
     /// Returns a value in [0.0, 1.0].
     #[inline]
     #[allow(dead_code)]
     fn next_f32_unsigned(&mut self) -> f32 {
-        (self.next_f32() + 1.0) * 0.5
+        self.next_u32() as f32 * (1.0 / u32::MAX as f32)
     }
 }
 
@@ -151,7 +166,7 @@ pub struct GlottalSource {
     /// Amplitude for the current period (may vary due to shimmer).
     current_amplitude: f32,
     /// PRNG for jitter, shimmer, and noise.
-    rng: SimpleRng,
+    rng: Rng,
 }
 
 impl GlottalSource {
@@ -194,7 +209,7 @@ impl GlottalSource {
             phase: 0.0,
             current_period: period,
             current_amplitude: 1.0,
-            rng: SimpleRng::new(DEFAULT_RNG_SEED),
+            rng: Rng::new(DEFAULT_RNG_SEED),
         })
     }
 

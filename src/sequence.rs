@@ -194,14 +194,13 @@ impl Default for PhonemeSequence {
     }
 }
 
-/// Sigmoid crossfade curve: steeper than cosine for more natural coarticulation.
+/// Crossfade easing using hisab's smootherstep (Ken Perlin's improved curve).
 ///
-/// Maps `t` in `[0, 1]` to a sigmoid output in `[0, 1]` with controllable steepness.
+/// Maps `t` in `[0, 1]` to a smooth S-curve with zero first AND second derivatives
+/// at endpoints — smoother than Hermite smoothstep for coarticulation blending.
 #[inline]
 fn sigmoid_fade(t: f32) -> f32 {
-    // Hermite smoothstep: 3t² - 2t³ (same polynomial as Rosenberg, smooth S-curve)
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    hisab::calc::ease_in_out_smooth(t.clamp(0.0, 1.0))
 }
 
 /// Crossfades adjacent audio segments with per-boundary crossfade lengths.

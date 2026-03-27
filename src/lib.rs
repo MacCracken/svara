@@ -60,6 +60,7 @@ mod math;
 pub mod phoneme;
 pub mod prosody;
 pub mod sequence;
+pub mod spectral;
 pub mod tract;
 pub mod voice;
 
@@ -67,13 +68,43 @@ pub mod voice;
 pub mod prelude {
     pub use crate::error::{Result, SvaraError};
     pub use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
-    pub use crate::glottal::GlottalSource;
+    pub use crate::glottal::{GlottalModel, GlottalSource};
     pub use crate::phoneme::{
         Phoneme, PhonemeClass, f2_locus_equation, phoneme_duration, phoneme_formants,
         synthesize_phoneme,
     };
     pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};
-    pub use crate::tract::VocalTract;
+    pub use crate::spectral::{Spectrum, analyze as analyze_spectrum, rms_level};
+    pub use crate::tract::{NasalPlace, VocalTract};
     pub use crate::voice::VoiceProfile;
+}
+
+// Compile-time trait assertions: all public types must be Send + Sync
+// for safe multi-voice parallel rendering.
+#[cfg(test)]
+mod assert_traits {
+    fn _assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn public_types_are_send_sync() {
+        _assert_send_sync::<crate::error::SvaraError>();
+        _assert_send_sync::<crate::formant::Formant>();
+        _assert_send_sync::<crate::formant::FormantFilter>();
+        _assert_send_sync::<crate::formant::Vowel>();
+        _assert_send_sync::<crate::formant::VowelTarget>();
+        _assert_send_sync::<crate::glottal::GlottalSource>();
+        _assert_send_sync::<crate::glottal::GlottalModel>();
+        _assert_send_sync::<crate::phoneme::Phoneme>();
+        _assert_send_sync::<crate::phoneme::PhonemeClass>();
+        _assert_send_sync::<crate::prosody::ProsodyContour>();
+        _assert_send_sync::<crate::prosody::IntonationPattern>();
+        _assert_send_sync::<crate::prosody::Stress>();
+        _assert_send_sync::<crate::sequence::PhonemeEvent>();
+        _assert_send_sync::<crate::sequence::PhonemeSequence>();
+        _assert_send_sync::<crate::tract::VocalTract>();
+        _assert_send_sync::<crate::tract::NasalPlace>();
+        _assert_send_sync::<crate::voice::VoiceProfile>();
+        _assert_send_sync::<crate::spectral::Spectrum>();
+    }
 }

@@ -83,7 +83,9 @@
 - [x] `no_std` core DSP compatibility with `libm` — done 2026-03-27
 - [x] Architecture documentation with pipeline diagrams — done 2026-03-27
 
-## v1.0 Criteria — All Met
+## v1.0.0 Released — 2026-03-27
+
+All criteria met. Published to crates.io.
 
 - [x] LF glottal model available
 - [x] Hillenbrand formant data with per-vowel bandwidths

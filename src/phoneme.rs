@@ -416,26 +416,37 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
     }
 }
 
-/// Simple PRNG for synthesis noise (consistent with glottal module's approach).
+/// PCG32-based noise generator for synthesis (consistent with glottal module).
 struct NoiseGen {
     state: u64,
+    inc: u64,
 }
 
 impl NoiseGen {
     fn new(seed: u64) -> Self {
-        Self {
-            state: seed.wrapping_add(1),
-        }
+        let inc = (seed << 1) | 1;
+        let mut ng = Self { state: 0, inc };
+        ng.next_u32();
+        ng.state = ng.state.wrapping_add(seed);
+        ng.next_u32();
+        ng
+    }
+
+    #[inline]
+    fn next_u32(&mut self) -> u32 {
+        let old_state = self.state;
+        self.state = old_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(self.inc);
+        let xor_shifted = (((old_state >> 18) ^ old_state) >> 27) as u32;
+        let rot = (old_state >> 59) as u32;
+        (xor_shifted >> rot) | (xor_shifted << (rot.wrapping_neg() & 31))
     }
 
     #[inline]
     fn next_f32(&mut self) -> f32 {
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let bits = (self.state >> 33) as i32;
-        bits as f32 / (i32::MAX as f32)
+        let bits = (self.next_u32() >> 1) as i32;
+        bits as f32 * (1.0 / i32::MAX as f32)
     }
 }
 
@@ -788,18 +799,17 @@ fn apply_amplitude_envelope(samples: &mut [f32], _total: usize) {
     // 5ms ramp at 44100 Hz ≈ 220 samples, but scale proportionally
     let ramp_len = (len / 10).clamp(1, 256);
 
+    // Attack ramp using hisab smootherstep — zero first and second derivatives
     for (i, sample) in samples.iter_mut().enumerate().take(ramp_len) {
         let t = i as f32 / ramp_len as f32;
-        // Raised cosine ramp
-        let gain = 0.5 * (1.0 - crate::math::f32::cos(core::f32::consts::PI * t));
-        *sample *= gain;
+        *sample *= hisab::calc::ease_in_out_smooth(t);
     }
 
+    // Release ramp
     for i in 0..ramp_len {
         let idx = len - 1 - i;
         let t = i as f32 / ramp_len as f32;
-        let gain = 0.5 * (1.0 - crate::math::f32::cos(core::f32::consts::PI * t));
-        samples[idx] *= gain;
+        samples[idx] *= hisab::calc::ease_in_out_smooth(t);
     }
 }
 
