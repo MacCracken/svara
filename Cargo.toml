@@ -3,7 +3,7 @@ name = "svara"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-license = "GPL-3.0"
+license = "GPL-3.0-only"
 description = "svara — Formant and vocal synthesis: glottal source, vocal tract modeling, phonemes, prosody"
 homepage = "https://github.com/MacCracken/svara"
 repository = "https://github.com/MacCracken/svara"
@@ -14,7 +14,7 @@ categories = ["multimedia::audio"]
 exclude = [".claude/", ".github/", "docs/", "scripts/"]
 
 [dependencies]
-naad = { version = "0.1", path = "../naad", optional = true }
+naad = { version = "1", path = "../naad", optional = true }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"

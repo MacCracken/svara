@@ -38,6 +38,7 @@ impl SimpleRng {
 
     /// Returns a value in [0.0, 1.0].
     #[inline]
+    #[allow(dead_code)]
     fn next_f32_unsigned(&mut self) -> f32 {
         (self.next_f32() + 1.0) * 0.5
     }
@@ -63,6 +64,14 @@ pub struct GlottalSource {
     shimmer: f32,
     /// Breathiness: mix ratio of noise (0.0 = pure pulse, 1.0 = pure noise).
     breathiness: f32,
+    /// Vibrato rate in Hz (typically 4-7 Hz).
+    vibrato_rate: f32,
+    /// Vibrato depth as fraction of f0 (0.0-0.1 typical).
+    vibrato_depth: f32,
+    /// Vibrato phase accumulator in radians.
+    vibrato_phase: f32,
+    /// One-pole spectral tilt filter state (y[n-1]).
+    tilt_state: f32,
     /// Current phase within the glottal period [0, period_samples).
     phase: f32,
     /// Current period length in samples (may vary due to jitter).
@@ -103,6 +112,10 @@ impl GlottalSource {
             jitter: 0.01,
             shimmer: 0.02,
             breathiness: 0.0,
+            vibrato_rate: 0.0,
+            vibrato_depth: 0.0,
+            vibrato_phase: 0.0,
+            tilt_state: 0.0,
             phase: 0.0,
             current_period: period,
             current_amplitude: 1.0,
@@ -150,6 +163,12 @@ impl GlottalSource {
         self.spectral_tilt = tilt;
     }
 
+    /// Sets the vibrato rate in Hz (typically 4-7 Hz for natural singing/speaking).
+    pub fn set_vibrato(&mut self, rate: f32, depth: f32) {
+        self.vibrato_rate = rate.max(0.0);
+        self.vibrato_depth = depth.clamp(0.0, 0.5);
+    }
+
     /// Returns the current fundamental frequency.
     #[must_use]
     #[inline]
@@ -174,7 +193,8 @@ impl GlottalSource {
     /// Generates the next audio sample from the glottal source.
     ///
     /// The output is a mix of the Rosenberg glottal pulse and noise,
-    /// controlled by the breathiness parameter.
+    /// controlled by the breathiness parameter. Spectral tilt is applied
+    /// via a one-pole low-pass filter. Vibrato modulates f0 sinusoidally.
     #[inline]
     pub fn next_sample(&mut self) -> f32 {
         let t = self.phase / self.current_period;
@@ -182,12 +202,15 @@ impl GlottalSource {
         // Rosenberg pulse model
         let pulse = self.rosenberg_pulse(t);
 
-        // Apply spectral tilt (simple low-pass approximation)
+        // Apply spectral tilt via one-pole low-pass: y[n] = (1-α)*x[n] + α*y[n-1]
+        // α derived from tilt: higher tilt = more low-pass = breathier voice
         let pulse = if self.spectral_tilt > 0.0 {
-            // Approximate spectral tilt with a simple one-pole filter coefficient
-            let alpha = (-self.spectral_tilt * 0.01).exp();
-            pulse * alpha
+            let alpha = (-std::f32::consts::TAU * self.spectral_tilt / self.sample_rate).exp();
+            let filtered = (1.0 - alpha) * pulse + alpha * self.tilt_state;
+            self.tilt_state = filtered;
+            filtered
         } else {
+            self.tilt_state = pulse;
             pulse
         };
 
@@ -205,31 +228,50 @@ impl GlottalSource {
             self.new_period();
         }
 
+        // Advance vibrato phase
+        if self.vibrato_rate > 0.0 {
+            self.vibrato_phase += std::f32::consts::TAU * self.vibrato_rate / self.sample_rate;
+            if self.vibrato_phase >= std::f32::consts::TAU {
+                self.vibrato_phase -= std::f32::consts::TAU;
+            }
+        }
+
         sample
     }
 
-    /// Computes the Rosenberg glottal pulse at normalized time t in [0, 1).
+    /// Computes the Rosenberg B glottal pulse at normalized time t in `[0, 1)`.
+    ///
+    /// During the open phase (t < open_quotient), the pulse follows the
+    /// standard Rosenberg B polynomial: `3t² - 2t³`, which smoothly rises
+    /// from 0 to 1 and back to 0. During the closed phase, output is 0.
+    ///
+    /// Reference: Rosenberg, A.E. (1971). "Effect of Glottal Pulse Shape on
+    /// the Quality of Natural Vowels." JASA 49(2B), 583-590.
     #[inline]
     fn rosenberg_pulse(&self, t: f32) -> f32 {
         let oq = self.open_quotient;
         if t < oq {
-            // Open phase: polynomial rise and fall
+            // Open phase: Rosenberg B polynomial 3t² - 2t³
             let t_norm = t / oq;
-            let pi_t = std::f32::consts::PI * t_norm;
-            // Rosenberg B pulse: 3t^2 - 2t^3 during open phase
-            let val = 3.0 * t_norm * t_norm - 2.0 * t_norm * t_norm * t_norm;
-            // Apply sinusoidal shaping for smoother waveform
-            val * pi_t.sin().abs().sqrt()
+            3.0 * t_norm * t_norm - 2.0 * t_norm * t_norm * t_norm
         } else {
             // Closed phase: glottis is closed, no airflow
             0.0
         }
     }
 
-    /// Begins a new glottal period, applying jitter and shimmer.
+    /// Begins a new glottal period, applying jitter, shimmer, and vibrato.
     fn new_period(&mut self) {
+        // Apply vibrato: sinusoidal modulation of f0
+        let vibrato_mod = if self.vibrato_rate > 0.0 {
+            1.0 + self.vibrato_depth * self.vibrato_phase.sin()
+        } else {
+            1.0
+        };
+        let effective_f0 = self.f0 * vibrato_mod;
+
         // Apply jitter to period length
-        let base_period = self.sample_rate / self.f0;
+        let base_period = self.sample_rate / effective_f0;
         let jitter_offset = self.rng.next_f32() * self.jitter * base_period;
         self.current_period = (base_period + jitter_offset).max(1.0);
 

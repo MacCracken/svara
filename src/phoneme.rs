@@ -9,7 +9,6 @@ use tracing::trace;
 
 use crate::error::{Result, SvaraError};
 use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
-use crate::glottal::GlottalSource;
 use crate::tract::VocalTract;
 use crate::voice::VoiceProfile;
 
@@ -234,7 +233,9 @@ pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
         Phoneme::VowelAsh => VowelTarget::from_vowel(Vowel::Ash),
         Phoneme::VowelNearI => VowelTarget::from_vowel(Vowel::NearI),
         Phoneme::VowelNearU => VowelTarget::from_vowel(Vowel::NearU),
-        Phoneme::VowelOpenE | Phoneme::VowelCupV => VowelTarget::new(600.0, 1770.0, 2500.0, 3300.0, 3750.0),
+        Phoneme::VowelOpenE | Phoneme::VowelCupV => {
+            VowelTarget::new(600.0, 1770.0, 2500.0, 3300.0, 3750.0)
+        }
 
         // Diphthongs: start target (transitions are handled in synthesis)
         Phoneme::DiphthongAI | Phoneme::DiphthongAU => VowelTarget::from_vowel(Vowel::A),
@@ -392,11 +393,9 @@ fn synthesize_vowel(
     let mut tract = VocalTract::new(sample_rate);
     tract.set_formants_from_target(&target);
 
-    let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-    glottal.set_breathiness(voice.breathiness);
-    glottal.set_jitter(voice.jitter);
-    glottal.set_shimmer(voice.shimmer);
 
     let mut output = tract.synthesize(&mut glottal, num_samples);
     apply_amplitude_envelope(&mut output, num_samples);
@@ -412,11 +411,9 @@ fn synthesize_diphthong(
     let start_target = voice.apply_formant_scale(&phoneme_formants(phoneme));
     let end_target = voice.apply_formant_scale(&diphthong_end_target(phoneme));
 
-    let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-    glottal.set_breathiness(voice.breathiness);
-    glottal.set_jitter(voice.jitter);
-    glottal.set_shimmer(voice.shimmer);
 
     let mut tract = VocalTract::new(sample_rate);
     let mut output = Vec::with_capacity(num_samples);
@@ -459,9 +456,10 @@ fn synthesize_plosive(
 
     // Aspiration/voicing transition
     if phoneme.is_voiced() {
-        let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+        let mut glottal = voice
+            .create_glottal_source(sample_rate)
             .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-        glottal.set_breathiness(0.4);
+        glottal.set_breathiness(0.4); // Override: plosive voicing onset is breathier
         let mut tract = VocalTract::new(sample_rate);
         tract.set_formants_from_target(&target);
 
@@ -498,9 +496,9 @@ fn synthesize_fricative(
     let mut output = Vec::with_capacity(num_samples);
 
     if phoneme.is_voiced() {
-        let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+        let mut glottal = voice
+            .create_glottal_source(sample_rate)
             .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-        glottal.set_breathiness(voice.breathiness);
         let mut tract = VocalTract::new(sample_rate);
         tract.set_formants_from_target(&target);
 
@@ -560,9 +558,9 @@ fn synthesize_nasal(
     num_samples: usize,
 ) -> Result<Vec<f32>> {
     let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
-    let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-    glottal.set_breathiness(voice.breathiness);
 
     let mut tract = VocalTract::new(sample_rate);
     tract.set_formants_from_target(&target);
@@ -580,9 +578,10 @@ fn synthesize_approximant(
     num_samples: usize,
 ) -> Result<Vec<f32>> {
     let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
-    let mut glottal = GlottalSource::new(voice.base_f0, sample_rate)
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-    glottal.set_breathiness(voice.breathiness.max(0.1));
+    glottal.set_breathiness(voice.breathiness.max(0.1)); // Approximants need slight breathiness
 
     let mut tract = VocalTract::new(sample_rate);
     tract.set_formants_from_target(&target);
@@ -604,13 +603,13 @@ fn apply_amplitude_envelope(samples: &mut [f32], _total: usize) {
         return;
     }
     // 5ms ramp at 44100 Hz ≈ 220 samples, but scale proportionally
-    let ramp_len = (len / 10).max(1).min(256);
+    let ramp_len = (len / 10).clamp(1, 256);
 
-    for i in 0..ramp_len {
+    for (i, sample) in samples.iter_mut().enumerate().take(ramp_len) {
         let t = i as f32 / ramp_len as f32;
         // Raised cosine ramp
         let gain = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-        samples[i] *= gain;
+        *sample *= gain;
     }
 
     for i in 0..ramp_len {

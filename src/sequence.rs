@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
-use crate::error::{Result, SvaraError};
+use crate::error::Result;
 use crate::phoneme::{self, Phoneme};
 use crate::prosody::Stress;
 use crate::voice::VoiceProfile;
@@ -109,8 +109,7 @@ impl PhonemeSequence {
 
         trace!(
             num_events = self.events.len(),
-            sample_rate,
-            "rendering phoneme sequence"
+            sample_rate, "rendering phoneme sequence"
         );
 
         // Calculate effective durations with stress scaling
@@ -195,12 +194,12 @@ fn crossfade_segments(segments: &[Vec<f32>], crossfade_len: usize) -> Vec<f32> {
             let output_len = output.len();
 
             // Blend the crossfade region
-            for j in 0..fade_len {
+            for (j, &seg_sample) in segment.iter().enumerate().take(fade_len) {
                 let t = j as f32 / fade_len.max(1) as f32;
                 let fade_in = 0.5 * (1.0 - (std::f32::consts::PI * t).cos()); // cosine fade in
                 let idx = output_len - (fade_len - j);
                 if idx < output.len() {
-                    output[idx] += segment[j] * fade_in;
+                    output[idx] += seg_sample * fade_in;
                 }
             }
 
@@ -208,8 +207,7 @@ fn crossfade_segments(segments: &[Vec<f32>], crossfade_len: usize) -> Vec<f32> {
             if segment.len() > fade_len {
                 if i < segments.len() - 1 && segment.len() > fade_len + crossfade_len {
                     // Not the last segment: leave room for next crossfade
-                    output
-                        .extend_from_slice(&segment[fade_len..segment.len() - crossfade_len]);
+                    output.extend_from_slice(&segment[fade_len..segment.len() - crossfade_len]);
                     let fade_start = segment.len() - crossfade_len;
                     for (j, &sample) in segment[fade_start..].iter().enumerate() {
                         let t = j as f32 / crossfade_len.max(1) as f32;
@@ -260,21 +258,9 @@ mod tests {
     #[test]
     fn test_multi_phoneme() {
         let mut seq = PhonemeSequence::new();
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelA,
-            0.1,
-            Stress::Primary,
-        ));
-        seq.push(PhonemeEvent::new(
-            Phoneme::NasalN,
-            0.06,
-            Stress::Unstressed,
-        ));
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelI,
-            0.1,
-            Stress::Secondary,
-        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        seq.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
+        seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
 
         let voice = VoiceProfile::new_male();
         let result = seq.render(&voice, 44100.0);
@@ -287,32 +273,16 @@ mod tests {
     #[test]
     fn test_total_duration() {
         let mut seq = PhonemeSequence::new();
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelA,
-            0.1,
-            Stress::Unstressed,
-        ));
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelE,
-            0.2,
-            Stress::Unstressed,
-        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Unstressed));
+        seq.push(PhonemeEvent::new(Phoneme::VowelE, 0.2, Stress::Unstressed));
         assert!((seq.total_duration() - 0.3).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_crossfade_no_clicks() {
         let mut seq = PhonemeSequence::new();
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelA,
-            0.1,
-            Stress::Primary,
-        ));
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelI,
-            0.1,
-            Stress::Primary,
-        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary));
 
         let voice = VoiceProfile::new_male();
         let samples = seq.render(&voice, 44100.0).unwrap();
@@ -324,10 +294,7 @@ mod tests {
             .fold(0.0f32, f32::max);
 
         // A "click" would be a very large jump relative to signal level
-        let max_amp = samples
-            .iter()
-            .map(|s| s.abs())
-            .fold(0.0f32, f32::max);
+        let max_amp = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
 
         // Max jump should be small relative to signal amplitude
         if max_amp > 0.001 {
@@ -341,11 +308,7 @@ mod tests {
     #[test]
     fn test_serde_roundtrip() {
         let mut seq = PhonemeSequence::new();
-        seq.push(PhonemeEvent::new(
-            Phoneme::VowelA,
-            0.1,
-            Stress::Primary,
-        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
         let json = serde_json::to_string(&seq).unwrap();
         let seq2: PhonemeSequence = serde_json::from_str(&json).unwrap();
         assert_eq!(seq2.len(), 1);

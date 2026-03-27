@@ -15,7 +15,7 @@ use crate::glottal::GlottalSource;
 /// radiation (first-order high-pass differentiation).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VocalTract {
-    /// Formant filter cascade.
+    /// Parallel formant filter bank.
     filter: FormantFilter,
     /// Nasal coupling coefficient (0.0 = oral, 1.0 = fully nasal).
     nasal_coupling: f32,
@@ -80,9 +80,9 @@ impl NasalAntiformant {
 
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
-        let output =
-            self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1
-                - self.a2 * self.y2;
+        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = input;
         self.y2 = self.y1;
@@ -106,15 +106,11 @@ impl VocalTract {
         let formants = target.to_formants();
         // unwrap safety: VowelTarget always produces valid formants and sample_rate
         // is used as-is. We use a fallback if somehow creation fails.
-        let filter = FormantFilter::new(&formants, sample_rate)
-            .unwrap_or_else(|_| {
-                // Absolute fallback: single formant at 500Hz
-                FormantFilter::new(
-                    &[Formant::new(500.0, 100.0, 1.0)],
-                    sample_rate,
-                )
+        let filter = FormantFilter::new(&formants, sample_rate).unwrap_or_else(|_| {
+            // Absolute fallback: single formant at 500Hz
+            FormantFilter::new(&[Formant::new(500.0, 100.0, 1.0)], sample_rate)
                 .expect("fallback formant filter must succeed")
-            });
+        });
 
         let nasal_antiformant = NasalAntiformant::new(250.0, 100.0, sample_rate);
 
@@ -187,11 +183,7 @@ impl VocalTract {
     }
 
     /// Synthesizes a block of samples by piping glottal source through the vocal tract.
-    pub fn synthesize(
-        &mut self,
-        glottal: &mut GlottalSource,
-        num_samples: usize,
-    ) -> Vec<f32> {
+    pub fn synthesize(&mut self, glottal: &mut GlottalSource, num_samples: usize) -> Vec<f32> {
         let mut output = Vec::with_capacity(num_samples);
         for _ in 0..num_samples {
             let excitation = glottal.next_sample();

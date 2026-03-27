@@ -6,7 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::Result;
 use crate::formant::VowelTarget;
+use crate::glottal::GlottalSource;
 
 /// A speaker's voice characteristics.
 ///
@@ -138,6 +140,22 @@ impl VoiceProfile {
     pub fn with_f0_range(mut self, range: f32) -> Self {
         self.f0_range = range.max(0.0);
         self
+    }
+
+    /// Creates a [`GlottalSource`] configured with this voice profile's parameters.
+    ///
+    /// Sets f0, breathiness, jitter, shimmer, and vibrato from the profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `base_f0` is outside the valid range.
+    pub fn create_glottal_source(&self, sample_rate: f32) -> Result<GlottalSource> {
+        let mut gs = GlottalSource::new(self.base_f0, sample_rate)?;
+        gs.set_breathiness(self.breathiness);
+        gs.set_jitter(self.jitter);
+        gs.set_shimmer(self.shimmer);
+        gs.set_vibrato(self.vibrato_rate, self.vibrato_depth);
+        Ok(gs)
     }
 
     /// Applies the formant scaling factor to a vowel target.

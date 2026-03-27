@@ -13,7 +13,7 @@ use tracing::trace;
 /// to [0.0, 1.0] and value is a multiplier of the base f0.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProsodyContour {
-    /// Time-value pairs for f0 contour. Time in [0,1], value is f0 multiplier.
+    /// Time-value pairs for f0 contour. Time in `[0,1]`, value is f0 multiplier.
     pub f0_points: Vec<(f32, f32)>,
     /// Duration scale factor (1.0 = normal).
     pub duration_scale: f32,
@@ -78,13 +78,7 @@ impl ProsodyContour {
             },
             IntonationPattern::Exclamatory => Self {
                 // High start, dramatic fall
-                f0_points: vec![
-                    (0.0, 1.3),
-                    (0.2, 1.25),
-                    (0.5, 1.1),
-                    (0.8, 0.9),
-                    (1.0, 0.75),
-                ],
+                f0_points: vec![(0.0, 1.3), (0.2, 1.25), (0.5, 1.1), (0.8, 0.9), (1.0, 0.75)],
                 duration_scale: 0.9,
                 amplitude_scale: 1.2,
             },
@@ -134,10 +128,7 @@ impl ProsodyContour {
         }
 
         // Add peak point if not near an existing point
-        let has_nearby = self
-            .f0_points
-            .iter()
-            .any(|p| (p.0 - position).abs() < 0.02);
+        let has_nearby = self.f0_points.iter().any(|p| (p.0 - position).abs() < 0.02);
         if !has_nearby {
             // Find the interpolated base value at this position
             let base = self.f0_at_internal(position);

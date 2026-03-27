@@ -142,7 +142,11 @@ fn test_phoneme_sequence_renders_without_error() {
     seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
     seq.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
     seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
-    seq.push(PhonemeEvent::new(Phoneme::FricativeS, 0.08, Stress::Unstressed));
+    seq.push(PhonemeEvent::new(
+        Phoneme::FricativeS,
+        0.08,
+        Stress::Unstressed,
+    ));
     seq.push(PhonemeEvent::new(Phoneme::VowelE, 0.1, Stress::Primary));
 
     let voice = VoiceProfile::new_male();
@@ -155,7 +159,9 @@ fn test_phoneme_sequence_renders_without_error() {
 
 #[test]
 fn test_serde_roundtrip_voice_profile() {
-    let v = VoiceProfile::new_female().with_f0(200.0).with_breathiness(0.3);
+    let v = VoiceProfile::new_female()
+        .with_f0(200.0)
+        .with_breathiness(0.3);
     let json = serde_json::to_string(&v).unwrap();
     let v2: VoiceProfile = serde_json::from_str(&json).unwrap();
     assert!((v2.base_f0 - 200.0).abs() < f32::EPSILON);
@@ -192,12 +198,18 @@ fn test_vowel_target_interpolation_endpoints() {
     let to = VowelTarget::from_vowel(Vowel::I);
 
     let at0 = VowelTarget::interpolate(&from, &to, 0.0);
-    assert!((at0.f1 - from.f1).abs() < f32::EPSILON, "at t=0 should equal 'from'");
+    assert!(
+        (at0.f1 - from.f1).abs() < f32::EPSILON,
+        "at t=0 should equal 'from'"
+    );
     assert!((at0.f2 - from.f2).abs() < f32::EPSILON);
     assert!((at0.f3 - from.f3).abs() < f32::EPSILON);
 
     let at1 = VowelTarget::interpolate(&from, &to, 1.0);
-    assert!((at1.f1 - to.f1).abs() < f32::EPSILON, "at t=1 should equal 'to'");
+    assert!(
+        (at1.f1 - to.f1).abs() < f32::EPSILON,
+        "at t=1 should equal 'to'"
+    );
     assert!((at1.f2 - to.f2).abs() < f32::EPSILON);
     assert!((at1.f3 - to.f3).abs() < f32::EPSILON);
 }
@@ -278,6 +290,164 @@ fn test_diphthong_synthesis() {
         let samples = result.unwrap();
         assert!(samples.iter().all(|s| s.is_finite()));
     }
+}
+
+#[test]
+fn test_serde_roundtrip_vowel_enum() {
+    let vowels = [
+        Vowel::A,
+        Vowel::E,
+        Vowel::I,
+        Vowel::O,
+        Vowel::U,
+        Vowel::Schwa,
+        Vowel::Ash,
+        Vowel::NearI,
+        Vowel::NearU,
+        Vowel::OpenO,
+    ];
+    for v in &vowels {
+        let json = serde_json::to_string(v).unwrap();
+        let v2: Vowel = serde_json::from_str(&json).unwrap();
+        assert_eq!(*v, v2, "roundtrip failed for {:?}", v);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_formant_filter() {
+    let formants = [
+        Formant::new(730.0, 60.0, 1.0),
+        Formant::new(1090.0, 80.0, 0.8),
+        Formant::new(2440.0, 100.0, 0.5),
+    ];
+    let filter = FormantFilter::new(&formants, 44100.0).unwrap();
+    let json = serde_json::to_string(&filter).unwrap();
+    let filter2: FormantFilter = serde_json::from_str(&json).unwrap();
+    // Verify by processing a sample through both
+    let mut f1 = filter.clone();
+    let mut f2 = filter2;
+    let out1 = f1.process_sample(1.0);
+    let out2 = f2.process_sample(1.0);
+    assert!(
+        (out1 - out2).abs() < f32::EPSILON,
+        "deserialized filter should produce identical output"
+    );
+}
+
+#[test]
+fn test_serde_roundtrip_vocal_tract() {
+    let tract = VocalTract::new(44100.0);
+    let json = serde_json::to_string(&tract).unwrap();
+    let tract2: VocalTract = serde_json::from_str(&json).unwrap();
+    // Verify by processing a sample through both
+    let mut t1 = tract.clone();
+    let mut t2 = tract2;
+    let out1 = t1.process_sample(1.0);
+    let out2 = t2.process_sample(1.0);
+    assert!(
+        (out1 - out2).abs() < f32::EPSILON,
+        "deserialized tract should produce identical output"
+    );
+}
+
+#[test]
+fn test_serde_roundtrip_phoneme_event() {
+    let event = PhonemeEvent::new(Phoneme::VowelA, 0.15, Stress::Primary);
+    let json = serde_json::to_string(&event).unwrap();
+    let event2: PhonemeEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(event2.phoneme, Phoneme::VowelA);
+    assert!((event2.duration - 0.15).abs() < f32::EPSILON);
+    assert_eq!(event2.stress, Stress::Primary);
+}
+
+#[test]
+fn test_serde_roundtrip_intonation_pattern() {
+    let patterns = [
+        IntonationPattern::Declarative,
+        IntonationPattern::Interrogative,
+        IntonationPattern::Continuation,
+        IntonationPattern::Exclamatory,
+    ];
+    for p in &patterns {
+        let json = serde_json::to_string(p).unwrap();
+        let p2: IntonationPattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(*p, p2, "roundtrip failed for {:?}", p);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_stress() {
+    let stresses = [Stress::Primary, Stress::Secondary, Stress::Unstressed];
+    for s in &stresses {
+        let json = serde_json::to_string(s).unwrap();
+        let s2: Stress = serde_json::from_str(&json).unwrap();
+        assert_eq!(*s, s2, "roundtrip failed for {:?}", s);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_phoneme_class() {
+    let classes = [
+        PhonemeClass::Vowel,
+        PhonemeClass::Fricative,
+        PhonemeClass::Plosive,
+        PhonemeClass::Nasal,
+        PhonemeClass::Approximant,
+        PhonemeClass::Silence,
+    ];
+    for c in &classes {
+        let json = serde_json::to_string(c).unwrap();
+        let c2: PhonemeClass = serde_json::from_str(&json).unwrap();
+        assert_eq!(*c, c2, "roundtrip failed for {:?}", c);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_svara_error() {
+    let errors = [
+        SvaraError::InvalidFormant("test formant".to_string()),
+        SvaraError::InvalidPhoneme("test phoneme".to_string()),
+        SvaraError::InvalidPitch("test pitch".to_string()),
+        SvaraError::InvalidDuration("test duration".to_string()),
+        SvaraError::ArticulationFailed("test articulation".to_string()),
+        SvaraError::ComputationError("test computation".to_string()),
+    ];
+    for e in &errors {
+        let json = serde_json::to_string(e).unwrap();
+        let e2: SvaraError = serde_json::from_str(&json).unwrap();
+        assert_eq!(e.to_string(), e2.to_string());
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_phoneme_sequence_deep() {
+    let mut seq = PhonemeSequence::new();
+    seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+    seq.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
+    seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
+
+    let json = serde_json::to_string(&seq).unwrap();
+    let seq2: PhonemeSequence = serde_json::from_str(&json).unwrap();
+    assert_eq!(seq2.len(), 3);
+    assert!((seq2.total_duration() - seq.total_duration()).abs() < f32::EPSILON);
+
+    // Verify the deserialized sequence renders identically
+    let voice = VoiceProfile::new_male();
+    let samples1 = seq.render(&voice, 44100.0).unwrap();
+    let samples2 = seq2.render(&voice, 44100.0).unwrap();
+    assert_eq!(samples1.len(), samples2.len());
+}
+
+#[test]
+fn test_serde_roundtrip_vowel_target() {
+    let target = VowelTarget::new(730.0, 1090.0, 2440.0, 3300.0, 3750.0);
+    let json = serde_json::to_string(&target).unwrap();
+    let target2: VowelTarget = serde_json::from_str(&json).unwrap();
+    assert!((target2.f1 - 730.0).abs() < f32::EPSILON);
+    assert!((target2.f2 - 1090.0).abs() < f32::EPSILON);
+    assert!((target2.f3 - 2440.0).abs() < f32::EPSILON);
+    assert!((target2.f4 - 3300.0).abs() < f32::EPSILON);
+    assert!((target2.f5 - 3750.0).abs() < f32::EPSILON);
 }
 
 /// Goertzel algorithm: computes the magnitude of a specific frequency component.

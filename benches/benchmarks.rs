@@ -59,7 +59,11 @@ fn bench_sequence_render_5_phonemes(c: &mut Criterion) {
         seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.08, Stress::Primary));
         seq.push(PhonemeEvent::new(Phoneme::NasalN, 0.05, Stress::Unstressed));
         seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.08, Stress::Secondary));
-        seq.push(PhonemeEvent::new(Phoneme::FricativeS, 0.06, Stress::Unstressed));
+        seq.push(PhonemeEvent::new(
+            Phoneme::FricativeS,
+            0.06,
+            Stress::Unstressed,
+        ));
         seq.push(PhonemeEvent::new(Phoneme::VowelE, 0.08, Stress::Primary));
 
         b.iter(|| {

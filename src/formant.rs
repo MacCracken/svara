@@ -1,7 +1,7 @@
 //! Formant filtering and vowel target definitions.
 //!
 //! Formants are resonant frequencies of the vocal tract. This module provides
-//! formant filter cascades (using biquad resonators), vowel targets based on
+//! parallel formant filter banks (using biquad resonators), vowel targets based on
 //! Peterson & Barney (1952), and smooth interpolation between vowel shapes.
 
 use serde::{Deserialize, Serialize};
@@ -191,9 +191,9 @@ impl BiquadResonator {
     /// Processes a single sample through the biquad filter.
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
-        let output =
-            self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1
-                - self.a2 * self.y2;
+        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
 
         self.x2 = self.x1;
         self.x1 = input;
@@ -212,10 +212,10 @@ impl BiquadResonator {
     }
 }
 
-/// A cascade of biquad filters tuned to formant frequencies.
+/// A parallel bank of biquad filters tuned to formant frequencies.
 ///
 /// Processes an input signal (typically from [`GlottalSource`](crate::glottal::GlottalSource))
-/// through parallel formant resonators and sums the outputs.
+/// through parallel formant resonators and sums the weighted outputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormantFilter {
     filters: Vec<BiquadResonator>,
@@ -224,7 +224,7 @@ pub struct FormantFilter {
 }
 
 impl FormantFilter {
-    /// Creates a new formant filter cascade from the given formant specifications.
+    /// Creates a new parallel formant filter bank from the given formant specifications.
     ///
     /// # Errors
     ///
@@ -260,8 +260,7 @@ impl FormantFilter {
 
         trace!(
             num_formants = formants.len(),
-            sample_rate,
-            "created formant filter"
+            sample_rate, "created formant filter"
         );
 
         Ok(Self {
@@ -291,7 +290,7 @@ impl FormantFilter {
         Ok(())
     }
 
-    /// Processes a single input sample through the formant filter cascade.
+    /// Processes a single input sample through the parallel formant filter bank.
     ///
     /// Runs the input through all formant resonators in parallel and sums the
     /// weighted outputs.
