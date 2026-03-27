@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`PartialEq`** on `Formant` and `VowelTarget`
 - Named constants for magic numbers: `DEFAULT_RNG_SEED`, `DEFAULT_OPEN_QUOTIENT`, `DEFAULT_JITTER`, `DEFAULT_SHIMMER`, `NASAL_ANTIFORMANT_FREQ`, `NASAL_ANTIFORMANT_BW`, `DEFAULT_LIP_RADIATION`, `DEFAULT_BANDWIDTHS`, `DEFAULT_AMPLITUDES`
 - 10 serde roundtrip tests: `Vowel`, `FormantFilter`, `VocalTract`, `PhonemeEvent`, `IntonationPattern`, `Stress`, `PhonemeClass`, `SvaraError`, `PhonemeSequence` (deep verify), `VowelTarget`
+- **Aspiration noise gating**: Breathiness noise now temporally gated by glottal open phase — full noise during open quotient, reduced during closure
+- **Bandwidth scaling by f0**: `apply_formant_scale()` now widens bandwidths proportionally to `sqrt(f0/120)` for female/child voices
+- **Tap/flap** `/ɾ/` phoneme (`TapFlap`) — short voiced alveolar contact
+- **Look-ahead coarticulation**: Transition to next phoneme begins at configurable onset (default 60% of segment), with sigmoid interpolation curves
+- **Coarticulation resistance**: Per-phoneme resistance coefficients (0.0-1.0) based on Recasens DAC model — controls crossfade length at each boundary
+- **F2 locus equations**: `f2_locus_equation()` returns (locus, slope) by place of articulation (bilabial, alveolar, velar) per Sussman et al. (1991)
+- **Variable crossfade**: Per-boundary crossfade lengths modulated by adjacent phoneme resistance (low-resistance phonemes get longer blending regions)
+- **`VocalTract::synthesize_into()`**: Zero-allocation synthesis into pre-allocated buffer
+- 5 new benchmarks: fricative, diphthong, female vowel, 10-phoneme sequence, pre-allocated tract
 - `scripts/bench-history.sh` for tracking benchmark results over time
 - `docs/development/roadmap.md` with backlog and v1.0 criteria
 
@@ -36,11 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`VowelTarget::to_formants()`** now returns `[Formant; 5]` instead of `Vec<Formant>` (zero allocation)
 - **`VocalTract::set_formants()`**, `set_formants_from_target()`, `set_vowel()` now return `Result<()>` instead of silently swallowing errors
+- **`PhonemeSequence`** now uses variable-length sigmoid crossfades modulated by coarticulation resistance (was fixed-length cosine)
+- Phoneme inventory: 48 phonemes (was 44) — added affricates, glottal stop, tap/flap
 
 ### Performance
 
-- Glottal source: **6.34µs → 3.81µs** (-40%) per 1024 samples (sinusoidal shaping removed)
-- Phoneme render (vowel /a/): **82.71µs → 77.5µs** (-6%)
+- Glottal source: **6.34µs → 4.15µs** (-35%) per 1024 samples
+- Phoneme render (vowel /a/): **82.71µs → 64.3µs** (-22%)
+- Sequence render (5 phonemes): **350µs → 252µs** (-28%)
+- Sequence render (10 phonemes): **430µs → 357µs** (-17%)
 
 ## [0.1.0] - 2026-03-26
 

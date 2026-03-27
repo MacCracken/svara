@@ -204,13 +204,20 @@ impl VocalTract {
 
     /// Synthesizes a block of samples by piping glottal source through the vocal tract.
     pub fn synthesize(&mut self, glottal: &mut GlottalSource, num_samples: usize) -> Vec<f32> {
-        let mut output = Vec::with_capacity(num_samples);
-        for _ in 0..num_samples {
-            let excitation = glottal.next_sample();
-            let sample = self.process_sample(excitation);
-            output.push(sample);
-        }
+        let mut output = vec![0.0; num_samples];
+        self.synthesize_into(glottal, &mut output);
         output
+    }
+
+    /// Synthesizes into a pre-allocated buffer, avoiding allocation.
+    ///
+    /// Fills the entire buffer with samples from the glottal source piped
+    /// through the vocal tract.
+    pub fn synthesize_into(&mut self, glottal: &mut GlottalSource, output: &mut [f32]) {
+        for sample in output.iter_mut() {
+            let excitation = glottal.next_sample();
+            *sample = self.process_sample(excitation);
+        }
     }
 
     /// Resets the vocal tract state (clears filter history).

@@ -158,18 +158,30 @@ impl VoiceProfile {
         Ok(gs)
     }
 
-    /// Applies the formant scaling factor to a vowel target.
+    /// Applies formant frequency and bandwidth scaling to a vowel target.
     ///
-    /// Scales all formant frequencies by `formant_scale`, modeling the acoustic
-    /// effect of different vocal tract lengths.
+    /// Frequencies are scaled by `formant_scale` (modeling vocal tract length).
+    /// Bandwidths are scaled by `sqrt(base_f0 / 120.0)` — higher f0 voices
+    /// (female, child) have wider bandwidths due to increased source-tract coupling.
     #[must_use]
     pub fn apply_formant_scale(&self, target: &VowelTarget) -> VowelTarget {
-        VowelTarget::new(
-            target.f1 * self.formant_scale,
-            target.f2 * self.formant_scale,
-            target.f3 * self.formant_scale,
-            target.f4 * self.formant_scale,
-            target.f5 * self.formant_scale,
+        // Bandwidth scaling: sqrt(f0 / male_reference_f0)
+        let bw_scale = (self.base_f0 / 120.0).sqrt();
+        VowelTarget::with_bandwidths(
+            [
+                target.f1 * self.formant_scale,
+                target.f2 * self.formant_scale,
+                target.f3 * self.formant_scale,
+                target.f4 * self.formant_scale,
+                target.f5 * self.formant_scale,
+            ],
+            [
+                target.b1 * bw_scale,
+                target.b2 * bw_scale,
+                target.b3 * bw_scale,
+                target.b4 * bw_scale,
+                target.b5 * bw_scale,
+            ],
         )
     }
 }

@@ -272,6 +272,7 @@ fn test_all_consonant_classes_synthesize() {
         Phoneme::AffricateCh,
         Phoneme::AffricateJ,
         Phoneme::GlottalStop,
+        Phoneme::TapFlap,
     ];
     for c in &consonants {
         let result = synthesize_phoneme(c, &voice, 44100.0, 0.08);

@@ -112,6 +112,10 @@ pub enum Phoneme {
     /// /ʔ/ glottal stop
     GlottalStop,
 
+    // Tap/Flap
+    /// /ɾ/ alveolar tap/flap (as in American English "butter")
+    TapFlap,
+
     // Approximants
     /// /l/ alveolar lateral
     LateralL,
@@ -201,6 +205,8 @@ impl Phoneme {
 
             Self::GlottalStop => PhonemeClass::Plosive,
 
+            Self::TapFlap => PhonemeClass::Plosive,
+
             Self::LateralL => PhonemeClass::Lateral,
 
             Self::ApproximantR | Self::ApproximantW | Self::ApproximantJ => {
@@ -230,6 +236,76 @@ impl Phoneme {
             // Everything else is voiced
             _ => true,
         }
+    }
+
+    /// Returns the coarticulation resistance (0.0-1.0) for this phoneme.
+    ///
+    /// Higher values mean the phoneme strongly maintains its articulatory target
+    /// and resists influence from neighbors. Lower values mean it's more susceptible
+    /// to coarticulatory blending (e.g., schwa adapts to context).
+    ///
+    /// Based on Recasens (1999) DAC (Degree of Articulatory Constraint) model.
+    #[must_use]
+    pub fn coarticulation_resistance(&self) -> f32 {
+        match self {
+            // High resistance: strong articulatory targets
+            Self::VowelI | Self::VowelLongI | Self::VowelNearI => 0.9,
+            Self::VowelU | Self::VowelNearU => 0.85,
+            Self::FricativeS | Self::FricativeZ | Self::FricativeSh | Self::FricativeZh => 0.85,
+            Self::AffricateCh | Self::AffricateJ => 0.85,
+
+            // Medium-high: clear targets but some flexibility
+            Self::VowelA | Self::VowelOpenA | Self::VowelAsh => 0.7,
+            Self::VowelE | Self::VowelO | Self::VowelOpenO | Self::VowelOpenE => 0.7,
+            Self::PlosiveT | Self::PlosiveD | Self::NasalN | Self::LateralL => 0.75,
+            Self::PlosiveK | Self::PlosiveG | Self::NasalNg => 0.7,
+            Self::PlosiveP | Self::PlosiveB | Self::NasalM => 0.65,
+
+            // Medium: moderate resistance
+            Self::FricativeF | Self::FricativeV => 0.6,
+            Self::FricativeTh | Self::FricativeDh => 0.6,
+            Self::VowelCupV | Self::VowelBird => 0.5,
+            Self::ApproximantR | Self::ApproximantJ => 0.55,
+            Self::ApproximantW => 0.5,
+            Self::TapFlap => 0.4,
+
+            // Low: highly susceptible to coarticulation
+            Self::VowelSchwa => 0.2,
+            Self::FricativeH => 0.15, // /h/ takes on color of adjacent vowel
+            Self::GlottalStop => 0.1,
+            Self::Silence => 0.0,
+
+            // Diphthongs: medium (already have internal transitions)
+            Self::DiphthongAI
+            | Self::DiphthongAU
+            | Self::DiphthongOI
+            | Self::DiphthongEI
+            | Self::DiphthongOU => 0.6,
+        }
+    }
+}
+
+/// Returns the F2 locus frequency for stop consonants by place of articulation.
+///
+/// Locus equations: the F2 at consonant release is approximately
+/// `F2_locus + slope * (F2_vowel - F2_locus)`. The locus and slope vary
+/// by place of articulation.
+///
+/// Returns `(locus_hz, slope)` or `None` if the phoneme is not a stop/nasal.
+///
+/// Based on Sussman et al. (1991) locus equation data.
+#[must_use]
+pub fn f2_locus_equation(phoneme: &Phoneme) -> Option<(f32, f32)> {
+    match phoneme {
+        // Bilabial: F2 locus ~800-1000 Hz, slope ~0.85 (highly variable)
+        Phoneme::PlosiveP | Phoneme::PlosiveB | Phoneme::NasalM => Some((900.0, 0.85)),
+        // Alveolar: F2 locus ~1700-1800 Hz, slope ~0.55
+        Phoneme::PlosiveT | Phoneme::PlosiveD | Phoneme::NasalN | Phoneme::TapFlap => {
+            Some((1750.0, 0.55))
+        }
+        // Velar: F2 locus ~1800-2300 Hz, slope ~0.70 ("velar pinch")
+        Phoneme::PlosiveK | Phoneme::PlosiveG | Phoneme::NasalNg => Some((2000.0, 0.70)),
+        _ => None,
     }
 }
 
@@ -310,6 +386,9 @@ pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
 
         // Glottal stop: neutral tract position
         Phoneme::GlottalStop => VowelTarget::from_vowel(Vowel::Schwa),
+
+        // Tap/flap: alveolar locus (similar to /d/ but very brief)
+        Phoneme::TapFlap => VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0),
 
         // Approximants
         Phoneme::ApproximantR => VowelTarget::new(350.0, 1300.0, 1600.0, 3300.0, 3750.0),

@@ -62,7 +62,8 @@ pub mod prelude {
     pub use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
     pub use crate::glottal::GlottalSource;
     pub use crate::phoneme::{
-        Phoneme, PhonemeClass, phoneme_duration, phoneme_formants, synthesize_phoneme,
+        Phoneme, PhonemeClass, f2_locus_equation, phoneme_duration, phoneme_formants,
+        synthesize_phoneme,
     };
     pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};

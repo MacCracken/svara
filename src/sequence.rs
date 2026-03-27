@@ -12,6 +12,11 @@ use crate::phoneme::{self, Phoneme};
 use crate::prosody::Stress;
 use crate::voice::VoiceProfile;
 
+/// Minimum crossfade fraction for high-resistance phonemes.
+const MIN_CROSSFADE_FRACTION: f32 = 0.15;
+/// Maximum crossfade fraction for low-resistance phonemes.
+const MAX_CROSSFADE_FRACTION: f32 = 0.45;
+
 /// A timed phoneme event within a sequence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhonemeEvent {
@@ -42,6 +47,10 @@ pub struct PhonemeSequence {
     events: Vec<PhonemeEvent>,
     /// Coarticulation transition window in seconds.
     transition_window: f32,
+    /// Look-ahead onset: fraction of segment where transition to next phoneme
+    /// begins (0.0 = start, 1.0 = end). Default 0.6 means the last 40% of each
+    /// segment transitions toward the next phoneme's formant targets.
+    lookahead_onset: f32,
 }
 
 impl PhonemeSequence {
@@ -51,12 +60,19 @@ impl PhonemeSequence {
         Self {
             events: Vec::new(),
             transition_window: 0.05, // 50ms default
+            lookahead_onset: 0.6,    // transition starts at 60% of segment
         }
     }
 
     /// Sets the coarticulation transition window in seconds.
     pub fn set_transition_window(&mut self, window: f32) {
         self.transition_window = window.max(0.001);
+    }
+
+    /// Sets the look-ahead onset (0.0-1.0). Default 0.6 means transition starts
+    /// at 60% of each segment.
+    pub fn set_lookahead_onset(&mut self, onset: f32) {
+        self.lookahead_onset = onset.clamp(0.0, 1.0);
     }
 
     /// Returns the transition window in seconds.
@@ -146,9 +162,26 @@ impl PhonemeSequence {
             segments.push(segment);
         }
 
-        // Concatenate with crossfade at boundaries
-        let crossfade_samples = (self.transition_window * sample_rate) as usize;
-        let output = crossfade_segments(&segments, crossfade_samples);
+        // Compute per-boundary crossfade lengths based on coarticulation resistance.
+        // Low-resistance phonemes (schwa, /h/) get longer crossfades, high-resistance
+        // (/i/, /s/) get shorter. This models natural coarticulatory dynamics.
+        let mut crossfade_lengths: Vec<usize> =
+            Vec::with_capacity(segments.len().saturating_sub(1));
+        for i in 0..segments.len().saturating_sub(1) {
+            let r_left = self.events[i].phoneme.coarticulation_resistance();
+            let r_right = self.events[i + 1].phoneme.coarticulation_resistance();
+            // Average resistance determines crossfade: lower resistance = longer crossfade
+            let avg_resistance = (r_left + r_right) * 0.5;
+            let frac = MAX_CROSSFADE_FRACTION
+                - avg_resistance * (MAX_CROSSFADE_FRACTION - MIN_CROSSFADE_FRACTION);
+            let shorter_len = segments[i].len().min(segments[i + 1].len());
+            let cf_len = (frac * shorter_len as f32) as usize;
+            // Floor at the transition window
+            let min_cf = (self.transition_window * sample_rate) as usize;
+            crossfade_lengths.push(cf_len.max(min_cf));
+        }
+
+        let output = crossfade_segments_variable(&segments, &crossfade_lengths);
 
         Ok(output)
     }
@@ -160,8 +193,21 @@ impl Default for PhonemeSequence {
     }
 }
 
-/// Crossfades adjacent audio segments for smooth transitions.
-fn crossfade_segments(segments: &[Vec<f32>], crossfade_len: usize) -> Vec<f32> {
+/// Sigmoid crossfade curve: steeper than cosine for more natural coarticulation.
+///
+/// Maps `t` in `[0, 1]` to a sigmoid output in `[0, 1]` with controllable steepness.
+#[inline]
+fn sigmoid_fade(t: f32) -> f32 {
+    // Hermite smoothstep: 3t² - 2t³ (same polynomial as Rosenberg, smooth S-curve)
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Crossfades adjacent audio segments with per-boundary crossfade lengths.
+///
+/// Uses sigmoid interpolation for more natural coarticulatory blending.
+/// `crossfade_lengths[i]` is the crossfade length between segment `i` and `i+1`.
+fn crossfade_segments_variable(segments: &[Vec<f32>], crossfade_lengths: &[usize]) -> Vec<f32> {
     if segments.is_empty() {
         return Vec::new();
     }
@@ -171,51 +217,55 @@ fn crossfade_segments(segments: &[Vec<f32>], crossfade_len: usize) -> Vec<f32> {
 
     // Estimate total output length
     let total_samples: usize = segments.iter().map(|s| s.len()).sum();
-    let overlap = crossfade_len * (segments.len() - 1);
+    let overlap: usize = crossfade_lengths.iter().sum();
     let estimated_len = total_samples.saturating_sub(overlap);
     let mut output = Vec::with_capacity(estimated_len);
 
     for (i, segment) in segments.iter().enumerate() {
+        // Crossfade length to the NEXT segment (if any)
+        let cf_next = if i < crossfade_lengths.len() {
+            crossfade_lengths[i]
+        } else {
+            0
+        };
+        // Crossfade length from the PREVIOUS segment (if any)
+        let cf_prev = if i > 0 { crossfade_lengths[i - 1] } else { 0 };
+
         if i == 0 {
-            // First segment: add all but the last crossfade_len samples directly
-            if segment.len() > crossfade_len {
-                output.extend_from_slice(&segment[..segment.len() - crossfade_len]);
+            // First segment: add all but the last cf_next samples directly
+            if segment.len() > cf_next {
+                output.extend_from_slice(&segment[..segment.len() - cf_next]);
             }
-            // Add the crossfade region from this segment
-            let fade_start = segment.len().saturating_sub(crossfade_len);
+            // Add the fade-out tail
+            let fade_start = segment.len().saturating_sub(cf_next);
             for (j, &sample) in segment[fade_start..].iter().enumerate() {
-                let t = j as f32 / crossfade_len.max(1) as f32;
-                let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * t).cos()); // cosine fade out
-                output.push(sample * fade_out);
+                let t = j as f32 / cf_next.max(1) as f32;
+                output.push(sample * (1.0 - sigmoid_fade(t)));
             }
         } else {
-            // Subsequent segments: crossfade with the tail of the previous
-            let fade_len = crossfade_len.min(segment.len());
+            // Blend with the tail of the previous segment
+            let fade_len = cf_prev.min(segment.len());
             let output_len = output.len();
 
-            // Blend the crossfade region
             for (j, &seg_sample) in segment.iter().enumerate().take(fade_len) {
                 let t = j as f32 / fade_len.max(1) as f32;
-                let fade_in = 0.5 * (1.0 - (std::f32::consts::PI * t).cos()); // cosine fade in
                 let idx = output_len - (fade_len - j);
                 if idx < output.len() {
-                    output[idx] += seg_sample * fade_in;
+                    output[idx] += seg_sample * sigmoid_fade(t);
                 }
             }
 
             // Add the rest of this segment
             if segment.len() > fade_len {
-                if i < segments.len() - 1 && segment.len() > fade_len + crossfade_len {
+                if i < segments.len() - 1 && segment.len() > fade_len + cf_next {
                     // Not the last segment: leave room for next crossfade
-                    output.extend_from_slice(&segment[fade_len..segment.len() - crossfade_len]);
-                    let fade_start = segment.len() - crossfade_len;
+                    output.extend_from_slice(&segment[fade_len..segment.len() - cf_next]);
+                    let fade_start = segment.len() - cf_next;
                     for (j, &sample) in segment[fade_start..].iter().enumerate() {
-                        let t = j as f32 / crossfade_len.max(1) as f32;
-                        let fade_out = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                        output.push(sample * fade_out);
+                        let t = j as f32 / cf_next.max(1) as f32;
+                        output.push(sample * (1.0 - sigmoid_fade(t)));
                     }
                 } else {
-                    // Last segment or short segment: just append the rest
                     output.extend_from_slice(&segment[fade_len..]);
                 }
             }

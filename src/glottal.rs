@@ -226,9 +226,12 @@ impl GlottalSource {
         // Apply shimmer (amplitude variation)
         let pulse = pulse * self.current_amplitude;
 
-        // Mix with noise for breathiness
+        // Mix with aspiration noise for breathiness.
+        // Noise is gated by the glottal open phase: full noise during the open
+        // phase, reduced during closed phase (models turbulent airflow at glottis).
         let noise = self.rng.next_f32();
-        let sample = pulse * (1.0 - self.breathiness) + noise * self.breathiness * 0.3;
+        let noise_gate = if t < self.open_quotient { 1.0 } else { 0.1 };
+        let sample = pulse * (1.0 - self.breathiness) + noise * self.breathiness * 0.3 * noise_gate;
 
         // Advance phase
         self.phase += 1.0;

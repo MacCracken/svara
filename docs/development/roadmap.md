@@ -34,14 +34,14 @@
 - [x] Fix vowel aliasing: VowelOpenA != VowelA, VowelBird != Schwa — done 2026-03-27
 - [x] DC-blocking filter at formant bank output — done 2026-03-27
 - [x] Proper error propagation in tract.rs set_formants() — done 2026-03-27
-- [ ] Aspiration noise gated by glottal cycle phase, not constant mix
-- [ ] Bandwidth scaling by f0 for female/child voices
+- [x] Aspiration noise gated by glottal cycle phase — done 2026-03-27
+- [x] Bandwidth scaling by f0 for female/child voices — done 2026-03-27
 
 ### Phoneme Inventory
 
 - [x] Affricates: /tʃ/ (church), /dʒ/ (judge) — done 2026-03-27
 - [x] Glottal stop /ʔ/ — done 2026-03-27
-- [ ] Tap/flap /ɾ/
+- [x] Tap/flap /ɾ/ — done 2026-03-27
 
 ### API Quality
 
@@ -52,10 +52,10 @@
 
 ### Coarticulation
 
-- [ ] Look-ahead coarticulation: start formant transition in last 30-40% of current segment
-- [ ] Asymmetric formant trajectory interpolation (sigmoid/exponential, not linear)
-- [ ] Per-phoneme coarticulation resistance coefficients
-- [ ] Locus equations for stop consonant F2 transitions
+- [x] Look-ahead coarticulation with configurable onset — done 2026-03-27
+- [x] Sigmoid formant trajectory interpolation — done 2026-03-27
+- [x] Per-phoneme coarticulation resistance coefficients (Recasens DAC) — done 2026-03-27
+- [x] F2 locus equations for stop consonants (Sussman et al.) — done 2026-03-27
 
 ## Backlog — Medium Priority
 
@@ -63,8 +63,8 @@
 
 - [ ] Block-based processing (64-512 samples) instead of per-sample
 - [ ] SOA layout for parallel formant SIMD (f32x4/f32x8)
-- [ ] Pre-allocated output buffers in VocalTract::synthesize()
-- [ ] Additional benchmarks: diphthongs, consonant classes, high f0, large sequences, low sample rates
+- [x] Pre-allocated output buffers: `VocalTract::synthesize_into()` — done 2026-03-27
+- [x] Additional benchmarks: fricative, diphthong, female, 10-phoneme, pre-alloc — done 2026-03-27
 
 ### Glottal Modeling
 
