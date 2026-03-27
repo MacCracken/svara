@@ -4,6 +4,7 @@
 //! contours, coarticulatory formant blending, and smooth crossfades at
 //! phoneme boundaries.
 
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 

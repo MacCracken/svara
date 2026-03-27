@@ -45,11 +45,18 @@
 //!
 //! - **`naad-backend`** (default): Use naad crate for oscillators, filters, and noise.
 //!   Without this, svara uses internal minimal implementations.
+//! - **`std`** (default): Enable standard library. Disable for `no_std` environments
+//!   (requires `alloc`).
 //! - **`logging`**: Enable tracing-subscriber for structured log output.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod error;
 pub mod formant;
 pub mod glottal;
+mod math;
 pub mod phoneme;
 pub mod prosody;
 pub mod sequence;

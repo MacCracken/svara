@@ -166,7 +166,7 @@ impl VoiceProfile {
     #[must_use]
     pub fn apply_formant_scale(&self, target: &VowelTarget) -> VowelTarget {
         // Bandwidth scaling: sqrt(f0 / male_reference_f0)
-        let bw_scale = (self.base_f0 / 120.0).sqrt();
+        let bw_scale = crate::math::f32::sqrt(self.base_f0 / 120.0);
         VowelTarget::with_bandwidths(
             [
                 target.f1 * self.formant_scale,

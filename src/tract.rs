@@ -3,6 +3,7 @@
 //! The vocal tract shapes the glottal excitation through formant filtering,
 //! nasal coupling, and lip radiation to produce the final speech signal.
 
+use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
@@ -16,6 +17,36 @@ const NASAL_ANTIFORMANT_BW: f32 = 100.0;
 /// Lip radiation coefficient (first-order high-pass approximation).
 const DEFAULT_LIP_RADIATION: f32 = 0.97;
 use crate::glottal::GlottalSource;
+
+/// Place of articulation for nasal consonants, affecting antiformant frequency.
+///
+/// Different nasal consonants produce zeros (anti-formants) at different
+/// frequencies depending on where the oral cavity is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum NasalPlace {
+    /// Bilabial (/m/): anti-formant ~750 Hz, long oral cavity.
+    Bilabial,
+    /// Alveolar (/n/): anti-formant ~1450 Hz, medium oral cavity.
+    Alveolar,
+    /// Velar (/ŋ/): anti-formant ~3000 Hz, short oral cavity.
+    Velar,
+    /// Default/neutral position (~250 Hz).
+    Neutral,
+}
+
+impl NasalPlace {
+    /// Returns the anti-formant frequency for this place of articulation.
+    #[must_use]
+    fn antiformant_frequency(self) -> f32 {
+        match self {
+            Self::Neutral => NASAL_ANTIFORMANT_FREQ,
+            Self::Bilabial => 750.0,
+            Self::Alveolar => 1450.0,
+            Self::Velar => 3000.0,
+        }
+    }
+}
 
 /// A vocal tract model that processes glottal excitation into speech.
 ///
@@ -33,6 +64,21 @@ pub struct VocalTract {
     lip_prev: f32,
     /// Lip radiation coefficient (0.0-1.0).
     lip_radiation: f32,
+    /// Source-filter interaction: feedback from tract output to modify excitation.
+    /// Models the effect of vocal tract impedance on glottal flow.
+    /// Range: 0.0 (no coupling) to 0.3 (strong coupling).
+    interaction_strength: f32,
+    /// Previous tract output for source-filter interaction feedback.
+    interaction_feedback: f32,
+    /// Subglottal resonance coupling strength (0.0 = off, typically 0.05-0.1).
+    /// Adds a resonance at ~600Hz that interacts with F1, modeling tracheal effects.
+    subglottal_coupling: f32,
+    /// Subglottal resonance state: [x1, x2, y1, y2] for a 600Hz bandpass biquad.
+    sg_state: [f32; 4],
+    /// Subglottal biquad coefficients: [b0, b2, a1, a2].
+    sg_coeff: [f32; 4],
+    /// Output gain normalization factor.
+    gain: f32,
     /// Sample rate in Hz.
     sample_rate: f32,
 }
@@ -58,10 +104,10 @@ struct NasalAntiformant {
 
 impl NasalAntiformant {
     fn new(frequency: f32, bandwidth: f32, sample_rate: f32) -> Self {
-        let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
-        let cos_omega = omega.cos();
-        let bw_omega = 2.0 * std::f32::consts::PI * bandwidth / sample_rate;
-        let alpha = (bw_omega / 2.0).sinh() * omega.sin();
+        let omega = 2.0 * core::f32::consts::PI * frequency / sample_rate;
+        let cos_omega = crate::math::f32::cos(omega);
+        let bw_omega = 2.0 * core::f32::consts::PI * bandwidth / sample_rate;
+        let alpha = crate::math::f32::sinh(bw_omega / 2.0) * crate::math::f32::sin(omega);
 
         // Notch filter coefficients
         let a0 = 1.0 + alpha;
@@ -98,6 +144,19 @@ impl NasalAntiformant {
         output
     }
 
+    /// Updates the nasal antiformant frequency and bandwidth, preserving state.
+    fn update(&mut self, frequency: f32, bandwidth: f32, sample_rate: f32) {
+        let new = Self::new(frequency, bandwidth, sample_rate);
+        self.frequency = new.frequency;
+        self.bandwidth = new.bandwidth;
+        self.b0 = new.b0;
+        self.b1 = new.b1;
+        self.b2 = new.b2;
+        self.a1 = new.a1;
+        self.a2 = new.a2;
+        // Keep state to avoid clicks
+    }
+
     fn reset(&mut self) {
         self.x1 = 0.0;
         self.x2 = 0.0;
@@ -131,6 +190,16 @@ impl VocalTract {
             nasal_antiformant,
             lip_prev: 0.0,
             lip_radiation: DEFAULT_LIP_RADIATION,
+            interaction_strength: 0.05,
+            interaction_feedback: 0.0,
+            subglottal_coupling: 0.05,
+            sg_state: [0.0; 4],
+            sg_coeff: {
+                let (b0, b2, a1, a2) =
+                    crate::formant::biquad_coefficients(600.0, 80.0, sample_rate);
+                [b0, b2, a1, a2]
+            },
+            gain: 1.0,
             sample_rate,
         }
     }
@@ -175,6 +244,39 @@ impl VocalTract {
         self.lip_radiation = coefficient.clamp(0.0, 1.0);
     }
 
+    /// Sets the nasal resonance characteristics by place of articulation.
+    ///
+    /// Different nasal consonants (/m/, /n/, /ŋ/) produce anti-formants at
+    /// different frequencies. Call this before synthesizing nasal segments.
+    pub fn set_nasal_place(&mut self, place: NasalPlace) {
+        self.nasal_antiformant.update(
+            place.antiformant_frequency(),
+            NASAL_ANTIFORMANT_BW,
+            self.sample_rate,
+        );
+    }
+
+    /// Sets the source-filter interaction strength (0.0-0.3).
+    ///
+    /// Models the effect of vocal tract impedance loading on the glottal source.
+    /// Higher values produce more natural-sounding vowels at the cost of
+    /// slight spectral modification.
+    pub fn set_interaction_strength(&mut self, strength: f32) {
+        self.interaction_strength = strength.clamp(0.0, 0.3);
+    }
+
+    /// Sets the subglottal resonance coupling strength (0.0-0.2).
+    pub fn set_subglottal_coupling(&mut self, strength: f32) {
+        self.subglottal_coupling = strength.clamp(0.0, 0.2);
+    }
+
+    /// Sets the output gain normalization factor.
+    ///
+    /// Use this to normalize output levels across different vowel configurations.
+    pub fn set_gain(&mut self, gain: f32) {
+        self.gain = gain.max(0.0);
+    }
+
     /// Returns the sample rate.
     #[must_use]
     pub fn sample_rate(&self) -> f32 {
@@ -182,10 +284,17 @@ impl VocalTract {
     }
 
     /// Processes a single sample through the vocal tract.
+    ///
+    /// Includes source-filter interaction: a fraction of the tract output
+    /// is fed back to modify the input excitation, modeling the effect of
+    /// vocal tract impedance on glottal flow.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
+        // Source-filter interaction: modify excitation with tract feedback
+        let excitation = input - self.interaction_strength * self.interaction_feedback;
+
         // Formant filtering
-        let formant_out = self.filter.process_sample(input);
+        let formant_out = self.filter.process_sample(excitation);
 
         // Nasal coupling: blend between oral and nasalized signal
         let output = if self.nasal_coupling > 0.0 {
@@ -195,11 +304,29 @@ impl VocalTract {
             formant_out
         };
 
+        // Subglottal resonance coupling: weak resonance at ~600Hz
+        let output = if self.subglottal_coupling > 0.0 {
+            let c = &self.sg_coeff;
+            let s = &mut self.sg_state;
+            let sg_out = c[0] * output + c[1] * s[1] - c[2] * s[2] - c[3] * s[3];
+            s[1] = s[0];
+            s[0] = output;
+            s[3] = s[2];
+            s[2] = sg_out;
+            output + sg_out * self.subglottal_coupling
+        } else {
+            output
+        };
+
         // Lip radiation: first-order high-pass (difference filter)
         let radiated = output - self.lip_radiation * self.lip_prev;
         self.lip_prev = output;
 
-        radiated
+        // Store feedback for next sample's source-filter interaction
+        self.interaction_feedback = radiated;
+
+        // Apply gain normalization
+        radiated * self.gain
     }
 
     /// Synthesizes a block of samples by piping glottal source through the vocal tract.
@@ -225,6 +352,8 @@ impl VocalTract {
         self.filter.reset();
         self.nasal_antiformant.reset();
         self.lip_prev = 0.0;
+        self.interaction_feedback = 0.0;
+        self.sg_state = [0.0; 4];
     }
 }
 

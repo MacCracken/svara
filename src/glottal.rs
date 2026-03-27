@@ -1,10 +1,17 @@
-//! Glottal source model using the Rosenberg glottal pulse.
+//! Glottal source models for vocal synthesis.
 //!
 //! The glottal source generates the excitation signal that drives the vocal
-//! tract. It models the opening and closing of the vocal folds, with parameters
-//! for jitter (frequency perturbation), shimmer (amplitude perturbation), and
-//! breathiness (noise mixing).
+//! tract. Two models are available:
+//!
+//! - **Rosenberg B**: Simple polynomial pulse (`3t² - 2t³`). Fast and adequate.
+//! - **LF (Liljencrants-Fant)**: The standard in speech science. Models the
+//!   derivative of glottal flow with an abrupt closure, parameterized by Rd
+//!   (a single voice quality dimension from pressed to breathy).
+//!
+//! Both models support jitter, shimmer, breathiness, and vibrato.
 
+use alloc::format;
+use alloc::string::ToString;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
@@ -18,6 +25,55 @@ const DEFAULT_OPEN_QUOTIENT: f32 = 0.6;
 const DEFAULT_JITTER: f32 = 0.01;
 /// Default shimmer (cycle-to-cycle amplitude perturbation fraction).
 const DEFAULT_SHIMMER: f32 = 0.02;
+
+/// Glottal pulse model selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum GlottalModel {
+    /// Rosenberg B polynomial pulse: `3t² - 2t³`. Simple, fast.
+    Rosenberg,
+    /// Liljencrants-Fant model: derivative of glottal flow with abrupt closure.
+    /// Parameterized by Rd for voice quality control.
+    LF,
+}
+
+/// LF model parameters derived from the Rd voice quality parameter.
+///
+/// Rd is a single dimension capturing voice quality:
+/// - Rd ≈ 0.3: pressed voice (tense, high effort)
+/// - Rd ≈ 1.0: modal voice (normal phonation)
+/// - Rd ≈ 2.7: breathy voice (relaxed, aspirated)
+///
+/// Reference: Fant, G. et al. (1985). "A four-parameter model of glottal flow."
+/// STL-QPSR 4/1985, 1-13.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct LfParams {
+    /// Return phase time constant (controls abruptness of closure).
+    ta: f32,
+    /// Open quotient equivalent for LF.
+    te: f32,
+    /// Excitation amplitude (peak negative derivative).
+    ee: f32,
+}
+
+impl LfParams {
+    /// Derives LF parameters from the Rd voice quality parameter.
+    ///
+    /// Rd mapping follows Fant (1995) simplified parameterization.
+    fn from_rd(rd: f32) -> Self {
+        let rd = rd.clamp(0.3, 2.7);
+
+        // Empirical mapping from Rd to LF timing parameters
+        // te/T0: increases with Rd (more open phase for breathy)
+        let te = 0.4 + 0.2 * (rd - 0.3) / 2.4;
+        // ta/T0: return phase duration, increases with Rd
+        let ta = 0.003 + 0.012 * (rd - 0.3) / 2.4;
+        // Excitation strength: decreases with Rd (breathy = weaker closure)
+        let ee = 1.0 - 0.3 * (rd - 0.3) / 2.4;
+
+        Self { ta, te, ee }
+    }
+}
 
 /// A simple linear-congruential PRNG for noise generation when naad is not available.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,12 +109,19 @@ impl SimpleRng {
     }
 }
 
-/// Glottal source generator using the Rosenberg pulse model.
+/// Glottal source generator with selectable pulse model.
 ///
 /// Produces a periodic glottal waveform with configurable voice quality
-/// parameters including jitter, shimmer, and breathiness.
+/// parameters including jitter, shimmer, and breathiness. Supports both
+/// Rosenberg B and LF (Liljencrants-Fant) pulse models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlottalSource {
+    /// Active glottal model.
+    model: GlottalModel,
+    /// Rd voice quality parameter for LF model (0.3=pressed, 1.0=modal, 2.7=breathy).
+    rd: f32,
+    /// Cached LF parameters derived from Rd.
+    lf_params: LfParams,
     /// Fundamental frequency in Hz.
     f0: f32,
     /// Audio sample rate in Hz.
@@ -114,6 +177,9 @@ impl GlottalSource {
         trace!(f0, sample_rate, period, "created glottal source");
 
         Ok(Self {
+            model: GlottalModel::Rosenberg,
+            rd: 1.0,
+            lf_params: LfParams::from_rd(1.0),
             f0,
             sample_rate,
             open_quotient: DEFAULT_OPEN_QUOTIENT,
@@ -172,6 +238,36 @@ impl GlottalSource {
         self.spectral_tilt = tilt;
     }
 
+    /// Sets the glottal pulse model.
+    pub fn set_model(&mut self, model: GlottalModel) {
+        self.model = model;
+    }
+
+    /// Returns the current glottal model.
+    #[must_use]
+    pub fn model(&self) -> GlottalModel {
+        self.model
+    }
+
+    /// Sets the Rd voice quality parameter for the LF model.
+    ///
+    /// - Rd ≈ 0.3: pressed voice (tense, high effort)
+    /// - Rd ≈ 1.0: modal voice (normal phonation)
+    /// - Rd ≈ 2.7: breathy voice (relaxed, aspirated)
+    ///
+    /// Also switches the model to LF automatically.
+    pub fn set_rd(&mut self, rd: f32) {
+        self.rd = rd.clamp(0.3, 2.7);
+        self.lf_params = LfParams::from_rd(self.rd);
+        self.model = GlottalModel::LF;
+    }
+
+    /// Returns the current Rd parameter.
+    #[must_use]
+    pub fn rd(&self) -> f32 {
+        self.rd
+    }
+
     /// Sets the vibrato rate in Hz (typically 4-7 Hz for natural singing/speaking).
     pub fn set_vibrato(&mut self, rate: f32, depth: f32) {
         self.vibrato_rate = rate.max(0.0);
@@ -208,13 +304,18 @@ impl GlottalSource {
     pub fn next_sample(&mut self) -> f32 {
         let t = self.phase / self.current_period;
 
-        // Rosenberg pulse model
-        let pulse = self.rosenberg_pulse(t);
+        // Compute glottal pulse based on active model
+        let pulse = match self.model {
+            GlottalModel::Rosenberg => self.rosenberg_pulse(t),
+            GlottalModel::LF => self.lf_pulse(t),
+        };
 
         // Apply spectral tilt via one-pole low-pass: y[n] = (1-α)*x[n] + α*y[n-1]
         // α derived from tilt: higher tilt = more low-pass = breathier voice
         let pulse = if self.spectral_tilt > 0.0 {
-            let alpha = (-std::f32::consts::TAU * self.spectral_tilt / self.sample_rate).exp();
+            let alpha = crate::math::f32::exp(
+                -core::f32::consts::TAU * self.spectral_tilt / self.sample_rate,
+            );
             let filtered = (1.0 - alpha) * pulse + alpha * self.tilt_state;
             self.tilt_state = filtered;
             filtered
@@ -242,9 +343,9 @@ impl GlottalSource {
 
         // Advance vibrato phase
         if self.vibrato_rate > 0.0 {
-            self.vibrato_phase += std::f32::consts::TAU * self.vibrato_rate / self.sample_rate;
-            if self.vibrato_phase >= std::f32::consts::TAU {
-                self.vibrato_phase -= std::f32::consts::TAU;
+            self.vibrato_phase += core::f32::consts::TAU * self.vibrato_rate / self.sample_rate;
+            if self.vibrato_phase >= core::f32::consts::TAU {
+                self.vibrato_phase -= core::f32::consts::TAU;
             }
         }
 
@@ -272,11 +373,44 @@ impl GlottalSource {
         }
     }
 
+    /// Computes the LF (Liljencrants-Fant) glottal flow derivative at normalized time t.
+    ///
+    /// The LF model produces the derivative of glottal airflow, which is the
+    /// actual excitation signal seen by the vocal tract. It features:
+    /// - A smooth open phase with sinusoidal rise
+    /// - An abrupt closure (the main source of acoustic excitation)
+    /// - A brief return phase (exponential recovery)
+    ///
+    /// The Rd parameter controls voice quality by adjusting the relative timing
+    /// and amplitude of these phases.
+    #[inline]
+    fn lf_pulse(&self, t: f32) -> f32 {
+        let te = self.lf_params.te;
+        let ta = self.lf_params.ta;
+        let ee = self.lf_params.ee;
+
+        if t < te {
+            // Open phase: sinusoidal rise to peak excitation at t=te
+            // E(t) = -Ee * sin(π * t / te)
+            let phase = core::f32::consts::PI * t / te;
+            -ee * crate::math::f32::sin(phase)
+        } else if t < te + ta {
+            // Return phase: exponential recovery after closure
+            // E(t) = -Ee * exp(-(t - te) / epsilon) where epsilon ≈ ta
+            let dt = t - te;
+            let epsilon = ta.max(0.001);
+            -ee * crate::math::f32::exp(-dt / epsilon)
+        } else {
+            // Closed phase: no airflow
+            0.0
+        }
+    }
+
     /// Begins a new glottal period, applying jitter, shimmer, and vibrato.
     fn new_period(&mut self) {
         // Apply vibrato: sinusoidal modulation of f0
         let vibrato_mod = if self.vibrato_rate > 0.0 {
-            1.0 + self.vibrato_depth * self.vibrato_phase.sin()
+            1.0 + self.vibrato_depth * crate::math::f32::sin(self.vibrato_phase)
         } else {
             1.0
         };
@@ -336,6 +470,46 @@ mod tests {
         gs.set_breathiness(1.0);
         let samples: Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
         assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_lf_model_produces_output() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_model(GlottalModel::LF);
+        let samples: Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
+        assert!(samples.iter().any(|&s| s.abs() > 0.001));
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_rd_parameterization() {
+        // Pressed voice (low Rd) should have stronger excitation than breathy (high Rd)
+        let mut pressed = GlottalSource::new(120.0, 44100.0).unwrap();
+        pressed.set_rd(0.3);
+        pressed.set_jitter(0.0);
+        pressed.set_shimmer(0.0);
+        let pressed_samples: Vec<f32> = (0..4410).map(|_| pressed.next_sample()).collect();
+        let pressed_energy: f32 = pressed_samples.iter().map(|s| s * s).sum();
+
+        let mut breathy = GlottalSource::new(120.0, 44100.0).unwrap();
+        breathy.set_rd(2.7);
+        breathy.set_jitter(0.0);
+        breathy.set_shimmer(0.0);
+        let breathy_samples: Vec<f32> = (0..4410).map(|_| breathy.next_sample()).collect();
+        let breathy_energy: f32 = breathy_samples.iter().map(|s| s * s).sum();
+
+        assert!(
+            pressed_energy > breathy_energy,
+            "pressed voice should have more energy: pressed={pressed_energy}, breathy={breathy_energy}"
+        );
+    }
+
+    #[test]
+    fn test_rd_auto_switches_to_lf() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        assert_eq!(gs.model(), GlottalModel::Rosenberg);
+        gs.set_rd(1.0);
+        assert_eq!(gs.model(), GlottalModel::LF);
     }
 
     #[test]

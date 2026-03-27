@@ -4,6 +4,7 @@
 //! contour, timing, and amplitude variations that convey meaning beyond
 //! individual phonemes.
 
+use alloc::{vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
@@ -134,7 +135,7 @@ impl ProsodyContour {
             let base = self.f0_at_internal(position);
             self.f0_points.push((position, base * boost));
             self.f0_points
-                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal));
         }
 
         // Ensure we have boundary points

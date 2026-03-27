@@ -29,6 +29,21 @@ fn bench_formant_filter_1024(c: &mut Criterion) {
     });
 }
 
+fn bench_formant_filter_block_1024(c: &mut Criterion) {
+    c.bench_function("formant_filter_block_1024", |b| {
+        let formants = VowelTarget::from_vowel(Vowel::A).to_formants();
+        let mut filter = FormantFilter::new(&formants, 44100.0).unwrap();
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        let input: Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
+        let mut output = vec![0.0f32; 1024];
+
+        b.iter(|| {
+            filter.process_block(&input, &mut output);
+            black_box(&output);
+        });
+    });
+}
+
 fn bench_vocal_tract_1024(c: &mut Criterion) {
     c.bench_function("vocal_tract_1024", |b| {
         let mut tract = VocalTract::new(44100.0);
@@ -155,6 +170,7 @@ criterion_group!(
     benches,
     bench_glottal_source_1024,
     bench_formant_filter_1024,
+    bench_formant_filter_block_1024,
     bench_vocal_tract_1024,
     bench_vocal_tract_into_1024,
     bench_phoneme_render_vowel_a,

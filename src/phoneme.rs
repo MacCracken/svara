@@ -4,12 +4,13 @@
 //! with formant targets, default durations, and synthesis functions for each
 //! phoneme class (vowels, fricatives, plosives, nasals, approximants).
 
+use alloc::{format, string::ToString, vec, vec::Vec};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use crate::error::{Result, SvaraError};
 use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
-use crate::tract::VocalTract;
+use crate::tract::{NasalPlace, VocalTract};
 use crate::voice::VoiceProfile;
 
 /// A phoneme from the IPA subset.
@@ -690,6 +691,15 @@ fn synthesize_nasal(
     tract.set_formants_from_target(&target)?;
     tract.set_nasal_coupling(0.8);
 
+    // Set nasal anti-formant by place of articulation
+    let place = match phoneme {
+        Phoneme::NasalM => NasalPlace::Bilabial,
+        Phoneme::NasalN => NasalPlace::Alveolar,
+        Phoneme::NasalNg => NasalPlace::Velar,
+        _ => NasalPlace::Neutral,
+    };
+    tract.set_nasal_place(place);
+
     let mut output = tract.synthesize(&mut glottal, num_samples);
     apply_amplitude_envelope(&mut output, num_samples);
     Ok(output)
@@ -781,14 +791,14 @@ fn apply_amplitude_envelope(samples: &mut [f32], _total: usize) {
     for (i, sample) in samples.iter_mut().enumerate().take(ramp_len) {
         let t = i as f32 / ramp_len as f32;
         // Raised cosine ramp
-        let gain = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+        let gain = 0.5 * (1.0 - crate::math::f32::cos(core::f32::consts::PI * t));
         *sample *= gain;
     }
 
     for i in 0..ramp_len {
         let idx = len - 1 - i;
         let t = i as f32 / ramp_len as f32;
-        let gain = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+        let gain = 0.5 * (1.0 - crate::math::f32::cos(core::f32::consts::PI * t));
         samples[idx] *= gain;
     }
 }

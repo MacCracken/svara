@@ -4,6 +4,8 @@
 //! parallel formant filter banks (using biquad resonators), vowel targets based on
 //! Peterson & Barney (1952), and smooth interpolation between vowel shapes.
 
+use alloc::format;
+use alloc::string::ToString;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
@@ -221,84 +223,172 @@ impl VowelTarget {
     }
 }
 
-/// A second-order biquad resonator filter (internal implementation).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BiquadResonator {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
-    x1: f32,
-    x2: f32,
-    y1: f32,
-    y2: f32,
+/// Maximum number of formant resonators in the parallel bank.
+///
+/// Fixed at 8 to align with f32x8 SIMD width. Unused slots are zeroed.
+pub const MAX_FORMANTS: usize = 8;
+
+/// Computes biquad bandpass filter coefficients for a given frequency and bandwidth.
+///
+/// Returns `(b0, b2, a1, a2)`. Note: `b1` is always 0 for bandpass, and `b2 = -b0`.
+#[inline]
+/// Computes biquad bandpass filter coefficients.
+///
+/// Computation is performed in f64 for precision (pole radius near 1.0 for
+/// narrow bandwidths at high sample rates), then truncated to f32 for
+/// per-sample processing.
+pub(crate) fn biquad_coefficients(
+    frequency: f32,
+    bandwidth: f32,
+    sample_rate: f32,
+) -> (f32, f32, f32, f32) {
+    // f64 computation prevents coefficient quantization errors
+    let freq = frequency as f64;
+    let bw = bandwidth as f64;
+    let sr = sample_rate as f64;
+
+    let omega = core::f64::consts::TAU * freq / sr;
+    let cos_omega = crate::math::f64::cos(omega);
+    let sin_omega = crate::math::f64::sin(omega);
+    let bw_omega = core::f64::consts::TAU * bw / sr;
+    let alpha = sin_omega * crate::math::f64::sinh(bw_omega / 2.0);
+
+    let a0 = 1.0 + alpha;
+    let b0 = (alpha / a0) as f32;
+    let b2 = (-alpha / a0) as f32;
+    let a1 = (-2.0 * cos_omega / a0) as f32;
+    let a2 = ((1.0 - alpha) / a0) as f32;
+    (b0, b2, a1, a2)
 }
 
-impl BiquadResonator {
-    /// Creates a bandpass resonator tuned to the given frequency and bandwidth.
-    fn new(frequency: f32, bandwidth: f32, sample_rate: f32) -> Self {
-        let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
-        let cos_omega = omega.cos();
-        let sin_omega = omega.sin();
+/// Structure-of-arrays biquad resonator bank for SIMD-friendly processing.
+///
+/// All arrays are fixed at [`MAX_FORMANTS`] width. Active formants are in
+/// slots `0..count`, unused slots have zeroed coefficients (producing zero output).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BiquadBankSoa {
+    /// Feedforward coefficient b0 (bandpass: b0 = alpha/a0).
+    b0: [f32; MAX_FORMANTS],
+    /// Feedforward coefficient b2 (bandpass: b2 = -b0).
+    b2: [f32; MAX_FORMANTS],
+    /// Feedback coefficient a1.
+    a1: [f32; MAX_FORMANTS],
+    /// Feedback coefficient a2.
+    a2: [f32; MAX_FORMANTS],
+    /// Amplitude weights per formant.
+    amp: [f32; MAX_FORMANTS],
+    /// Input delay line x[n-1].
+    x1: [f32; MAX_FORMANTS],
+    /// Input delay line x[n-2].
+    x2: [f32; MAX_FORMANTS],
+    /// Output delay line y[n-1].
+    y1: [f32; MAX_FORMANTS],
+    /// Output delay line y[n-2].
+    y2: [f32; MAX_FORMANTS],
+    /// Number of active formants.
+    count: usize,
+}
 
-        // Bandwidth as Q factor
-        let bw_omega = 2.0 * std::f32::consts::PI * bandwidth / sample_rate;
-        let alpha = sin_omega * (bw_omega / 2.0).sinh();
+impl BiquadBankSoa {
+    /// Creates a new SOA biquad bank from formant specifications.
+    fn new(formants: &[Formant], sample_rate: f32) -> Self {
+        let mut bank = Self {
+            b0: [0.0; MAX_FORMANTS],
+            b2: [0.0; MAX_FORMANTS],
+            a1: [0.0; MAX_FORMANTS],
+            a2: [0.0; MAX_FORMANTS],
+            amp: [0.0; MAX_FORMANTS],
+            x1: [0.0; MAX_FORMANTS],
+            x2: [0.0; MAX_FORMANTS],
+            y1: [0.0; MAX_FORMANTS],
+            y2: [0.0; MAX_FORMANTS],
+            count: formants.len().min(MAX_FORMANTS),
+        };
+        for (i, f) in formants.iter().take(MAX_FORMANTS).enumerate() {
+            let (b0, b2, a1, a2) = biquad_coefficients(f.frequency, f.bandwidth, sample_rate);
+            bank.b0[i] = b0;
+            bank.b2[i] = b2;
+            bank.a1[i] = a1;
+            bank.a2[i] = a2;
+            bank.amp[i] = f.amplitude;
+        }
+        bank
+    }
 
-        // Bandpass filter (constant peak gain)
-        let b0 = alpha;
-        let b1 = 0.0;
-        let b2 = -alpha;
-        let a0 = 1.0 + alpha;
-        let a1 = -2.0 * cos_omega;
-        let a2 = 1.0 - alpha;
+    /// Updates coefficients for formant `i` without resetting state.
+    fn update(
+        &mut self,
+        i: usize,
+        frequency: f32,
+        bandwidth: f32,
+        amplitude: f32,
+        sample_rate: f32,
+    ) {
+        let (b0, b2, a1, a2) = biquad_coefficients(frequency, bandwidth, sample_rate);
+        self.b0[i] = b0;
+        self.b2[i] = b2;
+        self.a1[i] = a1;
+        self.a2[i] = a2;
+        self.amp[i] = amplitude;
+    }
 
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
+    /// Processes a single input sample through all formant slots, returns weighted sum.
+    ///
+    /// Processes all [`MAX_FORMANTS`] slots unconditionally — unused slots have
+    /// zeroed coefficients and produce zero output. This gives the compiler a
+    /// fixed loop bound for auto-vectorization.
+    #[inline]
+    fn process(&mut self, input: f32) -> f32 {
+        let mut sum = 0.0f32;
+
+        // Fixed iteration count enables SIMD auto-vectorization.
+        // Unused slots have b0=b2=a1=a2=amp=0, so they contribute nothing.
+        for i in 0..MAX_FORMANTS {
+            let y = self.b0[i] * input + self.b2[i] * self.x2[i]
+                - self.a1[i] * self.y1[i]
+                - self.a2[i] * self.y2[i];
+
+            self.x2[i] = self.x1[i];
+            self.x1[i] = input;
+            self.y2[i] = self.y1[i];
+            self.y1[i] = y;
+
+            sum += y * self.amp[i];
+        }
+        sum
+    }
+
+    /// Processes a block of samples, writing results into `output`.
+    ///
+    /// More efficient than per-sample calls: the fixed inner loop bound
+    /// and tight outer loop enable better register allocation and
+    /// auto-vectorization.
+    #[inline]
+    fn process_block(&mut self, input: &[f32], output: &mut [f32]) {
+        for (out, &inp) in output.iter_mut().zip(input.iter()) {
+            let mut sum = 0.0f32;
+            for i in 0..MAX_FORMANTS {
+                let y = self.b0[i] * inp + self.b2[i] * self.x2[i]
+                    - self.a1[i] * self.y1[i]
+                    - self.a2[i] * self.y2[i];
+
+                self.x2[i] = self.x1[i];
+                self.x1[i] = inp;
+                self.y2[i] = self.y1[i];
+                self.y1[i] = y;
+
+                sum += y * self.amp[i];
+            }
+            *out = sum;
         }
     }
 
-    /// Updates the filter coefficients for new frequency and bandwidth.
-    fn update(&mut self, frequency: f32, bandwidth: f32, sample_rate: f32) {
-        let new = Self::new(frequency, bandwidth, sample_rate);
-        self.b0 = new.b0;
-        self.b1 = new.b1;
-        self.b2 = new.b2;
-        self.a1 = new.a1;
-        self.a2 = new.a2;
-        // Keep state to avoid clicks
-    }
-
-    /// Processes a single sample through the biquad filter.
-    #[inline]
-    fn process(&mut self, input: f32) -> f32 {
-        let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1
-            - self.a2 * self.y2;
-
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = output;
-
-        output
-    }
-
-    /// Resets the filter state.
+    /// Resets all filter state.
     fn reset(&mut self) {
-        self.x1 = 0.0;
-        self.x2 = 0.0;
-        self.y1 = 0.0;
-        self.y2 = 0.0;
+        self.x1 = [0.0; MAX_FORMANTS];
+        self.x2 = [0.0; MAX_FORMANTS];
+        self.y1 = [0.0; MAX_FORMANTS];
+        self.y2 = [0.0; MAX_FORMANTS];
     }
 }
 
@@ -317,7 +407,7 @@ struct DcBlocker {
 impl DcBlocker {
     fn new(sample_rate: f32) -> Self {
         // α = 1 - (2π * fc / fs), fc ≈ 20 Hz
-        let alpha = 1.0 - (std::f32::consts::TAU * 20.0 / sample_rate);
+        let alpha = 1.0 - (core::f32::consts::TAU * 20.0 / sample_rate);
         Self {
             alpha,
             x_prev: 0.0,
@@ -344,10 +434,11 @@ impl DcBlocker {
 /// Processes an input signal (typically from [`GlottalSource`](crate::glottal::GlottalSource))
 /// through parallel formant resonators, sums the weighted outputs, and applies
 /// a DC-blocking filter to prevent numerical drift.
+///
+/// Internally uses a structure-of-arrays (SOA) layout for SIMD-friendly processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormantFilter {
-    filters: Vec<BiquadResonator>,
-    amplitudes: Vec<f32>,
+    bank: BiquadBankSoa,
     dc_blocker: DcBlocker,
     sample_rate: f32,
 }
@@ -365,6 +456,13 @@ impl FormantFilter {
                 "at least one formant is required".to_string(),
             ));
         }
+        if formants.len() > MAX_FORMANTS {
+            return Err(SvaraError::InvalidFormant(format!(
+                "at most {} formants supported, got {}",
+                MAX_FORMANTS,
+                formants.len()
+            )));
+        }
         let nyquist = sample_rate / 2.0;
         for f in formants {
             if f.frequency <= 0.0 || f.frequency >= nyquist {
@@ -381,11 +479,7 @@ impl FormantFilter {
             }
         }
 
-        let filters: Vec<BiquadResonator> = formants
-            .iter()
-            .map(|f| BiquadResonator::new(f.frequency, f.bandwidth, sample_rate))
-            .collect();
-        let amplitudes: Vec<f32> = formants.iter().map(|f| f.amplitude).collect();
+        let bank = BiquadBankSoa::new(formants, sample_rate);
 
         trace!(
             num_formants = formants.len(),
@@ -393,8 +487,7 @@ impl FormantFilter {
         );
 
         Ok(Self {
-            filters,
-            amplitudes,
+            bank,
             dc_blocker: DcBlocker::new(sample_rate),
             sample_rate,
         })
@@ -406,45 +499,52 @@ impl FormantFilter {
     ///
     /// Returns `SvaraError::InvalidFormant` if formant count doesn't match.
     pub fn update_formants(&mut self, formants: &[Formant]) -> Result<()> {
-        if formants.len() != self.filters.len() {
+        if formants.len() != self.bank.count {
             return Err(SvaraError::InvalidFormant(format!(
                 "expected {} formants, got {}",
-                self.filters.len(),
+                self.bank.count,
                 formants.len()
             )));
         }
         for (i, f) in formants.iter().enumerate() {
-            self.filters[i].update(f.frequency, f.bandwidth, self.sample_rate);
-            self.amplitudes[i] = f.amplitude;
+            self.bank
+                .update(i, f.frequency, f.bandwidth, f.amplitude, self.sample_rate);
         }
         Ok(())
     }
 
     /// Processes a single input sample through the parallel formant filter bank.
     ///
-    /// Runs the input through all formant resonators in parallel, sums the
-    /// weighted outputs, and applies DC blocking.
+    /// Runs the input through all formant resonators in parallel (SOA layout),
+    /// sums the weighted outputs, and applies DC blocking.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
-        let mut output = 0.0;
-        for (filter, &amp) in self.filters.iter_mut().zip(self.amplitudes.iter()) {
-            output += filter.process(input) * amp;
+        let raw = self.bank.process(input);
+        self.dc_blocker.process(raw)
+    }
+
+    /// Processes a block of input samples, writing results into `output`.
+    ///
+    /// More efficient than per-sample calls due to better auto-vectorization
+    /// of the inner loop.
+    pub fn process_block(&mut self, input: &[f32], output: &mut [f32]) {
+        self.bank.process_block(input, output);
+        // Apply DC blocker to the block
+        for sample in output.iter_mut() {
+            *sample = self.dc_blocker.process(*sample);
         }
-        self.dc_blocker.process(output)
     }
 
     /// Resets all filter states including the DC blocker.
     pub fn reset(&mut self) {
-        for filter in &mut self.filters {
-            filter.reset();
-        }
+        self.bank.reset();
         self.dc_blocker.reset();
     }
 
     /// Returns the number of formant resonators.
     #[must_use]
     pub fn num_formants(&self) -> usize {
-        self.filters.len()
+        self.bank.count
     }
 }
 

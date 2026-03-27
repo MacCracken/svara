@@ -1,5 +1,6 @@
 //! Error types for the svara crate.
 
+use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
 /// Errors that can occur during vocal synthesis operations.
@@ -32,4 +33,4 @@ pub enum SvaraError {
 }
 
 /// Convenience type alias for svara results.
-pub type Result<T> = std::result::Result<T, SvaraError>;
+pub type Result<T> = core::result::Result<T, SvaraError>;

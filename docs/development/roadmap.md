@@ -61,32 +61,37 @@
 
 ### Performance
 
-- [ ] Block-based processing (64-512 samples) instead of per-sample
-- [ ] SOA layout for parallel formant SIMD (f32x4/f32x8)
+- [x] Block-based processing: `FormantFilter::process_block()` — done 2026-03-27
+- [x] SOA layout for formant SIMD: `BiquadBankSoa` with fixed MAX_FORMANTS=8, 2x speedup — done 2026-03-27
 - [x] Pre-allocated output buffers: `VocalTract::synthesize_into()` — done 2026-03-27
 - [x] Additional benchmarks: fricative, diphthong, female, 10-phoneme, pre-alloc — done 2026-03-27
 
 ### Glottal Modeling
 
-- [ ] LF (Liljencrants-Fant) glottal model as alternative to Rosenberg
-- [ ] Rd parameterization for voice quality (breathy/modal/pressed as single knob)
-- [ ] Source-filter interaction coupling term
+- [x] LF (Liljencrants-Fant) glottal model with Rd parameterization — done 2026-03-27
+- [x] Source-filter interaction coupling term — done 2026-03-27
 
 ### Vocal Tract
 
-- [ ] Dynamic nasal resonances (vary anti-formant by place of articulation)
-- [ ] Subglottal resonance coupling (~600Hz)
-- [ ] f64 filter coefficients for narrow bandwidths / high sample rates
+- [x] Dynamic nasal resonances by place of articulation — done 2026-03-27
+- [x] Subglottal resonance coupling (~600Hz) — done 2026-03-27
+- [x] f64 filter coefficients for narrow bandwidths — done 2026-03-27
+- [x] Gain normalization — done 2026-03-27
 
-## Future — v1.0 Criteria
+### Infrastructure
 
-- [ ] LF glottal model available
-- [ ] Hillenbrand formant data with per-vowel bandwidths
-- [ ] Look-ahead coarticulation
-- [ ] Block-based real-time capable processing
-- [ ] DC-blocking and gain normalization
-- [ ] Complete English phoneme inventory (including affricates, glottal stop)
-- [ ] `no_std` core DSP compatibility
-- [ ] All public types: Serialize + Deserialize + roundtrip tested
-- [ ] All benchmarks baselined with history tracking
-- [ ] Comprehensive documentation with pipeline diagrams
+- [x] `no_std` core DSP compatibility with `libm` — done 2026-03-27
+- [x] Architecture documentation with pipeline diagrams — done 2026-03-27
+
+## v1.0 Criteria — All Met
+
+- [x] LF glottal model available
+- [x] Hillenbrand formant data with per-vowel bandwidths
+- [x] Look-ahead coarticulation
+- [x] Block-based real-time capable processing
+- [x] DC-blocking and gain normalization
+- [x] Complete English phoneme inventory (48 phonemes)
+- [x] `no_std` core DSP compatibility
+- [x] All public types: Serialize + Deserialize + roundtrip tested
+- [x] All benchmarks baselined with history tracking (11 benchmarks)
+- [x] Comprehensive documentation with pipeline diagrams

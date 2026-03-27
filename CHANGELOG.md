@@ -37,12 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **F2 locus equations**: `f2_locus_equation()` returns (locus, slope) by place of articulation (bilabial, alveolar, velar) per Sussman et al. (1991)
 - **Variable crossfade**: Per-boundary crossfade lengths modulated by adjacent phoneme resistance (low-resistance phonemes get longer blending regions)
 - **`VocalTract::synthesize_into()`**: Zero-allocation synthesis into pre-allocated buffer
-- 5 new benchmarks: fricative, diphthong, female vowel, 10-phoneme sequence, pre-allocated tract
+- **SOA formant filter**: Structure-of-arrays `BiquadBankSoa` with fixed `MAX_FORMANTS=8` loop bound enabling compiler auto-vectorization
+- **`FormantFilter::process_block()`**: Block-based formant processing for batched audio
+- 6 new benchmarks: fricative, diphthong, female vowel, 10-phoneme sequence, pre-allocated tract, block formant filter
+- **LF glottal model**: Liljencrants-Fant model with Rd voice quality parameter (0.3=pressed, 1.0=modal, 2.7=breathy). `set_rd()` auto-switches to LF model
+- **Source-filter interaction**: Vocal tract impedance feedback modifies excitation signal (configurable 0.0-0.3 strength)
+- **Dynamic nasal resonances**: `NasalPlace` enum varies anti-formant by place of articulation (bilabial 750Hz, alveolar 1450Hz, velar 3000Hz)
+- **Subglottal resonance**: Tracheal coupling at ~600Hz that interacts with F1 (configurable 0.0-0.2)
+- **Gain normalization**: `VocalTract::set_gain()` for output level consistency
+- **`no_std` support**: Core DSP works without `std` via `libm` + `alloc`. Enable with `default-features = false`
+- **f64 biquad coefficients**: Coefficient computation in f64 prevents quantization errors with narrow bandwidths at high sample rates
+- `docs/architecture/overview.md` — module map, data flow, pipeline diagram
 - `scripts/bench-history.sh` for tracking benchmark results over time
-- `docs/development/roadmap.md` with backlog and v1.0 criteria
+- `docs/development/roadmap.md` — all v1.0 criteria met
 
 ### Changed
 
+- **`FormantFilter` internals**: Refactored from `Vec<BiquadResonator>` (AOS) to `BiquadBankSoa` (SOA) with fixed-size arrays. Formant filter **2x faster** from auto-vectorization of the fixed-bound inner loop
 - **`VowelTarget::to_formants()`** now returns `[Formant; 5]` instead of `Vec<Formant>` (zero allocation)
 - **`VocalTract::set_formants()`**, `set_formants_from_target()`, `set_vowel()` now return `Result<()>` instead of silently swallowing errors
 - **`PhonemeSequence`** now uses variable-length sigmoid crossfades modulated by coarticulation resistance (was fixed-length cosine)
@@ -50,8 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- Glottal source: **6.34µs → 4.15µs** (-35%) per 1024 samples
-- Phoneme render (vowel /a/): **82.71µs → 64.3µs** (-22%)
+All benchmarks measured at default SSE2. Building with `RUSTFLAGS="-C target-cpu=native"` enables AVX2 for an additional ~20% on formant processing.
+
+- Formant filter (1024 samples): **11.0µs → 5.4µs** (-51%, SOA auto-vectorization)
+- Glottal source (1024 samples): **6.34µs → 4.15µs** (-35%)
+- Vocal tract (1024 samples): **18.7µs → 12.4µs** (-34%)
+- Phoneme render (vowel /a/): **82.7µs → 56.5µs** (-32%)
 - Sequence render (5 phonemes): **350µs → 252µs** (-28%)
 - Sequence render (10 phonemes): **430µs → 357µs** (-17%)
 
