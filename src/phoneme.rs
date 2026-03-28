@@ -416,39 +416,8 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
     }
 }
 
-/// PCG32-based noise generator for synthesis (consistent with glottal module).
-struct NoiseGen {
-    state: u64,
-    inc: u64,
-}
-
-impl NoiseGen {
-    fn new(seed: u64) -> Self {
-        let inc = (seed << 1) | 1;
-        let mut ng = Self { state: 0, inc };
-        ng.next_u32();
-        ng.state = ng.state.wrapping_add(seed);
-        ng.next_u32();
-        ng
-    }
-
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        let old_state = self.state;
-        self.state = old_state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(self.inc);
-        let xor_shifted = (((old_state >> 18) ^ old_state) >> 27) as u32;
-        let rot = (old_state >> 59) as u32;
-        (xor_shifted >> rot) | (xor_shifted << (rot.wrapping_neg() & 31))
-    }
-
-    #[inline]
-    fn next_f32(&mut self) -> f32 {
-        let bits = (self.next_u32() >> 1) as i32;
-        bits as f32 * (1.0 / i32::MAX as f32)
-    }
-}
+/// Type alias for phoneme-level noise generation using the shared PRNG.
+type NoiseGen = crate::rng::Rng;
 
 /// Diphthong end targets.
 fn diphthong_end_target(phoneme: &Phoneme) -> VowelTarget {
@@ -473,9 +442,9 @@ pub fn synthesize_phoneme(
     sample_rate: f32,
     duration: f32,
 ) -> Result<Vec<f32>> {
-    if duration <= 0.0 {
+    if duration <= 0.0 || !duration.is_finite() {
         return Err(SvaraError::InvalidDuration(format!(
-            "duration must be positive, got {duration}"
+            "duration must be positive and finite, got {duration}"
         )));
     }
     if sample_rate <= 0.0 {

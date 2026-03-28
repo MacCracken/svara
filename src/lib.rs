@@ -53,13 +53,18 @@
 
 extern crate alloc;
 
+pub mod bridge;
+mod dsp;
 pub mod error;
 pub mod formant;
 pub mod glottal;
+pub mod lod;
 mod math;
 pub mod phoneme;
 pub mod prosody;
+pub(crate) mod rng;
 pub mod sequence;
+pub(crate) mod smooth;
 pub mod spectral;
 pub mod tract;
 pub mod voice;
@@ -69,6 +74,7 @@ pub mod prelude {
     pub use crate::error::{Result, SvaraError};
     pub use crate::formant::{Formant, FormantFilter, Vowel, VowelTarget};
     pub use crate::glottal::{GlottalModel, GlottalSource};
+    pub use crate::lod::Quality;
     pub use crate::phoneme::{
         Phoneme, PhonemeClass, f2_locus_equation, phoneme_duration, phoneme_formants,
         synthesize_phoneme,
@@ -95,6 +101,7 @@ mod assert_traits {
         _assert_send_sync::<crate::formant::VowelTarget>();
         _assert_send_sync::<crate::glottal::GlottalSource>();
         _assert_send_sync::<crate::glottal::GlottalModel>();
+        _assert_send_sync::<crate::lod::Quality>();
         _assert_send_sync::<crate::phoneme::Phoneme>();
         _assert_send_sync::<crate::phoneme::PhonemeClass>();
         _assert_send_sync::<crate::prosody::ProsodyContour>();

@@ -451,6 +451,11 @@ impl FormantFilter {
     /// Returns `SvaraError::InvalidFormant` if any formant frequency is out of range
     /// or if the formant list is empty.
     pub fn new(formants: &[Formant], sample_rate: f32) -> Result<Self> {
+        if sample_rate <= 0.0 || !sample_rate.is_finite() {
+            return Err(SvaraError::InvalidFormant(format!(
+                "sample_rate must be positive and finite, got {sample_rate}"
+            )));
+        }
         if formants.is_empty() {
             return Err(SvaraError::InvalidFormant(
                 "at least one formant is required".to_string(),

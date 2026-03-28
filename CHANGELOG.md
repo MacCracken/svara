@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-28
+
+### Added
+
+- **Bridge module** (`bridge.rs`): 18 dependency-free conversion functions for ecosystem integration
+  - bhava (emotion/affect): `rd_from_arousal`, `breathiness_from_arousal`, `jitter_from_arousal`, `vibrato_depth_from_valence`, `f0_range_scale_from_arousal`, `intonation_from_emotion`
+  - vansh (TTS): `duration_scale_from_speech_rate`, `stress_from_tobi_accent`, `f0_peak_from_prominence`
+  - prani (creature): `formant_scale_from_body_size`, `f0_from_body_size`, `jitter_from_age`, `glottal_model_from_effort`
+  - goonj (acoustics): `gain_from_distance`, `bandwidth_scale_from_reverb`, `spectral_tilt_from_distance`
+  - badal (weather): `lombard_effort_from_noise`, `lombard_f0_shift`, `breathiness_reduction_from_wind`
+- **LOD/Quality system** (`lod.rs`): `Quality` enum (Full, Reduced, Minimal) integrated into `VocalTract` for multi-voice CPU scaling
+- **Shared RNG module** (`rng.rs`): Deduplicated PCG32 from glottal and phoneme modules
+- **Shared DSP utilities** (`dsp.rs`): `validate_sample_rate`, `validate_duration`, `map_naad_error`
+- 18 new tests: validation edge cases (NaN, Inf, negative, zero), deterministic replay (single + sequence), streaming API, LOD quality levels — total 45 integration tests (up from 27)
+- 13 bridge function tests with range and edge case coverage
+- LOD unit tests with serde roundtrips
+- no_std testing in Makefile and CI matrix (previously only `--all-features`)
+- 4 new examples: `voice_comparison`, `prosody_patterns`, `error_handling`, `streaming`
+- 4 Architecture Decision Records: source-filter model, coarticulation model, formant data source, scope boundaries
+- Documentation: integration guide, testing guide, dependency watch, threat model
+- Send+Sync assertion for `Quality` type
+
+### Changed
+
+- Input validation strengthened: NaN and Infinity now rejected on all public constructors (`GlottalSource::new`, `FormantFilter::new`, `synthesize_phoneme`)
+- `VocalTract::process_sample` respects `Quality` setting — skips subglottal, interaction, lip radiation, nasal coupling at lower quality levels
+- `GlottalSource`: aspiration noise now uses `naad::noise::NoiseGenerator` (White) when naad-backend enabled; PCG32 fallback otherwise
+- `GlottalSource`: vibrato now uses `naad::modulation::Lfo` (Sine) when naad-backend enabled; manual sine fallback otherwise
+- `VocalTract`: nasal antiformant now uses `naad::filter::BiquadFilter` (Notch) when naad-backend enabled
+- `VocalTract`: subglottal resonance now uses `naad::filter::BiquadFilter` (BandPass) when naad-backend enabled
+- `VocalTract`: nasal coupling and gain use `SmoothedParam` one-pole smoother to prevent clicks on real-time parameter changes (5ms time constant)
+- `NasalAntiformant` manual implementation gated to `#[cfg(not(feature = "naad-backend"))]`
+- CI test matrix now includes `--no-default-features` (ubuntu) alongside `--all-features` (ubuntu + macos)
+- SECURITY.md: supported version updated from 0.1.x to 1.x
+
+### Performance
+
+- Vocal tract (Full): 27µs → 23µs (-15%, naad filters more efficient than manual)
+- LOD Reduced quality: 15µs (-34% vs Full) — skips subglottal, interaction
+- LOD Minimal quality: 14µs (-38% vs Full) — skips nasal coupling, lip radiation too
+- 2 new LOD benchmarks added to suite (13 total)
+
+### Infrastructure
+
+- Roadmap updated with v1.1, v1.2, v2.0+ plans
+- Forward-looking backlog: whisper/creaky voice, singing, multi-language, SIMD intrinsics
+
 ## [1.0.0] - 2026-03-27
 
 ### Fixed

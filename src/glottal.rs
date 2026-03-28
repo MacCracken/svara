@@ -16,9 +16,7 @@ use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use crate::error::{Result, SvaraError};
-
-/// Default PRNG seed for deterministic noise generation.
-const DEFAULT_RNG_SEED: u64 = 42;
+use crate::rng::Rng;
 /// Default open quotient (fraction of glottal cycle where folds are open).
 const DEFAULT_OPEN_QUOTIENT: f32 = 0.6;
 /// Default jitter (cycle-to-cycle f0 perturbation fraction).
@@ -75,60 +73,16 @@ impl LfParams {
     }
 }
 
-/// PCG32-based PRNG for noise generation (jitter, shimmer, breathiness).
-///
-/// Uses the PCG (Permuted Congruential Generator) algorithm from hisab for
-/// high-quality, deterministic random numbers. Serializable for state persistence.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Rng {
-    state: u64,
-    inc: u64,
-}
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        // PCG32 initialization (same as hisab::num::Pcg32)
-        let inc = (seed << 1) | 1;
-        let mut rng = Self { state: 0, inc };
-        rng.next_u32();
-        rng.state = rng.state.wrapping_add(seed);
-        rng.next_u32();
-        rng
-    }
-
-    /// Generates the next u32 using PCG32 algorithm.
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        let old_state = self.state;
-        self.state = old_state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(self.inc);
-        let xor_shifted = (((old_state >> 18) ^ old_state) >> 27) as u32;
-        let rot = (old_state >> 59) as u32;
-        (xor_shifted >> rot) | (xor_shifted << (rot.wrapping_neg() & 31))
-    }
-
-    /// Returns a value in [-1.0, 1.0].
-    #[inline]
-    fn next_f32(&mut self) -> f32 {
-        // Fast conversion: use upper bits as signed i32, divide by i32::MAX
-        let bits = (self.next_u32() >> 1) as i32;
-        bits as f32 * (1.0 / i32::MAX as f32)
-    }
-
-    /// Returns a value in [0.0, 1.0].
-    #[inline]
-    #[allow(dead_code)]
-    fn next_f32_unsigned(&mut self) -> f32 {
-        self.next_u32() as f32 * (1.0 / u32::MAX as f32)
-    }
-}
-
 /// Glottal source generator with selectable pulse model.
 ///
 /// Produces a periodic glottal waveform with configurable voice quality
 /// parameters including jitter, shimmer, and breathiness. Supports both
 /// Rosenberg B and LF (Liljencrants-Fant) pulse models.
+///
+/// When the `naad-backend` feature is enabled, aspiration noise uses
+/// [`naad::noise::NoiseGenerator`] and vibrato uses [`naad::modulation::Lfo`]
+/// for higher-quality output. Without the feature, internal PCG32 PRNG and
+/// manual sine are used as fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlottalSource {
     /// Active glottal model.
@@ -155,7 +109,7 @@ pub struct GlottalSource {
     vibrato_rate: f32,
     /// Vibrato depth as fraction of f0 (0.0-0.1 typical).
     vibrato_depth: f32,
-    /// Vibrato phase accumulator in radians.
+    /// Vibrato phase accumulator in radians (fallback path only).
     vibrato_phase: f32,
     /// One-pole spectral tilt filter state (y[n-1]).
     tilt_state: f32,
@@ -165,8 +119,14 @@ pub struct GlottalSource {
     current_period: f32,
     /// Amplitude for the current period (may vary due to shimmer).
     current_amplitude: f32,
-    /// PRNG for jitter, shimmer, and noise.
+    /// PRNG for jitter, shimmer, and aspiration noise (fallback when naad unavailable).
     rng: Rng,
+    /// naad white noise generator for aspiration noise.
+    #[cfg(feature = "naad-backend")]
+    aspiration_noise: naad::noise::NoiseGenerator,
+    /// naad LFO for vibrato modulation.
+    #[cfg(feature = "naad-backend")]
+    vibrato_lfo: naad::modulation::Lfo,
 }
 
 impl GlottalSource {
@@ -182,9 +142,9 @@ impl GlottalSource {
                 "f0 must be in [20, 2000] Hz, got {f0}"
             )));
         }
-        if sample_rate <= 0.0 {
+        if sample_rate <= 0.0 || !sample_rate.is_finite() {
             return Err(SvaraError::InvalidFormant(
-                "sample_rate must be positive".to_string(),
+                "sample_rate must be positive and finite".to_string(),
             ));
         }
 
@@ -209,7 +169,20 @@ impl GlottalSource {
             phase: 0.0,
             current_period: period,
             current_amplitude: 1.0,
-            rng: Rng::new(DEFAULT_RNG_SEED),
+            rng: Rng::new(crate::rng::DEFAULT_SEED),
+            #[cfg(feature = "naad-backend")]
+            aspiration_noise: naad::noise::NoiseGenerator::new(naad::noise::NoiseType::White, 42),
+            #[cfg(feature = "naad-backend")]
+            vibrato_lfo: naad::modulation::Lfo::new(
+                naad::modulation::LfoShape::Sine,
+                0.001, // Will be updated on first set_vibrato call
+                sample_rate,
+            )
+            .unwrap_or_else(|_| {
+                // Fallback: create with minimal valid frequency
+                naad::modulation::Lfo::new(naad::modulation::LfoShape::Sine, 0.001, sample_rate)
+                    .expect("fallback LFO must succeed")
+            }),
         })
     }
 
@@ -287,6 +260,11 @@ impl GlottalSource {
     pub fn set_vibrato(&mut self, rate: f32, depth: f32) {
         self.vibrato_rate = rate.max(0.0);
         self.vibrato_depth = depth.clamp(0.0, 0.5);
+        #[cfg(feature = "naad-backend")]
+        if self.vibrato_rate > 0.0 {
+            let _ = self.vibrato_lfo.set_frequency(self.vibrato_rate);
+            self.vibrato_lfo.depth = self.vibrato_depth;
+        }
     }
 
     /// Returns the current fundamental frequency.
@@ -345,6 +323,9 @@ impl GlottalSource {
         // Mix with aspiration noise for breathiness.
         // Noise is gated by the glottal open phase: full noise during the open
         // phase, reduced during closed phase (models turbulent airflow at glottis).
+        #[cfg(feature = "naad-backend")]
+        let noise = self.aspiration_noise.next_sample();
+        #[cfg(not(feature = "naad-backend"))]
         let noise = self.rng.next_f32();
         let noise_gate = if t < self.open_quotient { 1.0 } else { 0.1 };
         let sample = pulse * (1.0 - self.breathiness) + noise * self.breathiness * 0.3 * noise_gate;
@@ -357,6 +338,7 @@ impl GlottalSource {
         }
 
         // Advance vibrato phase
+        #[cfg(not(feature = "naad-backend"))]
         if self.vibrato_rate > 0.0 {
             self.vibrato_phase += core::f32::consts::TAU * self.vibrato_rate / self.sample_rate;
             if self.vibrato_phase >= core::f32::consts::TAU {
@@ -425,7 +407,16 @@ impl GlottalSource {
     fn new_period(&mut self) {
         // Apply vibrato: sinusoidal modulation of f0
         let vibrato_mod = if self.vibrato_rate > 0.0 {
-            1.0 + self.vibrato_depth * crate::math::f32::sin(self.vibrato_phase)
+            #[cfg(feature = "naad-backend")]
+            {
+                // naad LFO outputs 0.0-1.0 (unipolar), center at 0.5
+                let lfo_val = self.vibrato_lfo.next_value();
+                1.0 + self.vibrato_depth * (lfo_val * 2.0 - 1.0)
+            }
+            #[cfg(not(feature = "naad-backend"))]
+            {
+                1.0 + self.vibrato_depth * crate::math::f32::sin(self.vibrato_phase)
+            }
         } else {
             1.0
         };
@@ -445,6 +436,7 @@ impl GlottalSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_glottal_source_creation() {

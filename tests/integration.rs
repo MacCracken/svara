@@ -454,6 +454,203 @@ fn test_serde_roundtrip_vowel_target() {
     assert!((target2.f5 - 3750.0).abs() < f32::EPSILON);
 }
 
+// ---------------------------------------------------------------------------
+// Validation edge case tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_glottal_source_rejects_nan_f0() {
+    assert!(GlottalSource::new(f32::NAN, 44100.0).is_err());
+}
+
+#[test]
+fn test_glottal_source_rejects_inf_f0() {
+    assert!(GlottalSource::new(f32::INFINITY, 44100.0).is_err());
+    assert!(GlottalSource::new(f32::NEG_INFINITY, 44100.0).is_err());
+}
+
+#[test]
+fn test_glottal_source_rejects_negative_f0() {
+    assert!(GlottalSource::new(-100.0, 44100.0).is_err());
+}
+
+#[test]
+fn test_glottal_source_rejects_zero_sample_rate() {
+    assert!(GlottalSource::new(120.0, 0.0).is_err());
+}
+
+#[test]
+fn test_glottal_source_rejects_negative_sample_rate() {
+    assert!(GlottalSource::new(120.0, -44100.0).is_err());
+}
+
+#[test]
+fn test_glottal_source_rejects_nan_sample_rate() {
+    assert!(GlottalSource::new(120.0, f32::NAN).is_err());
+}
+
+#[test]
+fn test_synthesize_phoneme_rejects_nan_duration() {
+    let voice = VoiceProfile::new_male();
+    assert!(synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, f32::NAN).is_err());
+}
+
+#[test]
+fn test_synthesize_phoneme_rejects_negative_duration() {
+    let voice = VoiceProfile::new_male();
+    assert!(synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, -0.5).is_err());
+}
+
+#[test]
+fn test_synthesize_phoneme_rejects_zero_duration() {
+    let voice = VoiceProfile::new_male();
+    assert!(synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, 0.0).is_err());
+}
+
+#[test]
+fn test_formant_filter_rejects_nan_sample_rate() {
+    let formants = [Formant::new(500.0, 80.0, 1.0)];
+    assert!(FormantFilter::new(&formants, f32::NAN).is_err());
+}
+
+#[test]
+fn test_formant_filter_rejects_zero_sample_rate() {
+    let formants = [Formant::new(500.0, 80.0, 1.0)];
+    assert!(FormantFilter::new(&formants, 0.0).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Streaming API tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_vocal_tract_process_block_produces_finite_output() {
+    let mut tract = VocalTract::new(44100.0);
+    tract.set_vowel(Vowel::A).unwrap();
+    let mut glottal = GlottalSource::new(120.0, 44100.0).unwrap();
+    let mut output = [0.0f32; 512];
+    tract.synthesize_into(&mut glottal, &mut output);
+    assert!(output.iter().all(|s| s.is_finite()));
+    assert!(output.iter().any(|&s| s.abs() > 1e-6));
+}
+
+#[test]
+fn test_vocal_tract_empty_buffer_no_panic() {
+    let mut tract = VocalTract::new(44100.0);
+    let mut glottal = GlottalSource::new(120.0, 44100.0).unwrap();
+    let mut output = [];
+    tract.synthesize_into(&mut glottal, &mut output);
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic replay test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_deterministic_replay() {
+    let voice = VoiceProfile::new_male();
+    let samples1 = synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, 0.2).unwrap();
+    let samples2 = synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, 0.2).unwrap();
+
+    assert_eq!(samples1.len(), samples2.len());
+    for (i, (a, b)) in samples1.iter().zip(samples2.iter()).enumerate() {
+        assert!(
+            (a - b).abs() < f32::EPSILON,
+            "sample {i} differs: {a} vs {b} — synthesis is not deterministic"
+        );
+    }
+}
+
+#[test]
+fn test_deterministic_replay_sequence() {
+    let voice = VoiceProfile::new_male();
+    let mut seq1 = PhonemeSequence::new();
+    seq1.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+    seq1.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
+    seq1.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
+    let samples1 = seq1.render(&voice, 44100.0).unwrap();
+
+    let mut seq2 = PhonemeSequence::new();
+    seq2.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+    seq2.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
+    seq2.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
+    let samples2 = seq2.render(&voice, 44100.0).unwrap();
+
+    assert_eq!(samples1.len(), samples2.len());
+    for (i, (a, b)) in samples1.iter().zip(samples2.iter()).enumerate() {
+        assert!(
+            (a - b).abs() < f32::EPSILON,
+            "sample {i} differs: {a} vs {b} — sequence replay is not deterministic"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LOD/Quality tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_quality_levels_produce_output() {
+    use svara::lod::Quality;
+    let mut tract = VocalTract::new(44100.0);
+    tract.set_vowel(Vowel::A).unwrap();
+
+    for quality in [Quality::Full, Quality::Reduced, Quality::Minimal] {
+        tract.set_quality(quality);
+        let mut glottal = GlottalSource::new(120.0, 44100.0).unwrap();
+        let samples = tract.synthesize(&mut glottal, 1024);
+        assert!(
+            samples.iter().all(|s| s.is_finite()),
+            "NaN/Inf at quality {:?}",
+            quality
+        );
+        assert!(
+            samples.iter().any(|&s| s.abs() > 1e-6),
+            "silence at quality {:?}",
+            quality
+        );
+        tract.reset();
+    }
+}
+
+#[test]
+fn test_minimal_quality_is_cheaper() {
+    // Minimal should skip subglottal and interaction — verify via different output
+    let mut tract_full = VocalTract::new(44100.0);
+    tract_full.set_vowel(Vowel::A).unwrap();
+    tract_full.set_quality(Quality::Full);
+
+    let mut tract_min = VocalTract::new(44100.0);
+    tract_min.set_vowel(Vowel::A).unwrap();
+    tract_min.set_quality(Quality::Minimal);
+
+    let mut glottal1 = GlottalSource::new(120.0, 44100.0).unwrap();
+    let mut glottal2 = GlottalSource::new(120.0, 44100.0).unwrap();
+
+    let full_samples = tract_full.synthesize(&mut glottal1, 512);
+    let min_samples = tract_min.synthesize(&mut glottal2, 512);
+
+    // They should differ (different pipeline stages active)
+    let diff: f32 = full_samples
+        .iter()
+        .zip(min_samples.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum();
+    assert!(
+        diff > 0.001,
+        "Full and Minimal quality should produce different output"
+    );
+}
+
+#[test]
+fn test_serde_roundtrip_quality() {
+    for q in [Quality::Full, Quality::Reduced, Quality::Minimal] {
+        let json = serde_json::to_string(&q).unwrap();
+        let q2: Quality = serde_json::from_str(&json).unwrap();
+        assert_eq!(q, q2);
+    }
+}
+
 /// Goertzel algorithm: computes the magnitude of a specific frequency component.
 fn goertzel_magnitude(samples: &[f32], target_freq: f32, sample_rate: f32) -> f32 {
     let n = samples.len();

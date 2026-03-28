@@ -46,13 +46,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            features: --all-features
+          - os: ubuntu-latest
+            features: --no-default-features
           - os: macos-latest
+            features: --all-features
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
+      - run: cargo test ${{ matrix.features }}
       - run: cargo test --doc
   msrv:
     name: MSRV (1.89)

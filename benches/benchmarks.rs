@@ -166,6 +166,36 @@ fn bench_sequence_render_10_phonemes(c: &mut Criterion) {
     });
 }
 
+fn bench_vocal_tract_reduced_1024(c: &mut Criterion) {
+    c.bench_function("vocal_tract_reduced_1024", |b| {
+        let mut tract = VocalTract::new(44100.0);
+        tract.set_vowel(Vowel::A).unwrap();
+        tract.set_quality(Quality::Reduced);
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        let mut buf = vec![0.0f32; 1024];
+
+        b.iter(|| {
+            tract.synthesize_into(&mut gs, &mut buf);
+            black_box(&buf);
+        });
+    });
+}
+
+fn bench_vocal_tract_minimal_1024(c: &mut Criterion) {
+    c.bench_function("vocal_tract_minimal_1024", |b| {
+        let mut tract = VocalTract::new(44100.0);
+        tract.set_vowel(Vowel::A).unwrap();
+        tract.set_quality(Quality::Minimal);
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        let mut buf = vec![0.0f32; 1024];
+
+        b.iter(|| {
+            tract.synthesize_into(&mut gs, &mut buf);
+            black_box(&buf);
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_glottal_source_1024,
@@ -173,6 +203,8 @@ criterion_group!(
     bench_formant_filter_block_1024,
     bench_vocal_tract_1024,
     bench_vocal_tract_into_1024,
+    bench_vocal_tract_reduced_1024,
+    bench_vocal_tract_minimal_1024,
     bench_phoneme_render_vowel_a,
     bench_phoneme_render_fricative_s,
     bench_phoneme_render_diphthong_ai,

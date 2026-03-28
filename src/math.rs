@@ -4,6 +4,7 @@
 //! Without `std`, uses `libm` for transcendental functions.
 
 /// f32 math operations (sin, cos, exp, sqrt, sinh).
+#[allow(dead_code)]
 #[cfg(feature = "std")]
 pub(crate) mod f32 {
     #[inline(always)]
@@ -28,6 +29,7 @@ pub(crate) mod f32 {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(not(feature = "std"))]
 pub(crate) mod f32 {
     #[inline(always)]

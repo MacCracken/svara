@@ -10,6 +10,7 @@ clippy:
 
 test:
 	cargo test --all-features
+	cargo test --no-default-features
 
 audit:
 	cargo audit

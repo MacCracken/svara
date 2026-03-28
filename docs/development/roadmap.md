@@ -97,3 +97,75 @@ All criteria met. Published to crates.io.
 - [x] All public types: Serialize + Deserialize + roundtrip tested
 - [x] All benchmarks baselined with history tracking (11 benchmarks)
 - [x] Comprehensive documentation with pipeline diagrams
+
+## v1.1.0 — In Progress
+
+### Ecosystem Alignment (garjan reference parity)
+
+- [x] Bridge module: dependency-free conversion functions (bhava, vansh, prani, goonj, badal)
+- [x] Shared RNG module (deduplicated PCG32 from glottal + phoneme)
+- [x] Shared DSP utilities module (validation, naad error mapping)
+- [x] LOD/Quality system (Full, Reduced, Minimal) integrated into VocalTract
+- [x] no_std CI testing (Makefile + CI matrix)
+- [x] Validation edge case tests (NaN, Inf, negative, zero inputs)
+- [x] Deterministic replay tests (single phoneme + sequence)
+- [x] Streaming API tests (process_block, empty buffer)
+- [x] ADRs: source-filter model, coarticulation model, formant data, scope boundaries
+- [x] 4 new examples (voice_comparison, prosody_patterns, error_handling, streaming)
+- [x] Missing docs (integration guide, testing guide, dependency watch, threat model)
+- [x] SECURITY.md updated to v1.x
+- [x] Strengthened input validation (NaN/Inf rejection on all public constructors)
+
+### naad-backend Wiring
+
+- [x] Wire naad-backend into glottal.rs (NoiseGenerator for aspiration, Lfo for vibrato) — done 2026-03-28
+- [x] Wire naad-backend into tract.rs (BiquadFilter for nasal antiformant + subglottal resonance) — done 2026-03-28
+- [x] Parameter smoothing (one-pole SmoothedParam on nasal coupling, gain) — done 2026-03-28
+- [x] LOD benchmarks: Full=23µs, Reduced=15µs (-34%), Minimal=14µs (-38%) — done 2026-03-28
+
+## Backlog — v1.2.0 (High Priority)
+
+### Voice Quality
+
+- [ ] Whisper mode (noise excitation only, no voicing)
+- [ ] Creaky voice / vocal fry (irregular glottal pulses, very low Rd)
+- [ ] Vocal effort continuum (whisper → normal → shout)
+- [ ] Formant bandwidth widening under high f0 (singing)
+
+### Coarticulation
+
+- [ ] Anticipatory nasalization (vowels before nasals)
+- [ ] Formant trajectory planning across 3+ phoneme windows
+- [ ] Consonant cluster handling (/str/, /spl/)
+
+### Performance
+
+- [ ] SIMD intrinsics for BiquadBankSoa (currently auto-vectorized)
+- [ ] Block-based phoneme synthesis (avoid per-phoneme allocation)
+
+## Backlog — v2.0+ (Future)
+
+### Multi-Language
+
+- [ ] IPA-complete phoneme inventory (>100 phonemes)
+- [ ] Tone language support (Mandarin tones as prosody patterns)
+- [ ] Click consonants, ejectives, implosives
+
+### Singing Voice
+
+- [ ] Vibrato with jitter/shimmer modulation
+- [ ] Register transitions (chest → head voice)
+- [ ] Formant tuning for singing (singer's formant ~3kHz boost)
+
+### Advanced Modeling
+
+- [ ] KLGLOTT88 glottal model
+- [ ] 2D vocal tract area function (replace parallel biquads with waveguide)
+- [ ] Subglottal system with tracheal resonances
+- [ ] Turbulence noise model at constrictions
+
+### Infrastructure
+
+- [ ] Voice pool for multi-speaker management
+- [ ] Object pooling for transient phoneme synthesis
+- [ ] Async rendering API for non-real-time batch synthesis
