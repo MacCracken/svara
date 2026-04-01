@@ -44,6 +44,14 @@ Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter sm
 - [ ] Subglottal system with tracheal resonances
 - [ ] Turbulence noise model at constrictions
 
+## v2.0.1 — Post-Release Cleanup
+
+Known limitations from v2.0.0 audit flagged for immediate follow-up:
+
+- [ ] **Per-vowel spectral tilt not applied in synthesis**: `phoneme_spectral_tilt()` returns correct values but is metadata-only — the one-pole tilt filter over-attenuates signal energy. Replace with a proper shelf filter that preserves overall energy
+- [ ] **Speed quotient stored but unused in Rosenberg pulse**: `set_speed_quotient()` sets the field but the pulse shape is unchanged — asymmetric polynomials altered the pulse energy characteristics through the bandpass formant bank. Needs a proper asymmetric glottal model (e.g., modified Rosenberg C or Fant asymmetric pulse)
+- [ ] **Tone integration only in `render_planned()`**: `PhonemeEvent.tone` is read by `render_planned()` but ignored by the legacy `render()` path and `BatchRenderer`. Wire tone contours into all render paths
+
 ## Post-3.0 — Research Findings
 
 ### Synthesis Quality (P(-1) domain research, 2026-04-01)
