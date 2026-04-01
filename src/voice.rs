@@ -8,7 +8,117 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::formant::VowelTarget;
-use crate::glottal::GlottalSource;
+use crate::glottal::{GlottalModel, GlottalSource};
+
+/// Vocal effort level controlling coordinated voice quality parameters.
+///
+/// Maps to a consistent set of glottal model, Rd, breathiness, spectral tilt,
+/// and f0 range settings that model the physical changes in phonation from
+/// whisper through shouting.
+///
+/// Reference: Traunmüller & Eriksson (2000), "Acoustic effects of variation
+/// in vocal effort by men, women, and children."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum VocalEffort {
+    /// Whisper: noise-only excitation, no voicing.
+    Whisper,
+    /// Soft/breathy: voiced with high Rd, moderate breathiness.
+    Soft,
+    /// Normal modal phonation.
+    Normal,
+    /// Loud: pressed voice with low Rd, wider f0 range.
+    Loud,
+    /// Shout: very pressed, maximum f0 range and spectral energy.
+    Shout,
+}
+
+/// Parameters derived from a [`VocalEffort`] level.
+///
+/// These are the coordinated acoustic changes that happen together when
+/// a speaker changes vocal effort.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct EffortParams {
+    /// Glottal model to use.
+    pub model: GlottalModel,
+    /// Rd voice quality parameter (only meaningful for LF/Creaky models).
+    pub rd: f32,
+    /// Breathiness amount (0.0-1.0).
+    pub breathiness: f32,
+    /// Spectral tilt in dB/octave.
+    pub spectral_tilt: f32,
+    /// F0 range multiplier (1.0 = unchanged).
+    pub f0_range_scale: f32,
+    /// Formant bandwidth multiplier (>1.0 = wider).
+    pub bandwidth_scale: f32,
+    /// Jitter multiplier (relative to profile's base jitter).
+    pub jitter_scale: f32,
+    /// Shimmer multiplier (relative to profile's base shimmer).
+    pub shimmer_scale: f32,
+}
+
+impl VocalEffort {
+    /// Returns the coordinated acoustic parameters for this effort level.
+    #[must_use]
+    pub fn params(self) -> EffortParams {
+        match self {
+            Self::Whisper => EffortParams {
+                model: GlottalModel::Whisper,
+                rd: 2.7,
+                breathiness: 1.0,
+                spectral_tilt: 12.0,
+                f0_range_scale: 0.5,
+                bandwidth_scale: 1.3,
+                jitter_scale: 0.0, // no voicing → no jitter
+                shimmer_scale: 0.0,
+            },
+            Self::Soft => EffortParams {
+                model: GlottalModel::LF,
+                rd: 2.0,
+                breathiness: 0.15,
+                spectral_tilt: 6.0,
+                f0_range_scale: 0.8,
+                bandwidth_scale: 1.1,
+                jitter_scale: 1.2,
+                shimmer_scale: 1.2,
+            },
+            Self::Normal => EffortParams {
+                model: GlottalModel::LF,
+                rd: 1.0,
+                breathiness: 0.02,
+                spectral_tilt: 2.0,
+                f0_range_scale: 1.0,
+                bandwidth_scale: 1.0,
+                jitter_scale: 1.0,
+                shimmer_scale: 1.0,
+            },
+            Self::Loud => EffortParams {
+                model: GlottalModel::LF,
+                rd: 0.6,
+                breathiness: 0.0,
+                spectral_tilt: 0.0,
+                f0_range_scale: 1.3,
+                bandwidth_scale: 0.9,
+                jitter_scale: 0.8,
+                shimmer_scale: 0.8,
+            },
+            Self::Shout => EffortParams {
+                model: GlottalModel::LF,
+                rd: 0.3,
+                breathiness: 0.0,
+                // Negative tilt = spectral emphasis. Currently the one-pole
+                // filter in GlottalSource only applies positive tilt; the
+                // pressed LF pulse (Rd=0.3) naturally has strong HF content.
+                spectral_tilt: 0.0,
+                f0_range_scale: 1.6,
+                bandwidth_scale: 0.8,
+                jitter_scale: 0.5,
+                shimmer_scale: 0.5,
+            },
+        }
+    }
+}
 
 /// A speaker's voice characteristics.
 ///
@@ -163,6 +273,23 @@ impl VoiceProfile {
         self
     }
 
+    /// Applies a [`VocalEffort`] level, overriding breathiness, jitter, shimmer,
+    /// and f0 range to match the effort level while preserving the speaker's
+    /// base f0 and formant scale (builder pattern).
+    ///
+    /// This modifies the profile in place. The resulting profile will produce
+    /// the correct glottal model and parameters when passed to
+    /// [`create_glottal_source_with_effort`](Self::create_glottal_source_with_effort).
+    #[must_use]
+    pub fn with_effort(mut self, effort: VocalEffort) -> Self {
+        let p = effort.params();
+        self.breathiness = p.breathiness;
+        self.jitter *= p.jitter_scale;
+        self.shimmer *= p.shimmer_scale;
+        self.f0_range *= p.f0_range_scale;
+        self
+    }
+
     /// Creates a [`GlottalSource`] configured with this voice profile's parameters.
     ///
     /// Sets f0, breathiness, jitter, shimmer, and vibrato from the profile.
@@ -176,6 +303,37 @@ impl VoiceProfile {
         gs.set_jitter(self.jitter);
         gs.set_shimmer(self.shimmer);
         gs.set_vibrato(self.vibrato_rate, self.vibrato_depth);
+        Ok(gs)
+    }
+
+    /// Creates a [`GlottalSource`] configured for a specific vocal effort level.
+    ///
+    /// Applies the effort's glottal model, Rd, spectral tilt, and scaled
+    /// jitter/shimmer/breathiness on top of this profile's base parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `base_f0` is outside the valid range.
+    pub fn create_glottal_source_with_effort(
+        &self,
+        effort: VocalEffort,
+        sample_rate: f32,
+    ) -> Result<GlottalSource> {
+        let p = effort.params();
+        let mut gs = GlottalSource::new(self.base_f0, sample_rate)?;
+        gs.set_breathiness(p.breathiness);
+        gs.set_jitter(self.jitter * p.jitter_scale);
+        gs.set_shimmer(self.shimmer * p.shimmer_scale);
+        gs.set_spectral_tilt(p.spectral_tilt);
+        gs.set_vibrato(self.vibrato_rate, self.vibrato_depth);
+
+        match p.model {
+            GlottalModel::Whisper => gs.set_whisper(),
+            GlottalModel::Creaky => gs.set_creaky(p.rd),
+            GlottalModel::LF => gs.set_rd(p.rd),
+            GlottalModel::Rosenberg => gs.set_model(GlottalModel::Rosenberg),
+        }
+
         Ok(gs)
     }
 
@@ -214,6 +372,30 @@ impl VoiceProfile {
                 target.b3 * bw_scale,
                 target.b4 * bw_scale,
                 target.b5 * bw_scale,
+            ],
+        )
+    }
+
+    /// Applies formant scaling with an additional effort-dependent bandwidth factor.
+    ///
+    /// Loud/shout effort narrows bandwidths (more precise articulation), while
+    /// whisper/soft widens them (more diffuse resonances).
+    #[must_use]
+    pub fn apply_formant_scale_with_effort(
+        &self,
+        target: &VowelTarget,
+        effort: VocalEffort,
+    ) -> VowelTarget {
+        let base = self.apply_formant_scale(target);
+        let effort_bw = effort.params().bandwidth_scale;
+        VowelTarget::with_bandwidths(
+            [base.f1, base.f2, base.f3, base.f4, base.f5],
+            [
+                base.b1 * effort_bw,
+                base.b2 * effort_bw,
+                base.b3 * effort_bw,
+                base.b4 * effort_bw,
+                base.b5 * effort_bw,
             ],
         )
     }
@@ -373,5 +555,131 @@ mod tests {
         let json = serde_json::to_string(&v).unwrap();
         let v2: VoiceProfile = serde_json::from_str(&json).unwrap();
         assert!((v2.bandwidth_widening - 0.8).abs() < f32::EPSILON);
+    }
+
+    // --- VocalEffort tests ---
+
+    #[test]
+    fn test_effort_params_whisper() {
+        let p = VocalEffort::Whisper.params();
+        assert_eq!(p.model, crate::glottal::GlottalModel::Whisper);
+        assert!((p.breathiness - 1.0).abs() < f32::EPSILON);
+        assert!(p.spectral_tilt > 10.0);
+    }
+
+    #[test]
+    fn test_effort_params_shout() {
+        let p = VocalEffort::Shout.params();
+        assert_eq!(p.model, crate::glottal::GlottalModel::LF);
+        assert!((p.rd - 0.3).abs() < f32::EPSILON);
+        assert!(p.breathiness < f32::EPSILON);
+        assert!(p.spectral_tilt < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_effort_energy_extremes() {
+        // Whisper should have less energy than Shout. The intermediate levels
+        // may not be strictly monotonic (Soft can exceed Normal due to noise).
+        let voice = VoiceProfile::new_male();
+
+        let energy_for = |effort: VocalEffort| -> f32 {
+            let mut gs = voice
+                .create_glottal_source_with_effort(effort, 44100.0)
+                .unwrap();
+            let samples: alloc::vec::Vec<f32> = (0..4410).map(|_| gs.next_sample()).collect();
+            samples.iter().map(|s| s * s).sum()
+        };
+
+        let e_whisper = energy_for(VocalEffort::Whisper);
+        let e_normal = energy_for(VocalEffort::Normal);
+        let e_shout = energy_for(VocalEffort::Shout);
+
+        assert!(
+            e_whisper < e_normal,
+            "whisper should have less energy than normal: {e_whisper} < {e_normal}"
+        );
+        assert!(
+            e_normal < e_shout,
+            "normal should have less energy than shout: {e_normal} < {e_shout}"
+        );
+    }
+
+    #[test]
+    fn test_effort_all_produce_finite_output() {
+        let voice = VoiceProfile::new_male();
+        for effort in [
+            VocalEffort::Whisper,
+            VocalEffort::Soft,
+            VocalEffort::Normal,
+            VocalEffort::Loud,
+            VocalEffort::Shout,
+        ] {
+            let mut gs = voice
+                .create_glottal_source_with_effort(effort, 44100.0)
+                .unwrap();
+            let samples: alloc::vec::Vec<f32> = (0..1024).map(|_| gs.next_sample()).collect();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{effort:?} produced non-finite samples"
+            );
+        }
+    }
+
+    #[test]
+    fn test_with_effort_builder() {
+        let v = VoiceProfile::new_male().with_effort(VocalEffort::Whisper);
+        assert!((v.breathiness - 1.0).abs() < f32::EPSILON);
+        // f0_range should be scaled down for whisper (0.5x)
+        let base_range = VoiceProfile::new_male().f0_range;
+        assert!((v.f0_range - base_range * 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_effort_bandwidth_scaling() {
+        let target = crate::formant::VowelTarget::from_vowel(crate::formant::Vowel::A);
+        let voice = VoiceProfile::new_male();
+
+        let whisper_scaled = voice.apply_formant_scale_with_effort(&target, VocalEffort::Whisper);
+        let normal_scaled = voice.apply_formant_scale_with_effort(&target, VocalEffort::Normal);
+        let shout_scaled = voice.apply_formant_scale_with_effort(&target, VocalEffort::Shout);
+
+        // Whisper should have wider bandwidths than normal
+        assert!(
+            whisper_scaled.b1 > normal_scaled.b1,
+            "whisper BW should be wider: {}  > {}",
+            whisper_scaled.b1,
+            normal_scaled.b1
+        );
+        // Shout should have narrower bandwidths than normal
+        assert!(
+            shout_scaled.b1 < normal_scaled.b1,
+            "shout BW should be narrower: {} < {}",
+            shout_scaled.b1,
+            normal_scaled.b1
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_vocal_effort() {
+        for effort in [
+            VocalEffort::Whisper,
+            VocalEffort::Soft,
+            VocalEffort::Normal,
+            VocalEffort::Loud,
+            VocalEffort::Shout,
+        ] {
+            let json = serde_json::to_string(&effort).unwrap();
+            let e2: VocalEffort = serde_json::from_str(&json).unwrap();
+            assert_eq!(effort, e2);
+        }
+    }
+
+    #[test]
+    fn test_serde_roundtrip_effort_params() {
+        let params = VocalEffort::Normal.params();
+        let json = serde_json::to_string(&params).unwrap();
+        let p2: EffortParams = serde_json::from_str(&json).unwrap();
+        assert!((p2.rd - params.rd).abs() < f32::EPSILON);
+        assert!((p2.breathiness - params.breathiness).abs() < f32::EPSILON);
     }
 }

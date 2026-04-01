@@ -83,7 +83,7 @@ pub mod prelude {
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};
     pub use crate::spectral::{Spectrum, analyze as analyze_spectrum, rms_level};
     pub use crate::tract::{NasalPlace, VocalTract};
-    pub use crate::voice::VoiceProfile;
+    pub use crate::voice::{EffortParams, VocalEffort, VoiceProfile};
 }
 
 // Compile-time trait assertions: all public types must be Send + Sync
@@ -112,6 +112,8 @@ mod assert_traits {
         _assert_send_sync::<crate::tract::VocalTract>();
         _assert_send_sync::<crate::tract::NasalPlace>();
         _assert_send_sync::<crate::voice::VoiceProfile>();
+        _assert_send_sync::<crate::voice::VocalEffort>();
+        _assert_send_sync::<crate::voice::EffortParams>();
         _assert_send_sync::<crate::spectral::Spectrum>();
     }
 }

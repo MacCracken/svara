@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v1.2.0
+## [1.2.0] - 2026-04-01
 
 ### Added
 
@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Creaky voice / vocal fry** (`GlottalModel::Creaky`): LF pulse model with irregular period timing — ~40% doubled periods, ~10% tripled periods for subharmonic patterns. 3x shimmer amplification for characteristic amplitude irregularity. `GlottalSource::set_creaky(rd)` with Rd clamped to [0.3, 0.8] (pressed range)
 - **Formant bandwidth widening for singing** (`VoiceProfile::bandwidth_widening`): configurable extra bandwidth scaling at high f0 (>300 Hz). Models increased source-tract coupling in singing. Formula: `bw_scale *= 1 + widening * 0.3 * ((f0 - 300) / 500)`. Builder: `with_bandwidth_widening(factor)`, range [0.0, 2.0]
 - 8 new unit tests: whisper output/aperiodicity/energy, creaky output/Rd-clamping/stability, bandwidth widening behavior/scaling/serde
+- **Vocal effort continuum** (`VocalEffort` enum): coordinated voice quality control across 5 effort levels (Whisper, Soft, Normal, Loud, Shout). Each level maps to consistent GlottalModel, Rd, breathiness, spectral tilt, f0 range scaling, bandwidth scaling, and jitter/shimmer scaling. `VoiceProfile::with_effort()` builder, `create_glottal_source_with_effort()`, `apply_formant_scale_with_effort()`
 - 2 new benchmarks: `glottal_whisper_1024`, `glottal_creaky_1024`
+- 7 new effort tests: parameter validation, energy ordering, finite output, builder, bandwidth scaling, serde roundtrip
 
 ### Performance
 
