@@ -488,7 +488,9 @@ impl SynthesisContext {
         // Reset state for new phoneme
         self.tract.reset();
 
-        // Reconfigure glottal source
+        // Reconfigure glottal source to match voice profile
+        self.glottal
+            .set_model(crate::glottal::GlottalModel::Rosenberg);
         self.glottal.set_f0(voice.base_f0)?;
         self.glottal.set_breathiness(voice.breathiness);
         self.glottal.set_jitter(voice.jitter);
@@ -871,20 +873,13 @@ pub fn synthesize_phoneme_nasalized(
     }
 
     // Only vowels and diphthongs receive anticipatory nasalization
-    let use_nasal = nasalization.is_some()
-        && matches!(
-            phoneme.class(),
-            PhonemeClass::Vowel | PhonemeClass::Diphthong
-        );
+    let is_vowel_like = matches!(
+        phoneme.class(),
+        PhonemeClass::Vowel | PhonemeClass::Diphthong
+    );
 
-    if use_nasal {
-        synthesize_vowel_nasalized(
-            phoneme,
-            voice,
-            sample_rate,
-            num_samples,
-            nasalization.unwrap(),
-        )
+    if let (true, Some(nasal)) = (is_vowel_like, nasalization) {
+        synthesize_vowel_nasalized(phoneme, voice, sample_rate, num_samples, nasal)
     } else {
         // Delegate to standard synthesis
         synthesize_phoneme(phoneme, voice, sample_rate, duration)
@@ -928,9 +923,21 @@ fn synthesize_vowel_nasalized(
 
     let onset_sample = (nasalization.onset * num_samples as f32) as usize;
     let ramp_len = num_samples.saturating_sub(onset_sample).max(1);
+    let is_diphthong = phoneme.class() == PhonemeClass::Diphthong;
+    let end_target = if is_diphthong {
+        Some(voice.apply_formant_scale(&diphthong_end_target(phoneme)))
+    } else {
+        None
+    };
     let mut output = Vec::with_capacity(num_samples);
 
     for i in 0..num_samples {
+        // Diphthong formant interpolation
+        if let Some(ref end) = end_target {
+            let t = i as f32 / num_samples as f32;
+            let current = VowelTarget::interpolate(&target, end, t);
+            tract.set_formants_from_target(&current)?;
+        }
         // Ramp nasal coupling from 0 to peak_coupling after onset
         if i >= onset_sample {
             let t = (i - onset_sample) as f32 / ramp_len as f32;
@@ -1448,5 +1455,47 @@ mod tests {
         let json = serde_json::to_string(&ctx).unwrap();
         let ctx2: SynthesisContext = serde_json::from_str(&json).unwrap();
         assert!((ctx2.sample_rate - 44100.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_nasalized_diphthong() {
+        // Diphthongs should still interpolate formants when nasalized
+        let voice = VoiceProfile::new_male();
+        let nasal = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+        let result = synthesize_phoneme_nasalized(
+            &Phoneme::DiphthongAI,
+            &voice,
+            44100.0,
+            0.15,
+            Some(&nasal),
+        );
+        assert!(result.is_ok());
+        let samples = result.unwrap();
+        assert!(samples.iter().all(|s| s.is_finite()));
+        assert!(samples.iter().any(|&s| s.abs() > 1e-6));
+    }
+
+    #[test]
+    fn test_synthesis_context_sequential_different_classes() {
+        // Ensure model state doesn't leak between sequential phonemes
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+
+        // Synthesize a sequence of different classes
+        let s1 = ctx
+            .synthesize(&Phoneme::FricativeS, &voice, 0.06, None)
+            .unwrap();
+        assert!(s1.iter().all(|s| s.is_finite()));
+
+        let s2 = ctx
+            .synthesize(&Phoneme::VowelA, &voice, 0.08, None)
+            .unwrap();
+        assert!(s2.iter().all(|s| s.is_finite()));
+        assert!(s2.iter().any(|&s| s.abs() > 1e-6));
+
+        let s3 = ctx
+            .synthesize(&Phoneme::NasalM, &voice, 0.06, None)
+            .unwrap();
+        assert!(s3.iter().all(|s| s.is_finite()));
     }
 }
