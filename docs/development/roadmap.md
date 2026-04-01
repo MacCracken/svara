@@ -28,7 +28,7 @@ Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter sm
 
 ### Coarticulation
 
-- [ ] Formant trajectory planning across 3+ phoneme windows
+- [x] Formant trajectory planning across 3+ phoneme windows — done 2026-04-01
 
 ### Multi-Language
 

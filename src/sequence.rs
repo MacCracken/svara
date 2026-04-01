@@ -4,6 +4,7 @@
 //! contours, coarticulatory formant blending, and smooth crossfades at
 //! phoneme boundaries.
 
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
@@ -206,6 +207,172 @@ impl PhonemeSequence {
         }
 
         let output = crossfade_segments_variable(&segments, &crossfade_lengths);
+
+        Ok(output)
+    }
+
+    /// Renders the sequence using trajectory-planned continuous formant interpolation.
+    ///
+    /// Instead of synthesizing phonemes independently and crossfading, this
+    /// method uses a [`TrajectoryPlanner`](crate::trajectory::TrajectoryPlanner)
+    /// to compute a smooth formant trajectory across 3+ phoneme windows,
+    /// then synthesizes continuously with per-sample formant updates.
+    ///
+    /// This produces smoother coarticulation than `render()` at the cost of
+    /// per-sample formant updates (more CPU). Best for high-quality offline
+    /// rendering.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SvaraError` if synthesis fails.
+    pub fn render_planned(&self, voice: &VoiceProfile, sample_rate: f32) -> Result<Vec<f32>> {
+        use crate::trajectory::TrajectoryPlanner;
+
+        if self.events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Cluster detection + duration scaling (same as render)
+        let in_cluster = detect_consonant_clusters(&self.events);
+        let durations: Vec<f32> = self
+            .events
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let stress_scale = match e.stress {
+                    Stress::Primary => 1.15,
+                    Stress::Secondary => 1.05,
+                    Stress::Unstressed => 0.9,
+                };
+                let cluster_scale = if in_cluster[i] {
+                    CLUSTER_COMPRESSION
+                } else {
+                    1.0
+                };
+                e.duration * stress_scale * cluster_scale
+            })
+            .collect();
+
+        let phoneme_list: Vec<Phoneme> = self.events.iter().map(|e| e.phoneme).collect();
+        let nasalizations = phoneme::detect_nasalization(&phoneme_list);
+
+        // Build trajectory plan
+        let plan = TrajectoryPlanner::plan(&phoneme_list, &durations, voice, sample_rate);
+        let total_samples = plan.total_samples();
+        if total_samples == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Compute phoneme boundaries for class-specific synthesis decisions
+        let mut boundaries = Vec::with_capacity(self.events.len() + 1);
+        let mut offset = 0usize;
+        boundaries.push(0);
+        for &dur in &durations {
+            offset += (dur * sample_rate) as usize;
+            boundaries.push(offset);
+        }
+
+        // Create reusable synthesis state
+        let mut glottal = voice
+            .create_glottal_source(sample_rate)
+            .map_err(|e| crate::error::SvaraError::ArticulationFailed(e.to_string()))?;
+        let mut tract = crate::tract::VocalTract::new(sample_rate);
+        let mut noise = crate::rng::Rng::new(17);
+        let mut output = Vec::with_capacity(total_samples);
+
+        // Determine which phoneme each sample belongs to (for class-specific behavior)
+        let mut current_phoneme_idx = 0;
+
+        for sample_idx in 0..total_samples {
+            // Advance phoneme index
+            while current_phoneme_idx + 1 < self.events.len()
+                && sample_idx >= boundaries[current_phoneme_idx + 1]
+            {
+                current_phoneme_idx += 1;
+            }
+
+            let phoneme = &self.events[current_phoneme_idx].phoneme;
+            let target = plan.formants_at(sample_idx);
+
+            // Apply nasalization if active
+            if let Some(ref nasal) = nasalizations[current_phoneme_idx] {
+                let nasal_onset = boundaries[current_phoneme_idx]
+                    + ((boundaries[current_phoneme_idx + 1] - boundaries[current_phoneme_idx])
+                        as f32
+                        * nasal.onset) as usize;
+                if sample_idx >= nasal_onset {
+                    let nasal_len = boundaries[current_phoneme_idx + 1]
+                        .saturating_sub(nasal_onset)
+                        .max(1);
+                    let t = (sample_idx - nasal_onset) as f32 / nasal_len as f32;
+                    tract.set_nasal_coupling(
+                        nasal.peak_coupling * hisab::calc::ease_in_out_smooth(t),
+                    );
+                    tract.set_nasal_place(nasal.place);
+                } else {
+                    tract.set_nasal_coupling(0.0);
+                }
+            } else {
+                tract.set_nasal_coupling(0.0);
+            }
+
+            // Update formants from trajectory
+            let _ = tract.set_formants_from_target(&target);
+
+            // Apply stress f0 modification
+            let stress_f0 = match self.events[current_phoneme_idx].stress {
+                Stress::Primary => voice.base_f0 * 1.10,
+                Stress::Secondary => voice.base_f0 * 1.05,
+                Stress::Unstressed => voice.base_f0,
+            };
+            let _ = glottal.set_f0(stress_f0);
+
+            // Class-specific excitation
+            let sample = match phoneme.class() {
+                PhonemeClass::Vowel
+                | PhonemeClass::Diphthong
+                | PhonemeClass::Approximant
+                | PhonemeClass::Lateral
+                | PhonemeClass::Nasal
+                | PhonemeClass::Implosive => tract.process_sample(glottal.next_sample()),
+                PhonemeClass::Fricative => {
+                    let n = noise.next_f32() * 0.5;
+                    if phoneme.is_voiced() {
+                        n * 0.6 + tract.process_sample(glottal.next_sample()) * 0.4
+                    } else {
+                        n * 0.6
+                    }
+                }
+                PhonemeClass::Plosive
+                | PhonemeClass::Affricate
+                | PhonemeClass::Click
+                | PhonemeClass::Ejective => {
+                    // For transient consonants in planned mode, use noise burst
+                    let burst_frac = (sample_idx - boundaries[current_phoneme_idx]) as f32
+                        / (boundaries[current_phoneme_idx + 1] - boundaries[current_phoneme_idx])
+                            .max(1) as f32;
+                    if burst_frac < 0.4 {
+                        0.0 // closure
+                    } else {
+                        noise.next_f32() * (1.0 - burst_frac) * 0.5
+                    }
+                }
+                PhonemeClass::Silence => 0.0,
+            };
+
+            output.push(sample);
+        }
+
+        // Apply global envelope
+        let len = output.len();
+        let ramp = (len / 20).clamp(1, 256);
+        for (i, s) in output.iter_mut().enumerate().take(ramp) {
+            *s *= hisab::calc::ease_in_out_smooth(i as f32 / ramp as f32);
+        }
+        for i in 0..ramp {
+            let idx = len - 1 - i;
+            output[idx] *= hisab::calc::ease_in_out_smooth(i as f32 / ramp as f32);
+        }
 
         Ok(output)
     }
@@ -514,5 +681,73 @@ mod tests {
             out_no.len(),
             naive_extra
         );
+    }
+
+    // --- render_planned tests ---
+
+    #[test]
+    fn test_render_planned_empty() {
+        let seq = PhonemeSequence::new();
+        let voice = VoiceProfile::new_male();
+        let result = seq.render_planned(&voice, 44100.0);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_render_planned_single() {
+        let mut seq = PhonemeSequence::new();
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        let voice = VoiceProfile::new_male();
+        let result = seq.render_planned(&voice, 44100.0);
+        assert!(result.is_ok());
+        let samples = result.unwrap();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_render_planned_multi() {
+        let mut seq = PhonemeSequence::new();
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        seq.push(PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed));
+        seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Secondary));
+
+        let voice = VoiceProfile::new_male();
+        let samples = seq.render_planned(&voice, 44100.0).unwrap();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_render_planned_with_consonants() {
+        let mut seq = PhonemeSequence::new();
+        seq.push(PhonemeEvent::new(
+            Phoneme::PlosiveP,
+            0.06,
+            Stress::Unstressed,
+        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        seq.push(PhonemeEvent::new(
+            Phoneme::FricativeS,
+            0.08,
+            Stress::Unstressed,
+        ));
+        seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary));
+
+        let voice = VoiceProfile::new_male();
+        let samples = seq.render_planned(&voice, 44100.0).unwrap();
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_render_planned_produces_non_silent() {
+        let mut seq = PhonemeSequence::new();
+        seq.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary));
+        seq.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary));
+
+        let voice = VoiceProfile::new_male();
+        let samples = seq.render_planned(&voice, 44100.0).unwrap();
+        assert!(samples.iter().any(|&s| s.abs() > 1e-6));
     }
 }
