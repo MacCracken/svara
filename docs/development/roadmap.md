@@ -2,71 +2,50 @@
 
 ## Completed
 
-### v0.1.0 — Initial Scaffold (2026-03-26)
+### v0.1.0 (2026-03-26)
 
-- Core synthesis pipeline: GlottalSource -> VocalTract -> FormantFilter
-- Rosenberg B glottal pulse model with jitter, shimmer, breathiness
-- Parallel biquad formant filter bank with 5 formants (F1-F5)
-- VocalTract with nasal coupling and lip radiation
-- 44 phonemes: 15 vowels, 5 diphthongs, 6 plosives, 9 fricatives, 3 nasals, 4 approximants, silence
-- Peterson & Barney (1952) vowel formant targets
-- Prosody: intonation patterns, stress, f0 contours
-- Voice profiles: male/female/child presets with builder pattern
-- Coarticulation: crossfade-based phoneme boundary blending
-- Criterion benchmarks, integration tests, CI/CD
+Initial scaffold — core pipeline, Rosenberg B, 44 phonemes, prosody, voice profiles, coarticulation, CI/CD.
 
 ### v1.0.0 (2026-03-27)
 
-- P(-1) scaffold hardening: spectral tilt, vibrato, Rosenberg pulse fixes
-- Hillenbrand et al. (1995) formant data with per-vowel bandwidths
-- LF (Liljencrants-Fant) glottal model with Rd parameterization
-- SOA formant filter bank (2x speedup), block processing, pre-allocated buffers
-- Look-ahead coarticulation with sigmoid interpolation and Recasens DAC resistance
-- F2 locus equations, DC blocking, gain normalization, source-filter interaction
-- Dynamic nasal resonances, subglottal coupling, f64 biquad coefficients
-- 48 phonemes (affricates, glottal stop, tap/flap)
-- `no_std` core DSP compatibility
-- Architecture documentation with pipeline diagrams
+LF glottal model, Hillenbrand formant data, SOA formant bank (2x), look-ahead coarticulation, 48 phonemes, `no_std`, architecture docs.
 
 ### v1.1.0 (2026-03-28)
 
-- Bridge module (18 conversion functions for bhava, vansh, prani, goonj, badal)
-- LOD/Quality system (Full, Reduced -34%, Minimal -38%)
-- naad-backend wiring (NoiseGenerator, Lfo, BiquadFilter)
-- Parameter smoothing (SmoothedParam on nasal coupling, gain)
-- Shared RNG, DSP utilities, 4 ADRs, 4 examples, integration/testing/security docs
-- Strengthened input validation (NaN/Inf rejection)
+Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter smoothing, validation hardening, ADRs, examples, docs.
 
-### v1.2.0 (2026-04-01)
+### v1.2.0 → v2.0.0 (2026-04-01)
 
-- Whisper mode (GlottalModel::Whisper): noise-only excitation, steep spectral tilt
-- Creaky voice / vocal fry (GlottalModel::Creaky): irregular period doubling/tripling
-- Vocal effort continuum (VocalEffort enum): 5 effort levels with coordinated parameter mapping
-- Formant bandwidth widening for singing (VoiceProfile::bandwidth_widening)
-- Whisper 5.0µs (-9% vs Rosenberg), Creaky 7.1µs (+29%)
-- 15 new benchmarks total, 144 tests
+- Whisper mode, creaky voice / vocal fry, vocal effort continuum (5 levels)
+- Formant bandwidth widening for singing
+- Anticipatory nasalization (vowels before nasals)
+- Consonant cluster handling with duration compression
+- SynthesisContext (reusable state for block synthesis)
+- SIMD: auto-vectorization already optimal (SSE2 4.8µs, AVX2 3.8µs with `-C target-cpu=native`); manual intrinsics slower due to `#[target_feature]` call boundary
+- 162 tests, 15 benchmarks
 
-## v2.0.0 — In Progress
+## v2.0.0 — Remaining
 
 ### Coarticulation
 
-- [x] Anticipatory nasalization (vowels before nasals) — done 2026-04-01
 - [ ] Formant trajectory planning across 3+ phoneme windows
-- [x] Consonant cluster handling (/str/, /spl/) — done 2026-04-01
-
-### Performance
-
-- [x] SIMD investigation for BiquadBankSoa — done 2026-04-01
-  - Manual AVX2+FMA intrinsics benchmarked but `#[target_feature]` call boundary prevents inlining, making runtime-detected path slower than auto-vectorized loop
-  - Auto-vectorization already optimal: SSE2 default 4.8µs, AVX2 (`-C target-cpu=native`) 3.8µs (-21%)
-  - Documented in `formant.rs` — build with `RUSTFLAGS="-C target-cpu=native"` for best perf
-- [x] Block-based phoneme synthesis (SynthesisContext) — done 2026-04-01
 
 ### Multi-Language
 
 - [ ] IPA-complete phoneme inventory (>100 phonemes)
 - [ ] Tone language support (Mandarin tones as prosody patterns)
 - [ ] Click consonants, ejectives, implosives
+
+### Infrastructure
+
+- [x] Object pooling (`SynthesisPool`) — done 2026-04-01
+- [x] Batch rendering API (`BatchRenderer`) with progress callbacks — done 2026-04-01
+
+## v3.0.0 — Future
+
+### Infrastructure
+
+- [ ] Voice pool for multi-speaker management
 
 ### Singing Voice
 
@@ -80,9 +59,3 @@
 - [ ] 2D vocal tract area function (replace parallel biquads with waveguide)
 - [ ] Subglottal system with tracheal resonances
 - [ ] Turbulence noise model at constrictions
-
-### Infrastructure
-
-- [ ] Voice pool for multi-speaker management
-- [ ] Object pooling for transient phoneme synthesis
-- [ ] Async rendering API for non-real-time batch synthesis

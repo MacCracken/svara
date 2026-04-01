@@ -16,8 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Anticipatory nasalization** (`Nasalization` struct): vowels preceding nasals (/m/, /n/, /ŋ/) automatically receive gradual nasal coupling ramping up from 65% of the vowel segment. Anti-formant frequency tuned by place of articulation. `synthesize_phoneme_nasalized()` public API
 - **Consonant cluster handling**: automatic detection of 2+ adjacent consonants in sequences with 30% duration compression per cluster member. Prevents unnaturally long consonant runs in /str/, /spl/, etc.
 - **`SynthesisContext`**: reusable synthesis state (VocalTract + GlottalSource + buffer) for consumers who need to manage allocation. Supports all phoneme classes with nasalization
+- **`SynthesisPool`** (`pool.rs`): pre-allocated object pool wrapping `SynthesisContext` with `render`/`render_nasalized`/`render_batch`, pre-warmed buffer via `with_capacity`, diagnostic counters (render_count, peak_samples)
+- **`BatchRenderer`** (`render.rs`): non-real-time batch rendering API with `push`/`extend`/`render_all`/`render_with_progress` callback. Concatenates phoneme audio with stress modification and anticipatory nasalization
 - 2 new benchmarks: `glottal_whisper_1024`, `glottal_creaky_1024`
-- 160 total tests (114 unit + 45 integration + 1 doc)
+- 180 total tests (132 unit + 45 integration + 3 doc)
 
 ### Performance
 

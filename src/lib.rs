@@ -61,7 +61,9 @@ pub mod glottal;
 pub mod lod;
 mod math;
 pub mod phoneme;
+pub mod pool;
 pub mod prosody;
+pub mod render;
 pub(crate) mod rng;
 pub mod sequence;
 pub(crate) mod smooth;
@@ -79,6 +81,7 @@ pub mod prelude {
         Nasalization, Phoneme, PhonemeClass, SynthesisContext, f2_locus_equation, phoneme_duration,
         phoneme_formants, synthesize_phoneme, synthesize_phoneme_nasalized,
     };
+    pub use crate::pool::SynthesisPool;
     pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};
     pub use crate::spectral::{Spectrum, analyze as analyze_spectrum, rms_level};
@@ -113,6 +116,9 @@ mod assert_traits {
         _assert_send_sync::<crate::sequence::PhonemeSequence>();
         _assert_send_sync::<crate::tract::VocalTract>();
         _assert_send_sync::<crate::tract::NasalPlace>();
+        _assert_send_sync::<crate::pool::SynthesisPool>();
+        _assert_send_sync::<crate::render::BatchRenderer>();
+        _assert_send_sync::<crate::render::RenderProgress>();
         _assert_send_sync::<crate::voice::VoiceProfile>();
         _assert_send_sync::<crate::voice::VocalEffort>();
         _assert_send_sync::<crate::voice::EffortParams>();

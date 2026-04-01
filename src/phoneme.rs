@@ -455,6 +455,12 @@ impl SynthesisContext {
         })
     }
 
+    /// Returns the sample rate.
+    #[must_use]
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
     /// Synthesizes a phoneme into the internal buffer and returns a reference.
     ///
     /// Reuses the internal `VocalTract` and `GlottalSource`, resetting state
