@@ -76,8 +76,8 @@ pub mod prelude {
     pub use crate::glottal::{GlottalModel, GlottalSource};
     pub use crate::lod::Quality;
     pub use crate::phoneme::{
-        Phoneme, PhonemeClass, f2_locus_equation, phoneme_duration, phoneme_formants,
-        synthesize_phoneme,
+        Nasalization, Phoneme, PhonemeClass, SynthesisContext, f2_locus_equation, phoneme_duration,
+        phoneme_formants, synthesize_phoneme, synthesize_phoneme_nasalized,
     };
     pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};
@@ -104,6 +104,8 @@ mod assert_traits {
         _assert_send_sync::<crate::lod::Quality>();
         _assert_send_sync::<crate::phoneme::Phoneme>();
         _assert_send_sync::<crate::phoneme::PhonemeClass>();
+        _assert_send_sync::<crate::phoneme::Nasalization>();
+        _assert_send_sync::<crate::phoneme::SynthesisContext>();
         _assert_send_sync::<crate::prosody::ProsodyContour>();
         _assert_send_sync::<crate::prosody::IntonationPattern>();
         _assert_send_sync::<crate::prosody::Stress>();

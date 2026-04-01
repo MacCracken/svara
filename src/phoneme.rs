@@ -416,6 +416,326 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
     }
 }
 
+/// Reusable synthesis context that eliminates per-phoneme allocation.
+///
+/// When rendering a sequence of phonemes, creating a new `VocalTract` and
+/// `GlottalSource` for each phoneme is wasteful. `SynthesisContext` owns
+/// these objects and reuses them across phonemes, resetting state between
+/// segments.
+///
+/// The internal buffer grows as needed but never shrinks, avoiding repeated
+/// allocation for varying-length phonemes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SynthesisContext {
+    tract: VocalTract,
+    glottal: crate::glottal::GlottalSource,
+    noise: crate::rng::Rng,
+    fric_filter: Option<FormantFilter>,
+    buffer: Vec<f32>,
+    sample_rate: f32,
+}
+
+impl SynthesisContext {
+    /// Creates a new synthesis context for the given voice and sample rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the voice profile's f0 is outside the valid range.
+    pub fn new(voice: &VoiceProfile, sample_rate: f32) -> Result<Self> {
+        let glottal = voice
+            .create_glottal_source(sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+        Ok(Self {
+            tract: VocalTract::new(sample_rate),
+            glottal,
+            noise: crate::rng::Rng::new(17),
+            fric_filter: None,
+            buffer: Vec::new(),
+            sample_rate,
+        })
+    }
+
+    /// Synthesizes a phoneme into the internal buffer and returns a reference.
+    ///
+    /// Reuses the internal `VocalTract` and `GlottalSource`, resetting state
+    /// between phonemes. The buffer is grown as needed but never shrinks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if synthesis parameters are invalid.
+    pub fn synthesize(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        duration: f32,
+        nasalization: Option<&Nasalization>,
+    ) -> Result<&[f32]> {
+        if duration <= 0.0 || !duration.is_finite() {
+            return Err(SvaraError::InvalidDuration(format!(
+                "duration must be positive and finite, got {duration}"
+            )));
+        }
+
+        let num_samples = (duration * self.sample_rate) as usize;
+        if num_samples == 0 {
+            self.buffer.clear();
+            return Ok(&self.buffer);
+        }
+
+        // Ensure buffer capacity
+        self.buffer.resize(num_samples, 0.0);
+
+        // Reset state for new phoneme
+        self.tract.reset();
+
+        // Reconfigure glottal source
+        self.glottal.set_f0(voice.base_f0)?;
+        self.glottal.set_breathiness(voice.breathiness);
+        self.glottal.set_jitter(voice.jitter);
+        self.glottal.set_shimmer(voice.shimmer);
+        self.glottal
+            .set_vibrato(voice.vibrato_rate, voice.vibrato_depth);
+
+        match phoneme {
+            Phoneme::Silence => {
+                for s in self.buffer.iter_mut() {
+                    *s = 0.0;
+                }
+            }
+            _ => match phoneme.class() {
+                PhonemeClass::Vowel | PhonemeClass::Diphthong => {
+                    self.synthesize_voiced(phoneme, voice, num_samples, nasalization)?;
+                }
+                PhonemeClass::Nasal => {
+                    self.synthesize_nasal_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Fricative => {
+                    self.synthesize_fricative_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Plosive => {
+                    self.synthesize_plosive_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Affricate => {
+                    self.synthesize_affricate_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Approximant | PhonemeClass::Lateral => {
+                    self.synthesize_approx_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Silence => {
+                    for s in self.buffer.iter_mut() {
+                        *s = 0.0;
+                    }
+                }
+            },
+        }
+
+        apply_amplitude_envelope(&mut self.buffer, num_samples);
+        Ok(&self.buffer[..num_samples])
+    }
+
+    fn synthesize_voiced(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+        nasalization: Option<&Nasalization>,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        self.tract.set_formants_from_target(&target)?;
+        self.tract.set_nasal_coupling(0.0);
+
+        if let Some(nasal) = nasalization {
+            self.tract.set_nasal_place(nasal.place);
+            let onset_sample = (nasal.onset * num_samples as f32) as usize;
+            let ramp_len = num_samples.saturating_sub(onset_sample).max(1);
+
+            if phoneme.class() == PhonemeClass::Diphthong {
+                let start = voice.apply_formant_scale(&phoneme_formants(phoneme));
+                let end = voice.apply_formant_scale(&diphthong_end_target(phoneme));
+                for i in 0..num_samples {
+                    let t = i as f32 / num_samples as f32;
+                    let current = VowelTarget::interpolate(&start, &end, t);
+                    self.tract.set_formants_from_target(&current)?;
+                    if i >= onset_sample {
+                        let nt = (i - onset_sample) as f32 / ramp_len as f32;
+                        self.tract.set_nasal_coupling(
+                            nasal.peak_coupling * hisab::calc::ease_in_out_smooth(nt),
+                        );
+                    }
+                    self.buffer[i] = self.tract.process_sample(self.glottal.next_sample());
+                }
+            } else {
+                for i in 0..num_samples {
+                    if i >= onset_sample {
+                        let nt = (i - onset_sample) as f32 / ramp_len as f32;
+                        self.tract.set_nasal_coupling(
+                            nasal.peak_coupling * hisab::calc::ease_in_out_smooth(nt),
+                        );
+                    }
+                    self.buffer[i] = self.tract.process_sample(self.glottal.next_sample());
+                }
+            }
+        } else if phoneme.class() == PhonemeClass::Diphthong {
+            let start = voice.apply_formant_scale(&phoneme_formants(phoneme));
+            let end = voice.apply_formant_scale(&diphthong_end_target(phoneme));
+            for i in 0..num_samples {
+                let t = i as f32 / num_samples as f32;
+                let current = VowelTarget::interpolate(&start, &end, t);
+                self.tract.set_formants_from_target(&current)?;
+                self.buffer[i] = self.tract.process_sample(self.glottal.next_sample());
+            }
+        } else {
+            self.tract
+                .synthesize_into(&mut self.glottal, &mut self.buffer[..num_samples]);
+        }
+        Ok(())
+    }
+
+    fn synthesize_nasal_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        self.tract.set_formants_from_target(&target)?;
+        self.tract.set_nasal_coupling(0.8);
+        let place = match phoneme {
+            Phoneme::NasalM => NasalPlace::Bilabial,
+            Phoneme::NasalN => NasalPlace::Alveolar,
+            Phoneme::NasalNg => NasalPlace::Velar,
+            _ => NasalPlace::Neutral,
+        };
+        self.tract.set_nasal_place(place);
+        self.tract
+            .synthesize_into(&mut self.glottal, &mut self.buffer[..num_samples]);
+        Ok(())
+    }
+
+    fn synthesize_fricative_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let fric_f = fricative_formants(phoneme, self.sample_rate);
+        let mut filter = FormantFilter::new(&fric_f, self.sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+        if phoneme.is_voiced() {
+            let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+            self.tract.set_formants_from_target(&target)?;
+            self.tract.set_nasal_coupling(0.0);
+            for i in 0..num_samples {
+                let n = self.noise.next_f32() * 0.5;
+                let friction = filter.process_sample(n);
+                let voicing = self.tract.process_sample(self.glottal.next_sample()) * 0.4;
+                self.buffer[i] = friction + voicing;
+            }
+        } else {
+            for i in 0..num_samples {
+                let n = self.noise.next_f32() * 0.6;
+                self.buffer[i] = filter.process_sample(n);
+            }
+        }
+        self.fric_filter = Some(filter);
+        Ok(())
+    }
+
+    fn synthesize_plosive_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let closure_end = num_samples / 3;
+        let burst_end = closure_end + (num_samples / 6).max(1);
+
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        let formants = target.to_formants();
+        let mut filter = FormantFilter::new(&formants, self.sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+        for s in self.buffer[..closure_end].iter_mut() {
+            *s = 0.0;
+        }
+        for i in closure_end..burst_end.min(num_samples) {
+            self.buffer[i] = filter.process_sample(self.noise.next_f32() * 0.8);
+        }
+
+        if phoneme.is_voiced() {
+            self.tract.set_formants_from_target(&target)?;
+            self.tract.set_nasal_coupling(0.0);
+            self.glottal.set_breathiness(0.4);
+            for i in burst_end..num_samples {
+                self.buffer[i] = self.tract.process_sample(self.glottal.next_sample()) * 0.5;
+            }
+            self.glottal.set_breathiness(voice.breathiness);
+        } else {
+            for i in burst_end..num_samples {
+                self.buffer[i] = filter.process_sample(self.noise.next_f32() * 0.3);
+            }
+        }
+        Ok(())
+    }
+
+    fn synthesize_affricate_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let closure_end = num_samples / 4;
+        let burst_end = closure_end + (num_samples / 8).max(1);
+
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        let fric_f = fricative_formants(phoneme, self.sample_rate);
+        let mut filter = FormantFilter::new(&fric_f, self.sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+        for s in self.buffer[..closure_end].iter_mut() {
+            *s = 0.0;
+        }
+        for i in closure_end..burst_end.min(num_samples) {
+            self.buffer[i] = filter.process_sample(self.noise.next_f32() * 0.8);
+        }
+
+        if phoneme.is_voiced() {
+            self.tract.set_formants_from_target(&target)?;
+            self.tract.set_nasal_coupling(0.0);
+            for i in burst_end..num_samples {
+                let voiced = self.tract.process_sample(self.glottal.next_sample());
+                let fric = filter.process_sample(self.noise.next_f32() * 0.5);
+                self.buffer[i] = voiced * 0.5 + fric * 0.5;
+            }
+        } else {
+            for i in burst_end..num_samples {
+                self.buffer[i] = filter.process_sample(self.noise.next_f32() * 0.6);
+            }
+        }
+        Ok(())
+    }
+
+    fn synthesize_approx_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        self.tract.set_formants_from_target(&target)?;
+        self.tract.set_nasal_coupling(0.0);
+        self.glottal.set_breathiness(voice.breathiness.max(0.1));
+        self.tract
+            .synthesize_into(&mut self.glottal, &mut self.buffer[..num_samples]);
+        for s in self.buffer[..num_samples].iter_mut() {
+            *s *= 0.7;
+        }
+        self.glottal.set_breathiness(voice.breathiness);
+        Ok(())
+    }
+}
+
 /// Type alias for phoneme-level noise generation using the shared PRNG.
 type NoiseGen = crate::rng::Rng;
 
@@ -428,6 +748,42 @@ fn diphthong_end_target(phoneme: &Phoneme) -> VowelTarget {
         Phoneme::DiphthongEI => VowelTarget::from_vowel(Vowel::I),
         Phoneme::DiphthongOU => VowelTarget::from_vowel(Vowel::U),
         _ => phoneme_formants(phoneme),
+    }
+}
+
+/// Anticipatory nasalization parameters for vowels preceding nasal consonants.
+///
+/// When a vowel precedes a nasal (/m/, /n/, /ŋ/), the velum begins lowering
+/// before the oral closure, causing the final portion of the vowel to be
+/// nasalized. This struct controls that gradual onset.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Nasalization {
+    /// Fraction of the vowel where nasalization begins (0.0-1.0).
+    /// Default: 0.65 (nasalization starts at 65% of the vowel).
+    pub onset: f32,
+    /// Peak nasal coupling at the end of the vowel (0.0-1.0).
+    /// Default: 0.4 (moderate nasalization, not fully nasal).
+    pub peak_coupling: f32,
+    /// Place of articulation of the following nasal, for anti-formant tuning.
+    pub place: NasalPlace,
+}
+
+impl Nasalization {
+    /// Creates nasalization parameters for a following nasal phoneme.
+    #[must_use]
+    pub fn for_nasal(nasal: &Phoneme) -> Option<Self> {
+        let place = match nasal {
+            Phoneme::NasalM => NasalPlace::Bilabial,
+            Phoneme::NasalN => NasalPlace::Alveolar,
+            Phoneme::NasalNg => NasalPlace::Velar,
+            _ => return None,
+        };
+        Some(Self {
+            onset: 0.65,
+            peak_coupling: 0.4,
+            place,
+        })
     }
 }
 
@@ -483,6 +839,58 @@ pub fn synthesize_phoneme(
     }
 }
 
+/// Synthesizes a phoneme with optional anticipatory nasalization.
+///
+/// When `nasalization` is provided, nasal coupling ramps up during the final
+/// portion of the segment, modeling the velum lowering before a nasal consonant.
+///
+/// # Errors
+///
+/// Returns `SvaraError::ArticulationFailed` if synthesis parameters are invalid.
+pub fn synthesize_phoneme_nasalized(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    duration: f32,
+    nasalization: Option<&Nasalization>,
+) -> Result<Vec<f32>> {
+    if duration <= 0.0 || !duration.is_finite() {
+        return Err(SvaraError::InvalidDuration(format!(
+            "duration must be positive and finite, got {duration}"
+        )));
+    }
+    if sample_rate <= 0.0 {
+        return Err(SvaraError::ArticulationFailed(
+            "sample_rate must be positive".to_string(),
+        ));
+    }
+
+    let num_samples = (duration * sample_rate) as usize;
+    if num_samples == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Only vowels and diphthongs receive anticipatory nasalization
+    let use_nasal = nasalization.is_some()
+        && matches!(
+            phoneme.class(),
+            PhonemeClass::Vowel | PhonemeClass::Diphthong
+        );
+
+    if use_nasal {
+        synthesize_vowel_nasalized(
+            phoneme,
+            voice,
+            sample_rate,
+            num_samples,
+            nasalization.unwrap(),
+        )
+    } else {
+        // Delegate to standard synthesis
+        synthesize_phoneme(phoneme, voice, sample_rate, duration)
+    }
+}
+
 fn synthesize_vowel(
     phoneme: &Phoneme,
     voice: &VoiceProfile,
@@ -498,6 +906,41 @@ fn synthesize_vowel(
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
 
     let mut output = tract.synthesize(&mut glottal, num_samples);
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_vowel_nasalized(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+    nasalization: &Nasalization,
+) -> Result<Vec<f32>> {
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let mut tract = VocalTract::new(sample_rate);
+    tract.set_formants_from_target(&target)?;
+    tract.set_nasal_place(nasalization.place);
+
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+    let onset_sample = (nasalization.onset * num_samples as f32) as usize;
+    let ramp_len = num_samples.saturating_sub(onset_sample).max(1);
+    let mut output = Vec::with_capacity(num_samples);
+
+    for i in 0..num_samples {
+        // Ramp nasal coupling from 0 to peak_coupling after onset
+        if i >= onset_sample {
+            let t = (i - onset_sample) as f32 / ramp_len as f32;
+            let coupling = nasalization.peak_coupling * hisab::calc::ease_in_out_smooth(t);
+            tract.set_nasal_coupling(coupling);
+        }
+        let excitation = glottal.next_sample();
+        output.push(tract.process_sample(excitation));
+    }
+
     apply_amplitude_envelope(&mut output, num_samples);
     Ok(output)
 }
@@ -852,5 +1295,158 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let p2: Phoneme = serde_json::from_str(&json).unwrap();
         assert_eq!(p, p2);
+    }
+
+    #[test]
+    fn test_nasalization_for_nasal_phonemes() {
+        assert!(Nasalization::for_nasal(&Phoneme::NasalM).is_some());
+        assert!(Nasalization::for_nasal(&Phoneme::NasalN).is_some());
+        assert!(Nasalization::for_nasal(&Phoneme::NasalNg).is_some());
+        assert!(Nasalization::for_nasal(&Phoneme::VowelA).is_none());
+        assert!(Nasalization::for_nasal(&Phoneme::PlosiveP).is_none());
+    }
+
+    #[test]
+    fn test_nasalization_place_matches() {
+        let n = Nasalization::for_nasal(&Phoneme::NasalM).unwrap();
+        assert_eq!(n.place, NasalPlace::Bilabial);
+        let n = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+        assert_eq!(n.place, NasalPlace::Alveolar);
+        let n = Nasalization::for_nasal(&Phoneme::NasalNg).unwrap();
+        assert_eq!(n.place, NasalPlace::Velar);
+    }
+
+    #[test]
+    fn test_nasalized_vowel_produces_output() {
+        let voice = VoiceProfile::new_male();
+        let nasal = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+        let result =
+            synthesize_phoneme_nasalized(&Phoneme::VowelA, &voice, 44100.0, 0.1, Some(&nasal));
+        assert!(result.is_ok());
+        let samples = result.unwrap();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_nasalized_vowel_differs_from_oral() {
+        let voice = VoiceProfile::new_male();
+        let nasal = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+
+        let oral = synthesize_phoneme(&Phoneme::VowelA, &voice, 44100.0, 0.1).unwrap();
+        let nasalized =
+            synthesize_phoneme_nasalized(&Phoneme::VowelA, &voice, 44100.0, 0.1, Some(&nasal))
+                .unwrap();
+
+        // The two signals should differ (nasalization changes the spectrum)
+        let diff: f32 = oral
+            .iter()
+            .zip(nasalized.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            diff > 0.01,
+            "nasalized vowel should differ from oral: diff={diff}"
+        );
+    }
+
+    #[test]
+    fn test_nasalized_non_vowel_falls_through() {
+        // Nasalization on a fricative should just produce normal output
+        let voice = VoiceProfile::new_male();
+        let nasal = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+        let result =
+            synthesize_phoneme_nasalized(&Phoneme::FricativeS, &voice, 44100.0, 0.08, Some(&nasal));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_serde_roundtrip_nasalization() {
+        let n = Nasalization::for_nasal(&Phoneme::NasalM).unwrap();
+        let json = serde_json::to_string(&n).unwrap();
+        let n2: Nasalization = serde_json::from_str(&json).unwrap();
+        assert_eq!(n2.place, NasalPlace::Bilabial);
+        assert!((n2.onset - 0.65).abs() < f32::EPSILON);
+    }
+
+    // --- SynthesisContext tests ---
+
+    #[test]
+    fn test_synthesis_context_creation() {
+        let voice = VoiceProfile::new_male();
+        let ctx = SynthesisContext::new(&voice, 44100.0);
+        assert!(ctx.is_ok());
+    }
+
+    #[test]
+    fn test_synthesis_context_vowel() {
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+        let samples = ctx.synthesize(&Phoneme::VowelA, &voice, 0.1, None).unwrap();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|s| s.is_finite()));
+        assert!(samples.iter().any(|&s| s.abs() > 1e-6));
+    }
+
+    #[test]
+    fn test_synthesis_context_all_classes() {
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+        let phonemes = [
+            Phoneme::VowelA,
+            Phoneme::DiphthongAI,
+            Phoneme::PlosiveP,
+            Phoneme::FricativeS,
+            Phoneme::NasalN,
+            Phoneme::AffricateCh,
+            Phoneme::ApproximantR,
+            Phoneme::LateralL,
+            Phoneme::Silence,
+        ];
+        for p in &phonemes {
+            let samples = ctx.synthesize(p, &voice, 0.08, None).unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{p:?} produced non-finite samples"
+            );
+        }
+    }
+
+    #[test]
+    fn test_synthesis_context_reuse() {
+        // Multiple calls should work without issues (buffer reuse)
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+
+        let s1 = ctx.synthesize(&Phoneme::VowelA, &voice, 0.1, None).unwrap();
+        let len1 = s1.len();
+
+        let s2 = ctx
+            .synthesize(&Phoneme::VowelI, &voice, 0.05, None)
+            .unwrap();
+        let len2 = s2.len();
+
+        // Different durations should produce different lengths
+        assert_ne!(len1, len2);
+    }
+
+    #[test]
+    fn test_synthesis_context_with_nasalization() {
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+        let nasal = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
+        let samples = ctx
+            .synthesize(&Phoneme::VowelA, &voice, 0.1, Some(&nasal))
+            .unwrap();
+        assert!(samples.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_serde_roundtrip_synthesis_context() {
+        let voice = VoiceProfile::new_male();
+        let ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let ctx2: SynthesisContext = serde_json::from_str(&json).unwrap();
+        assert!((ctx2.sample_rate - 44100.0).abs() < f32::EPSILON);
     }
 }

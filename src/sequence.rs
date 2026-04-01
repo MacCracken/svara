@@ -13,10 +13,14 @@ use crate::phoneme::{self, Phoneme};
 use crate::prosody::Stress;
 use crate::voice::VoiceProfile;
 
+use crate::phoneme::PhonemeClass;
+
 /// Minimum crossfade fraction for high-resistance phonemes.
 const MIN_CROSSFADE_FRACTION: f32 = 0.15;
 /// Maximum crossfade fraction for low-resistance phonemes.
 const MAX_CROSSFADE_FRACTION: f32 = 0.45;
+/// Duration compression factor for consonants within a cluster.
+const CLUSTER_COMPRESSION: f32 = 0.7;
 
 /// A timed phoneme event within a sequence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,23 +133,53 @@ impl PhonemeSequence {
             sample_rate, "rendering phoneme sequence"
         );
 
-        // Calculate effective durations with stress scaling
+        // Detect consonant clusters and apply duration compression.
+        // A cluster is 2+ adjacent consonants (no vowels/diphthongs/silence between).
+        let in_cluster = detect_consonant_clusters(&self.events);
+
+        // Calculate effective durations with stress scaling and cluster compression
         let durations: Vec<f32> = self
             .events
             .iter()
-            .map(|e| {
-                let scale = match e.stress {
+            .enumerate()
+            .map(|(i, e)| {
+                let stress_scale = match e.stress {
                     Stress::Primary => 1.15,
                     Stress::Secondary => 1.05,
                     Stress::Unstressed => 0.9,
                 };
-                e.duration * scale
+                let cluster_scale = if in_cluster[i] {
+                    CLUSTER_COMPRESSION
+                } else {
+                    1.0
+                };
+                e.duration * stress_scale * cluster_scale
             })
             .collect();
 
-        // Synthesize each phoneme
+        // Detect anticipatory nasalization: vowels/diphthongs before nasals
+        let nasalizations: Vec<Option<phoneme::Nasalization>> = self
+            .events
+            .iter()
+            .enumerate()
+            .map(|(i, event)| {
+                let is_vowel_like = matches!(
+                    event.phoneme.class(),
+                    phoneme::PhonemeClass::Vowel | phoneme::PhonemeClass::Diphthong
+                );
+                if is_vowel_like {
+                    self.events
+                        .get(i + 1)
+                        .and_then(|next| phoneme::Nasalization::for_nasal(&next.phoneme))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Synthesize each phoneme with anticipatory nasalization
         let mut segments: Vec<Vec<f32>> = Vec::with_capacity(self.events.len());
-        for (event, &dur) in self.events.iter().zip(durations.iter()) {
+        for (i, (event, &dur)) in self.events.iter().zip(durations.iter()).enumerate() {
             // Apply stress-based voice modification
             let mut event_voice = voice.clone();
             match event.stress {
@@ -158,8 +192,13 @@ impl PhonemeSequence {
                 Stress::Unstressed => {}
             }
 
-            let segment =
-                phoneme::synthesize_phoneme(&event.phoneme, &event_voice, sample_rate, dur)?;
+            let segment = phoneme::synthesize_phoneme_nasalized(
+                &event.phoneme,
+                &event_voice,
+                sample_rate,
+                dur,
+                nasalizations[i].as_ref(),
+            )?;
             segments.push(segment);
         }
 
@@ -192,6 +231,46 @@ impl Default for PhonemeSequence {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Detects consonant clusters: runs of 2+ adjacent consonants.
+///
+/// Returns a boolean vec where `true` means the phoneme at that index is
+/// part of a consonant cluster and should receive duration compression.
+fn detect_consonant_clusters(events: &[PhonemeEvent]) -> Vec<bool> {
+    let n = events.len();
+    let mut in_cluster = alloc::vec![false; n];
+
+    let is_consonant = |p: &Phoneme| {
+        matches!(
+            p.class(),
+            PhonemeClass::Plosive
+                | PhonemeClass::Fricative
+                | PhonemeClass::Nasal
+                | PhonemeClass::Affricate
+                | PhonemeClass::Approximant
+                | PhonemeClass::Lateral
+        )
+    };
+
+    // Find runs of consonants
+    let mut run_start = None;
+    for i in 0..=n {
+        let is_cons = i < n && is_consonant(&events[i].phoneme);
+        if is_cons && run_start.is_none() {
+            run_start = Some(i);
+        } else if !is_cons && let Some(start) = run_start {
+            let run_len = i - start;
+            if run_len >= 2 {
+                for flag in &mut in_cluster[start..i] {
+                    *flag = true;
+                }
+            }
+            run_start = None;
+        }
+    }
+
+    in_cluster
 }
 
 /// Crossfade easing using hisab's smootherstep (Ken Perlin's improved curve).
@@ -279,6 +358,7 @@ fn crossfade_segments_variable(segments: &[Vec<f32>], crossfade_lengths: &[usize
 mod tests {
     use super::*;
     use crate::phoneme::Phoneme;
+    use alloc::vec;
 
     #[test]
     fn test_empty_sequence() {
@@ -362,5 +442,93 @@ mod tests {
         let json = serde_json::to_string(&seq).unwrap();
         let seq2: PhonemeSequence = serde_json::from_str(&json).unwrap();
         assert_eq!(seq2.len(), 1);
+    }
+
+    #[test]
+    fn test_cluster_detection_no_cluster() {
+        let events = vec![
+            PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary),
+            PhonemeEvent::new(Phoneme::NasalN, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary),
+        ];
+        let clusters = detect_consonant_clusters(&events);
+        // Single consonant between vowels is NOT a cluster
+        assert!(!clusters[1]);
+    }
+
+    #[test]
+    fn test_cluster_detection_pair() {
+        let events = vec![
+            PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Primary),
+            PhonemeEvent::new(Phoneme::FricativeS, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::PlosiveT, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary),
+        ];
+        let clusters = detect_consonant_clusters(&events);
+        assert!(!clusters[0]); // vowel
+        assert!(clusters[1]); // /s/ in /st/ cluster
+        assert!(clusters[2]); // /t/ in /st/ cluster
+        assert!(!clusters[3]); // vowel
+    }
+
+    #[test]
+    fn test_cluster_detection_triple() {
+        // /str/ cluster
+        let events = vec![
+            PhonemeEvent::new(Phoneme::FricativeS, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::PlosiveT, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::ApproximantR, 0.06, Stress::Unstressed),
+            PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Primary),
+        ];
+        let clusters = detect_consonant_clusters(&events);
+        assert!(clusters[0]); // /s/
+        assert!(clusters[1]); // /t/
+        assert!(clusters[2]); // /r/
+        assert!(!clusters[3]); // vowel
+    }
+
+    #[test]
+    fn test_cluster_renders_shorter() {
+        // Sequence with cluster should be shorter than without
+        let voice = VoiceProfile::new_male();
+
+        // Without cluster: V-C-V
+        let mut seq_no = PhonemeSequence::new();
+        seq_no.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Unstressed));
+        seq_no.push(PhonemeEvent::new(
+            Phoneme::FricativeS,
+            0.08,
+            Stress::Unstressed,
+        ));
+        seq_no.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Unstressed));
+        let out_no = seq_no.render(&voice, 44100.0).unwrap();
+
+        // With cluster: V-CC-V
+        let mut seq_cl = PhonemeSequence::new();
+        seq_cl.push(PhonemeEvent::new(Phoneme::VowelA, 0.1, Stress::Unstressed));
+        seq_cl.push(PhonemeEvent::new(
+            Phoneme::FricativeS,
+            0.08,
+            Stress::Unstressed,
+        ));
+        seq_cl.push(PhonemeEvent::new(
+            Phoneme::PlosiveT,
+            0.08,
+            Stress::Unstressed,
+        ));
+        seq_cl.push(PhonemeEvent::new(Phoneme::VowelI, 0.1, Stress::Unstressed));
+        let out_cl = seq_cl.render(&voice, 44100.0).unwrap();
+
+        assert!(out_cl.iter().all(|s| s.is_finite()));
+        // The cluster version has an extra consonant but cluster compression
+        // should make it shorter than naively adding another full-duration consonant
+        let naive_extra = (0.08 * 0.9 * 44100.0) as usize; // unstressed full duration
+        assert!(
+            out_cl.len() < out_no.len() + naive_extra,
+            "cluster should be compressed: cluster={}, no_cluster={}, naive_extra={}",
+            out_cl.len(),
+            out_no.len(),
+            naive_extra
+        );
     }
 }

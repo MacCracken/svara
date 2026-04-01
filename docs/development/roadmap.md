@@ -46,18 +46,18 @@
 - Whisper 5.0µs (-9% vs Rosenberg), Creaky 7.1µs (+29%)
 - 15 new benchmarks total, 144 tests
 
-## Backlog — v2.0.0
+## v2.0.0 — In Progress
 
 ### Coarticulation
 
-- [ ] Anticipatory nasalization (vowels before nasals)
+- [x] Anticipatory nasalization (vowels before nasals) — done 2026-04-01
 - [ ] Formant trajectory planning across 3+ phoneme windows
-- [ ] Consonant cluster handling (/str/, /spl/)
+- [x] Consonant cluster handling (/str/, /spl/) — done 2026-04-01
 
 ### Performance
 
 - [ ] SIMD intrinsics for BiquadBankSoa (currently auto-vectorized)
-- [ ] Block-based phoneme synthesis (avoid per-phoneme allocation)
+- [x] Block-based phoneme synthesis (SynthesisContext) — done 2026-04-01
 
 ### Multi-Language
 
