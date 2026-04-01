@@ -335,8 +335,15 @@ impl BiquadBankSoa {
     /// Processes a single input sample through all formant slots, returns weighted sum.
     ///
     /// Processes all [`MAX_FORMANTS`] slots unconditionally — unused slots have
-    /// zeroed coefficients and produce zero output. This gives the compiler a
-    /// fixed loop bound for auto-vectorization.
+    /// zeroed coefficients and produce zero output. The fixed loop bound enables
+    /// compiler auto-vectorization:
+    /// - SSE2 (default x86_64): 128-bit, 2 iterations of 4 floats
+    /// - AVX2 (`-C target-cpu=native`): 256-bit, 1 iteration of 8 floats, ~21% faster
+    ///
+    /// Manual SIMD intrinsics were benchmarked but the `#[target_feature]` call
+    /// boundary prevents inlining, making runtime-detected intrinsics slower than
+    /// the auto-vectorized loop. Build with `RUSTFLAGS="-C target-cpu=native"` for
+    /// optimal performance on the build machine.
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
         let mut sum = 0.0f32;

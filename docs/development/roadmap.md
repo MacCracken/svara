@@ -56,7 +56,10 @@
 
 ### Performance
 
-- [ ] SIMD intrinsics for BiquadBankSoa (currently auto-vectorized)
+- [x] SIMD investigation for BiquadBankSoa — done 2026-04-01
+  - Manual AVX2+FMA intrinsics benchmarked but `#[target_feature]` call boundary prevents inlining, making runtime-detected path slower than auto-vectorized loop
+  - Auto-vectorization already optimal: SSE2 default 4.8µs, AVX2 (`-C target-cpu=native`) 3.8µs (-21%)
+  - Documented in `formant.rs` — build with `RUSTFLAGS="-C target-cpu=native"` for best perf
 - [x] Block-based phoneme synthesis (SynthesisContext) — done 2026-04-01
 
 ### Multi-Language

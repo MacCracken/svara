@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Glottal whisper (1024 samples): 5.0µs (-9% vs Rosenberg, no pulse computation)
 - Glottal creaky (1024 samples): 6.9µs (+25% vs Rosenberg, LF pulse + period doubling logic)
+- SIMD investigation: manual AVX2+FMA intrinsics benchmarked but `#[target_feature]` call boundary prevents inlining — auto-vectorized loop is faster for runtime-detected paths. Build with `RUSTFLAGS="-C target-cpu=native"` for AVX2 auto-vec: formant filter 4.8µs → 3.8µs (-21%)
 
 ## [1.1.1] - 2026-04-01
 
