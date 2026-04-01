@@ -32,6 +32,10 @@ pub struct PhonemeEvent {
     pub duration: f32,
     /// Stress level for this phoneme.
     pub stress: Stress,
+    /// Optional lexical tone (for tone languages). When set, the tone's f0
+    /// contour is applied during synthesis, overriding stress-based f0 scaling.
+    #[serde(default)]
+    pub tone: Option<crate::prosody::Tone>,
 }
 
 impl PhonemeEvent {
@@ -42,6 +46,23 @@ impl PhonemeEvent {
             phoneme,
             duration,
             stress,
+            tone: None,
+        }
+    }
+
+    /// Creates a new phoneme event with a lexical tone.
+    #[must_use]
+    pub fn with_tone(
+        phoneme: Phoneme,
+        duration: f32,
+        stress: Stress,
+        tone: crate::prosody::Tone,
+    ) -> Self {
+        Self {
+            phoneme,
+            duration,
+            stress,
+            tone: Some(tone),
         }
     }
 }
@@ -334,7 +355,8 @@ impl PhonemeSequence {
                 | PhonemeClass::Approximant
                 | PhonemeClass::Lateral
                 | PhonemeClass::Nasal
-                | PhonemeClass::Implosive => tract.process_sample(glottal.next_sample()),
+                | PhonemeClass::Implosive
+                | PhonemeClass::Trill => tract.process_sample(glottal.next_sample()),
                 PhonemeClass::Fricative => {
                     let n = noise.next_f32() * 0.5;
                     if phoneme.is_voiced() {

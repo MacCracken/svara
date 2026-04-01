@@ -194,6 +194,97 @@ pub enum IntonationPattern {
     Exclamatory,
 }
 
+/// Lexical tone for tone languages (Mandarin, Thai, Yoruba, etc.).
+///
+/// Tones modify the f0 contour of a syllable to distinguish meaning.
+/// The variants model the five Mandarin tones plus common cross-language
+/// tone patterns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Tone {
+    /// High level tone (Mandarin tone 1, Chao 55). Flat, high pitch.
+    High,
+    /// Rising tone (Mandarin tone 2, Chao 35). Low-to-high.
+    Rising,
+    /// Dipping tone (Mandarin tone 3, Chao 214). Fall then rise.
+    Dipping,
+    /// Falling tone (Mandarin tone 4, Chao 51). High-to-low.
+    Falling,
+    /// Neutral/light tone (Mandarin tone 5). Short, pitch depends on context.
+    Neutral,
+    /// Low level tone (common in Thai, Yoruba). Flat, low pitch.
+    Low,
+    /// Mid level tone (common in many African languages). Flat, mid pitch.
+    Mid,
+    /// Low rising (Thai tone 5). Starts low, rises moderately.
+    LowRising,
+    /// High falling (common in Vietnamese, Cantonese). Starts very high, drops.
+    HighFalling,
+}
+
+impl Tone {
+    /// Returns the f0 contour for this tone as a [`ProsodyContour`].
+    ///
+    /// The contour values are f0 multipliers relative to the speaker's base f0.
+    /// A value of 1.0 is the base pitch, 1.3 is 30% higher, 0.7 is 30% lower.
+    #[must_use]
+    pub fn to_contour(self) -> ProsodyContour {
+        match self {
+            Self::High => ProsodyContour {
+                f0_points: vec![(0.0, 1.2), (0.5, 1.2), (1.0, 1.2)],
+                duration_scale: 1.0,
+                amplitude_scale: 1.0,
+            },
+            Self::Rising => ProsodyContour {
+                f0_points: vec![(0.0, 0.85), (0.3, 0.85), (0.7, 1.1), (1.0, 1.25)],
+                duration_scale: 1.0,
+                amplitude_scale: 1.0,
+            },
+            Self::Dipping => ProsodyContour {
+                f0_points: vec![
+                    (0.0, 1.0),
+                    (0.2, 0.85),
+                    (0.5, 0.75),
+                    (0.8, 0.9),
+                    (1.0, 1.05),
+                ],
+                duration_scale: 1.15, // dipping tone is typically longer
+                amplitude_scale: 0.9,
+            },
+            Self::Falling => ProsodyContour {
+                f0_points: vec![(0.0, 1.3), (0.3, 1.15), (0.7, 0.9), (1.0, 0.75)],
+                duration_scale: 0.9,
+                amplitude_scale: 1.1,
+            },
+            Self::Neutral => ProsodyContour {
+                f0_points: vec![(0.0, 1.0), (1.0, 0.95)],
+                duration_scale: 0.7, // neutral tone is short
+                amplitude_scale: 0.85,
+            },
+            Self::Low => ProsodyContour {
+                f0_points: vec![(0.0, 0.75), (0.5, 0.75), (1.0, 0.75)],
+                duration_scale: 1.0,
+                amplitude_scale: 0.95,
+            },
+            Self::Mid => ProsodyContour {
+                f0_points: vec![(0.0, 1.0), (0.5, 1.0), (1.0, 1.0)],
+                duration_scale: 1.0,
+                amplitude_scale: 1.0,
+            },
+            Self::LowRising => ProsodyContour {
+                f0_points: vec![(0.0, 0.7), (0.4, 0.75), (0.7, 0.95), (1.0, 1.1)],
+                duration_scale: 1.0,
+                amplitude_scale: 1.0,
+            },
+            Self::HighFalling => ProsodyContour {
+                f0_points: vec![(0.0, 1.35), (0.2, 1.3), (0.6, 1.0), (1.0, 0.7)],
+                duration_scale: 0.95,
+                amplitude_scale: 1.05,
+            },
+        }
+    }
+}
+
 /// Stress level for a phoneme or syllable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -261,5 +352,82 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         let c2: ProsodyContour = serde_json::from_str(&json).unwrap();
         assert!((c2.f0_at(0.5) - c.f0_at(0.5)).abs() < f32::EPSILON);
+    }
+
+    // --- Tone tests ---
+
+    #[test]
+    fn test_tone_high_is_flat() {
+        let c = Tone::High.to_contour();
+        let start = c.f0_at(0.0);
+        let end = c.f0_at(1.0);
+        assert!((start - end).abs() < 0.05, "high tone should be flat");
+        assert!(start > 1.1, "high tone should be above base: {start}");
+    }
+
+    #[test]
+    fn test_tone_rising() {
+        let c = Tone::Rising.to_contour();
+        assert!(c.f0_at(1.0) > c.f0_at(0.0), "rising tone should rise");
+    }
+
+    #[test]
+    fn test_tone_falling() {
+        let c = Tone::Falling.to_contour();
+        assert!(c.f0_at(0.0) > c.f0_at(1.0), "falling tone should fall");
+    }
+
+    #[test]
+    fn test_tone_dipping() {
+        let c = Tone::Dipping.to_contour();
+        let mid = c.f0_at(0.5);
+        let start = c.f0_at(0.0);
+        let end = c.f0_at(1.0);
+        assert!(mid < start, "dipping should dip below start");
+        assert!(end > mid, "dipping should rise back");
+    }
+
+    #[test]
+    fn test_tone_neutral_short() {
+        let c = Tone::Neutral.to_contour();
+        assert!(c.duration_scale < 0.8, "neutral tone should be short");
+    }
+
+    #[test]
+    fn test_all_tones_produce_valid_contours() {
+        for tone in [
+            Tone::High,
+            Tone::Rising,
+            Tone::Dipping,
+            Tone::Falling,
+            Tone::Neutral,
+            Tone::Low,
+            Tone::Mid,
+            Tone::LowRising,
+            Tone::HighFalling,
+        ] {
+            let c = tone.to_contour();
+            for i in 0..10 {
+                let t = i as f32 / 10.0;
+                let v = c.f0_at(t);
+                assert!(v.is_finite(), "{tone:?} produced non-finite f0 at t={t}");
+                assert!(v > 0.0, "{tone:?} produced non-positive f0 at t={t}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_serde_roundtrip_tone() {
+        for tone in [
+            Tone::High,
+            Tone::Rising,
+            Tone::Dipping,
+            Tone::Falling,
+            Tone::Neutral,
+        ] {
+            let json = serde_json::to_string(&tone).unwrap();
+            let t2: Tone = serde_json::from_str(&json).unwrap();
+            assert_eq!(tone, t2);
+        }
     }
 }

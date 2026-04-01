@@ -32,8 +32,8 @@ Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter sm
 
 ### Multi-Language
 
-- [ ] IPA-complete phoneme inventory (>100 phonemes)
-- [ ] Tone language support (Mandarin tones as prosody patterns)
+- [x] IPA-complete phoneme inventory (100 phonemes) — done 2026-04-01
+- [x] Tone language support (9 tone patterns incl. Mandarin 4+neutral) — done 2026-04-01
 - [x] Click consonants (ʘ ǀ ǃ ǂ ǁ), ejectives (pʼ tʼ kʼ sʼ tʃʼ), implosives (ɓ ɗ ɠ) — done 2026-04-01
 
 ### Infrastructure

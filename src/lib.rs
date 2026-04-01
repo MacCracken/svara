@@ -84,7 +84,7 @@ pub mod prelude {
         synthesize_phoneme_nasalized,
     };
     pub use crate::pool::SynthesisPool;
-    pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
+    pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress, Tone};
     pub use crate::sequence::{PhonemeEvent, PhonemeSequence};
     pub use crate::spectral::{Spectrum, analyze as analyze_spectrum, rms_level};
     pub use crate::tract::{NasalPlace, VocalTract};
@@ -114,6 +114,7 @@ mod assert_traits {
         _assert_send_sync::<crate::prosody::ProsodyContour>();
         _assert_send_sync::<crate::prosody::IntonationPattern>();
         _assert_send_sync::<crate::prosody::Stress>();
+        _assert_send_sync::<crate::prosody::Tone>();
         _assert_send_sync::<crate::sequence::PhonemeEvent>();
         _assert_send_sync::<crate::sequence::PhonemeSequence>();
         _assert_send_sync::<crate::tract::VocalTract>();

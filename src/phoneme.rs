@@ -127,6 +127,108 @@ pub enum Phoneme {
     /// /j/ palatal approximant
     ApproximantJ,
 
+    // --- IPA extensions ---
+
+    // Additional vowels
+    /// /y/ close front rounded
+    VowelY,
+    /// /ø/ close-mid front rounded
+    VowelFrontRoundO,
+    /// /œ/ open-mid front rounded
+    VowelOpenFrontRoundO,
+    /// /ɯ/ close back unrounded
+    VowelCloseBackUnrounded,
+    /// /ɤ/ close-mid back unrounded
+    VowelMidBackUnrounded,
+    /// /ɨ/ close central unrounded
+    VowelCloseCentral,
+    /// /ʉ/ close central rounded
+    VowelCloseCentralRounded,
+
+    // Uvular plosives
+    /// /q/ voiceless uvular plosive
+    PlosiveUvularQ,
+    /// /ɢ/ voiced uvular plosive
+    PlosiveUvularG,
+
+    // Retroflex plosives
+    /// /ʈ/ voiceless retroflex plosive
+    PlosiveRetroT,
+    /// /ɖ/ voiced retroflex plosive
+    PlosiveRetroD,
+
+    // Additional fricatives
+    /// /ɸ/ voiceless bilabial fricative
+    FricativeBilabialPh,
+    /// /β/ voiced bilabial fricative
+    FricativeBilabialB,
+    /// /ç/ voiceless palatal fricative
+    FricativePalatalC,
+    /// /ʝ/ voiced palatal fricative
+    FricativePalatalJ,
+    /// /χ/ voiceless uvular fricative
+    FricativeUvularCh,
+    /// /ʁ/ voiced uvular fricative
+    FricativeUvularR,
+    /// /ħ/ voiceless pharyngeal fricative
+    FricativePharyngealH,
+    /// /ʕ/ voiced pharyngeal fricative
+    FricativePharyngealA,
+    /// /ʂ/ voiceless retroflex fricative
+    FricativeRetroS,
+    /// /ʐ/ voiced retroflex fricative
+    FricativeRetroZ,
+    /// /ɬ/ voiceless alveolar lateral fricative
+    FricativeLateralS,
+    /// /ɮ/ voiced alveolar lateral fricative
+    FricativeLateralZ,
+    /// /ɦ/ voiced glottal fricative (breathy voice)
+    FricativeGlottalH,
+
+    // Additional nasals
+    /// /ɳ/ retroflex nasal
+    NasalRetro,
+    /// /ɲ/ palatal nasal
+    NasalPalatal,
+    /// /ɴ/ uvular nasal
+    NasalUvular,
+
+    // Trills
+    /// /ʙ/ bilabial trill
+    TrillBilabial,
+    /// /r/ alveolar trill
+    TrillAlveolar,
+    /// /ʀ/ uvular trill
+    TrillUvular,
+
+    // Additional approximants
+    /// /ɻ/ retroflex approximant
+    ApproximantRetro,
+    /// /ʎ/ palatal lateral approximant
+    LateralPalatal,
+    /// /ʟ/ velar lateral approximant
+    LateralVelar,
+
+    // Additional flaps
+    /// /ɽ/ retroflex flap
+    FlapRetro,
+    /// /ɺ/ alveolar lateral flap
+    FlapLateral,
+
+    // Additional affricates
+    /// /ts/ voiceless alveolar affricate
+    AffricateTs,
+    /// /dz/ voiced alveolar affricate
+    AffricateDz,
+    /// /ʈʂ/ voiceless retroflex affricate
+    AffricateRetro,
+    /// /ɖʐ/ voiced retroflex affricate
+    AffricateRetroVoiced,
+    /// /pf/ voiceless labiodental affricate
+    AffricatePf,
+    /// /tɬ/ voiceless lateral affricate
+    AffricateLateral,
+
     // Clicks (non-pulmonic)
     /// /ʘ/ bilabial click
     ClickBilabial,
@@ -184,6 +286,8 @@ pub enum PhonemeClass {
     Vowel,
     /// Gliding vowel sequence.
     Diphthong,
+    /// Rapid vibration of an articulator (bilabial, alveolar, uvular).
+    Trill,
     /// Non-pulmonic click consonant (velar + oral closure, rarefied release).
     Click,
     /// Glottalic egressive stop (larynx raised, compressed burst, no voicing).
@@ -213,7 +317,14 @@ impl Phoneme {
             | Self::VowelOpenE
             | Self::VowelCupV
             | Self::VowelBird
-            | Self::VowelLongI => PhonemeClass::Vowel,
+            | Self::VowelLongI
+            | Self::VowelY
+            | Self::VowelFrontRoundO
+            | Self::VowelOpenFrontRoundO
+            | Self::VowelCloseBackUnrounded
+            | Self::VowelMidBackUnrounded
+            | Self::VowelCloseCentral
+            | Self::VowelCloseCentralRounded => PhonemeClass::Vowel,
 
             Self::DiphthongAI
             | Self::DiphthongAU
@@ -226,7 +337,11 @@ impl Phoneme {
             | Self::PlosiveT
             | Self::PlosiveD
             | Self::PlosiveK
-            | Self::PlosiveG => PhonemeClass::Plosive,
+            | Self::PlosiveG
+            | Self::PlosiveUvularQ
+            | Self::PlosiveUvularG
+            | Self::PlosiveRetroT
+            | Self::PlosiveRetroD => PhonemeClass::Plosive,
 
             Self::FricativeF
             | Self::FricativeV
@@ -236,21 +351,51 @@ impl Phoneme {
             | Self::FricativeZh
             | Self::FricativeTh
             | Self::FricativeDh
-            | Self::FricativeH => PhonemeClass::Fricative,
+            | Self::FricativeH
+            | Self::FricativeBilabialPh
+            | Self::FricativeBilabialB
+            | Self::FricativePalatalC
+            | Self::FricativePalatalJ
+            | Self::FricativeUvularCh
+            | Self::FricativeUvularR
+            | Self::FricativePharyngealH
+            | Self::FricativePharyngealA
+            | Self::FricativeRetroS
+            | Self::FricativeRetroZ
+            | Self::FricativeLateralS
+            | Self::FricativeLateralZ
+            | Self::FricativeGlottalH => PhonemeClass::Fricative,
 
-            Self::NasalM | Self::NasalN | Self::NasalNg => PhonemeClass::Nasal,
+            Self::NasalM
+            | Self::NasalN
+            | Self::NasalNg
+            | Self::NasalRetro
+            | Self::NasalPalatal
+            | Self::NasalUvular => PhonemeClass::Nasal,
 
-            Self::AffricateCh | Self::AffricateJ => PhonemeClass::Affricate,
+            Self::AffricateCh
+            | Self::AffricateJ
+            | Self::AffricateTs
+            | Self::AffricateDz
+            | Self::AffricateRetro
+            | Self::AffricateRetroVoiced
+            | Self::AffricatePf
+            | Self::AffricateLateral => PhonemeClass::Affricate,
 
             Self::GlottalStop => PhonemeClass::Plosive,
 
             Self::TapFlap => PhonemeClass::Plosive,
 
-            Self::LateralL => PhonemeClass::Lateral,
+            Self::LateralL | Self::LateralPalatal | Self::LateralVelar => PhonemeClass::Lateral,
 
-            Self::ApproximantR | Self::ApproximantW | Self::ApproximantJ => {
-                PhonemeClass::Approximant
-            }
+            Self::ApproximantR
+            | Self::ApproximantW
+            | Self::ApproximantJ
+            | Self::ApproximantRetro => PhonemeClass::Approximant,
+
+            Self::TrillBilabial | Self::TrillAlveolar | Self::TrillUvular => PhonemeClass::Trill,
+
+            Self::FlapRetro | Self::FlapLateral => PhonemeClass::Plosive, // short contacts, like TapFlap
 
             Self::ClickBilabial
             | Self::ClickDental
@@ -285,6 +430,18 @@ impl Phoneme {
             | Self::FricativeH
             | Self::AffricateCh
             | Self::GlottalStop
+            | Self::PlosiveUvularQ
+            | Self::PlosiveRetroT
+            | Self::FricativeBilabialPh
+            | Self::FricativePalatalC
+            | Self::FricativeUvularCh
+            | Self::FricativePharyngealH
+            | Self::FricativeRetroS
+            | Self::FricativeLateralS
+            | Self::AffricateTs
+            | Self::AffricateRetro
+            | Self::AffricatePf
+            | Self::AffricateLateral
             | Self::ClickBilabial
             | Self::ClickDental
             | Self::ClickAlveolar
@@ -354,6 +511,22 @@ impl Phoneme {
             Self::EjectiveP | Self::EjectiveT | Self::EjectiveK => 0.85,
             Self::EjectiveS | Self::EjectiveCh => 0.85,
             Self::ImplosiveB | Self::ImplosiveD | Self::ImplosiveG => 0.7,
+
+            // IPA extensions: class-based defaults
+            _ => match self.class() {
+                PhonemeClass::Vowel => 0.7,
+                PhonemeClass::Plosive => 0.7,
+                PhonemeClass::Fricative => 0.7,
+                PhonemeClass::Nasal => 0.7,
+                PhonemeClass::Trill => 0.6,
+                PhonemeClass::Approximant | PhonemeClass::Lateral => 0.55,
+                PhonemeClass::Affricate => 0.85,
+                PhonemeClass::Click => 0.9,
+                PhonemeClass::Ejective => 0.85,
+                PhonemeClass::Implosive => 0.7,
+                PhonemeClass::Diphthong => 0.6,
+                PhonemeClass::Silence => 0.0,
+            },
         }
     }
 }
@@ -468,6 +641,100 @@ pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
         Phoneme::ApproximantW => VowelTarget::new(300.0, 700.0, 2200.0, 3300.0, 3750.0),
         Phoneme::ApproximantJ => VowelTarget::new(280.0, 2200.0, 2900.0, 3300.0, 3750.0),
 
+        // --- IPA extension vowels ---
+        // Rounded front vowels (like German/French)
+        Phoneme::VowelY => VowelTarget::with_bandwidths(
+            [320.0, 1800.0, 2400.0, 3300.0, 3750.0],
+            [45.0, 70.0, 90.0, 120.0, 140.0],
+        ),
+        Phoneme::VowelFrontRoundO => VowelTarget::with_bandwidths(
+            [400.0, 1600.0, 2400.0, 3300.0, 3750.0],
+            [55.0, 75.0, 95.0, 120.0, 140.0],
+        ),
+        Phoneme::VowelOpenFrontRoundO => VowelTarget::with_bandwidths(
+            [550.0, 1500.0, 2400.0, 3300.0, 3750.0],
+            [70.0, 80.0, 100.0, 120.0, 140.0],
+        ),
+        // Unrounded back vowels (like Turkish/Korean)
+        Phoneme::VowelCloseBackUnrounded => VowelTarget::with_bandwidths(
+            [350.0, 1300.0, 2400.0, 3300.0, 3750.0],
+            [45.0, 65.0, 90.0, 120.0, 140.0],
+        ),
+        Phoneme::VowelMidBackUnrounded => VowelTarget::with_bandwidths(
+            [460.0, 1250.0, 2450.0, 3300.0, 3750.0],
+            [55.0, 70.0, 95.0, 120.0, 140.0],
+        ),
+        // Central vowels
+        Phoneme::VowelCloseCentral => VowelTarget::with_bandwidths(
+            [330.0, 1650.0, 2450.0, 3300.0, 3750.0],
+            [45.0, 70.0, 90.0, 120.0, 140.0],
+        ),
+        Phoneme::VowelCloseCentralRounded => VowelTarget::with_bandwidths(
+            [310.0, 1500.0, 2300.0, 3300.0, 3750.0],
+            [45.0, 70.0, 90.0, 120.0, 140.0],
+        ),
+
+        // --- IPA extension consonants (locus frequencies) ---
+        // Uvular plosives: F2 locus ~1000-1200 Hz
+        Phoneme::PlosiveUvularQ | Phoneme::PlosiveUvularG => {
+            VowelTarget::new(350.0, 1100.0, 2300.0, 3300.0, 3750.0)
+        }
+        // Retroflex plosives: F2 locus ~1500-1600 Hz, low F3
+        Phoneme::PlosiveRetroT | Phoneme::PlosiveRetroD => {
+            VowelTarget::new(400.0, 1550.0, 2000.0, 3300.0, 3750.0)
+        }
+        // Bilabial fricatives
+        Phoneme::FricativeBilabialPh | Phoneme::FricativeBilabialB => {
+            VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0)
+        }
+        // Palatal fricatives
+        Phoneme::FricativePalatalC | Phoneme::FricativePalatalJ => {
+            VowelTarget::new(300.0, 2200.0, 2900.0, 3300.0, 3750.0)
+        }
+        // Uvular fricatives
+        Phoneme::FricativeUvularCh | Phoneme::FricativeUvularR => {
+            VowelTarget::new(350.0, 1100.0, 2300.0, 3300.0, 3750.0)
+        }
+        // Pharyngeal fricatives: very low F2, raised F1
+        Phoneme::FricativePharyngealH | Phoneme::FricativePharyngealA => {
+            VowelTarget::new(700.0, 1000.0, 2400.0, 3300.0, 3750.0)
+        }
+        // Retroflex fricatives
+        Phoneme::FricativeRetroS | Phoneme::FricativeRetroZ => {
+            VowelTarget::new(400.0, 1550.0, 2000.0, 3300.0, 3750.0)
+        }
+        // Lateral fricatives
+        Phoneme::FricativeLateralS | Phoneme::FricativeLateralZ => {
+            VowelTarget::new(400.0, 1600.0, 2500.0, 3300.0, 3750.0)
+        }
+        // Voiced glottal fricative (breathy /ɦ/)
+        Phoneme::FricativeGlottalH => VowelTarget::from_vowel(Vowel::Schwa),
+        // Additional nasals
+        Phoneme::NasalRetro => VowelTarget::new(400.0, 1550.0, 2000.0, 3300.0, 3750.0),
+        Phoneme::NasalPalatal => VowelTarget::new(300.0, 2200.0, 2900.0, 3300.0, 3750.0),
+        Phoneme::NasalUvular => VowelTarget::new(350.0, 1100.0, 2300.0, 3300.0, 3750.0),
+        // Trills
+        Phoneme::TrillBilabial => VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0),
+        Phoneme::TrillAlveolar => VowelTarget::new(400.0, 1500.0, 2500.0, 3300.0, 3750.0),
+        Phoneme::TrillUvular => VowelTarget::new(350.0, 1100.0, 2300.0, 3300.0, 3750.0),
+        // Additional approximants
+        Phoneme::ApproximantRetro => VowelTarget::new(350.0, 1300.0, 1600.0, 3300.0, 3750.0),
+        Phoneme::LateralPalatal => VowelTarget::new(300.0, 2000.0, 2800.0, 3300.0, 3750.0),
+        Phoneme::LateralVelar => VowelTarget::new(350.0, 1100.0, 2300.0, 3300.0, 3750.0),
+        // Additional flaps
+        Phoneme::FlapRetro => VowelTarget::new(400.0, 1550.0, 2000.0, 3300.0, 3750.0),
+        Phoneme::FlapLateral => VowelTarget::new(400.0, 1600.0, 2500.0, 3300.0, 3750.0),
+
+        // Additional affricates
+        Phoneme::AffricateTs | Phoneme::AffricateDz => {
+            VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0)
+        }
+        Phoneme::AffricateRetro | Phoneme::AffricateRetroVoiced => {
+            VowelTarget::new(400.0, 1550.0, 2000.0, 3300.0, 3750.0)
+        }
+        Phoneme::AffricatePf => VowelTarget::new(350.0, 1050.0, 2400.0, 3300.0, 3750.0),
+        Phoneme::AffricateLateral => VowelTarget::new(400.0, 1600.0, 2500.0, 3300.0, 3750.0),
+
         // Clicks: formant locus by place of articulation (burst shaping)
         Phoneme::ClickBilabial => VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0),
         Phoneme::ClickDental => VowelTarget::new(400.0, 1500.0, 2600.0, 3300.0, 3750.0),
@@ -503,8 +770,9 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
         PhonemeClass::Nasal => 0.08,
         PhonemeClass::Affricate => 0.12,
         PhonemeClass::Approximant | PhonemeClass::Lateral => 0.07,
-        PhonemeClass::Click => 0.04,     // very short transient burst
-        PhonemeClass::Ejective => 0.10,  // closure + compressed burst
+        PhonemeClass::Trill => 0.10, // needs multiple vibration cycles
+        PhonemeClass::Click => 0.04, // very short transient burst
+        PhonemeClass::Ejective => 0.10, // closure + compressed burst
         PhonemeClass::Implosive => 0.08, // similar to voiced plosives
         PhonemeClass::Silence => 0.05,
     }
@@ -644,7 +912,7 @@ impl SynthesisContext {
                 PhonemeClass::Affricate => {
                     self.synthesize_affricate_ctx(phoneme, voice, num_samples)?;
                 }
-                PhonemeClass::Approximant | PhonemeClass::Lateral => {
+                PhonemeClass::Approximant | PhonemeClass::Lateral | PhonemeClass::Trill => {
                     self.synthesize_approx_ctx(phoneme, voice, num_samples)?;
                 }
                 PhonemeClass::Click => {
@@ -1078,6 +1346,7 @@ pub fn synthesize_phoneme(
             PhonemeClass::Approximant | PhonemeClass::Lateral => {
                 synthesize_approximant(phoneme, voice, sample_rate, num_samples)
             }
+            PhonemeClass::Trill => synthesize_trill(phoneme, voice, sample_rate, num_samples),
             PhonemeClass::Click => synthesize_click(phoneme, voice, sample_rate, num_samples),
             PhonemeClass::Ejective => synthesize_ejective(phoneme, voice, sample_rate, num_samples),
             PhonemeClass::Implosive => {
@@ -1455,6 +1724,42 @@ fn synthesize_affricate(
             let n = noise.next_f32() * 0.6;
             *sample = filter.process_sample(n);
         }
+    }
+
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_trill(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+) -> Result<Vec<f32>> {
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let mut tract = VocalTract::new(sample_rate);
+    tract.set_formants_from_target(&target)?;
+
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+    // Trill rate: ~25 Hz for alveolar, ~20 Hz for uvular, ~15 Hz for bilabial
+    let trill_rate = match phoneme {
+        Phoneme::TrillAlveolar => 25.0,
+        Phoneme::TrillUvular => 20.0,
+        Phoneme::TrillBilabial => 15.0,
+        _ => 25.0,
+    };
+
+    let mut output = Vec::with_capacity(num_samples);
+    for i in 0..num_samples {
+        let exc = glottal.next_sample();
+        let sample = tract.process_sample(exc);
+        // Amplitude modulation at trill rate (models repeated closure/opening)
+        let trill_phase = core::f32::consts::TAU * trill_rate * i as f32 / sample_rate;
+        let trill_env = 0.5 + 0.5 * crate::math::f32::cos(trill_phase);
+        output.push(sample * trill_env * 0.7);
     }
 
     apply_amplitude_envelope(&mut output, num_samples);
@@ -1962,5 +2267,198 @@ mod tests {
             let p2: Phoneme = serde_json::from_str(&json).unwrap();
             assert_eq!(phoneme, p2);
         }
+    }
+
+    // --- IPA extension tests ---
+
+    #[test]
+    fn test_ipa_vowels_synthesize() {
+        let voice = VoiceProfile::new_male();
+        for phoneme in [
+            Phoneme::VowelY,
+            Phoneme::VowelFrontRoundO,
+            Phoneme::VowelOpenFrontRoundO,
+            Phoneme::VowelCloseBackUnrounded,
+            Phoneme::VowelMidBackUnrounded,
+            Phoneme::VowelCloseCentral,
+            Phoneme::VowelCloseCentralRounded,
+        ] {
+            let result = synthesize_phoneme(&phoneme, &voice, 44100.0, 0.08);
+            assert!(result.is_ok(), "{phoneme:?} failed");
+            let samples = result.unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite"
+            );
+            assert!(
+                samples.iter().any(|&s| s.abs() > 1e-6),
+                "{phoneme:?} silent"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ipa_consonants_synthesize() {
+        let voice = VoiceProfile::new_male();
+        let consonants = [
+            Phoneme::PlosiveUvularQ,
+            Phoneme::PlosiveUvularG,
+            Phoneme::PlosiveRetroT,
+            Phoneme::PlosiveRetroD,
+            Phoneme::FricativeBilabialPh,
+            Phoneme::FricativeBilabialB,
+            Phoneme::FricativePalatalC,
+            Phoneme::FricativePalatalJ,
+            Phoneme::FricativeUvularCh,
+            Phoneme::FricativeUvularR,
+            Phoneme::FricativePharyngealH,
+            Phoneme::FricativePharyngealA,
+            Phoneme::FricativeRetroS,
+            Phoneme::FricativeRetroZ,
+            Phoneme::FricativeLateralS,
+            Phoneme::FricativeLateralZ,
+            Phoneme::FricativeGlottalH,
+            Phoneme::NasalRetro,
+            Phoneme::NasalPalatal,
+            Phoneme::NasalUvular,
+            Phoneme::TrillBilabial,
+            Phoneme::TrillAlveolar,
+            Phoneme::TrillUvular,
+            Phoneme::ApproximantRetro,
+            Phoneme::LateralPalatal,
+            Phoneme::LateralVelar,
+            Phoneme::FlapRetro,
+            Phoneme::FlapLateral,
+            Phoneme::AffricateTs,
+            Phoneme::AffricateDz,
+            Phoneme::AffricateRetro,
+            Phoneme::AffricateRetroVoiced,
+            Phoneme::AffricatePf,
+            Phoneme::AffricateLateral,
+        ];
+        for phoneme in consonants {
+            let dur = phoneme_duration(&phoneme);
+            let result = synthesize_phoneme(&phoneme, &voice, 44100.0, dur);
+            assert!(result.is_ok(), "{phoneme:?} failed");
+            let samples = result.unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite"
+            );
+        }
+    }
+
+    #[test]
+    fn test_phoneme_count_over_100() {
+        // Verify we have >100 phonemes (excluding Silence)
+        let all_phonemes = [
+            Phoneme::VowelA,
+            Phoneme::VowelE,
+            Phoneme::VowelI,
+            Phoneme::VowelO,
+            Phoneme::VowelU,
+            Phoneme::VowelSchwa,
+            Phoneme::VowelOpenO,
+            Phoneme::VowelAsh,
+            Phoneme::VowelNearI,
+            Phoneme::VowelNearU,
+            Phoneme::VowelOpenA,
+            Phoneme::VowelOpenE,
+            Phoneme::VowelCupV,
+            Phoneme::VowelBird,
+            Phoneme::VowelLongI,
+            Phoneme::DiphthongAI,
+            Phoneme::DiphthongAU,
+            Phoneme::DiphthongOI,
+            Phoneme::DiphthongEI,
+            Phoneme::DiphthongOU,
+            Phoneme::PlosiveP,
+            Phoneme::PlosiveB,
+            Phoneme::PlosiveT,
+            Phoneme::PlosiveD,
+            Phoneme::PlosiveK,
+            Phoneme::PlosiveG,
+            Phoneme::FricativeF,
+            Phoneme::FricativeV,
+            Phoneme::FricativeS,
+            Phoneme::FricativeZ,
+            Phoneme::FricativeSh,
+            Phoneme::FricativeZh,
+            Phoneme::FricativeTh,
+            Phoneme::FricativeDh,
+            Phoneme::FricativeH,
+            Phoneme::NasalM,
+            Phoneme::NasalN,
+            Phoneme::NasalNg,
+            Phoneme::AffricateCh,
+            Phoneme::AffricateJ,
+            Phoneme::GlottalStop,
+            Phoneme::TapFlap,
+            Phoneme::LateralL,
+            Phoneme::ApproximantR,
+            Phoneme::ApproximantW,
+            Phoneme::ApproximantJ,
+            // IPA extensions
+            Phoneme::VowelY,
+            Phoneme::VowelFrontRoundO,
+            Phoneme::VowelOpenFrontRoundO,
+            Phoneme::VowelCloseBackUnrounded,
+            Phoneme::VowelMidBackUnrounded,
+            Phoneme::VowelCloseCentral,
+            Phoneme::VowelCloseCentralRounded,
+            Phoneme::PlosiveUvularQ,
+            Phoneme::PlosiveUvularG,
+            Phoneme::PlosiveRetroT,
+            Phoneme::PlosiveRetroD,
+            Phoneme::FricativeBilabialPh,
+            Phoneme::FricativeBilabialB,
+            Phoneme::FricativePalatalC,
+            Phoneme::FricativePalatalJ,
+            Phoneme::FricativeUvularCh,
+            Phoneme::FricativeUvularR,
+            Phoneme::FricativePharyngealH,
+            Phoneme::FricativePharyngealA,
+            Phoneme::FricativeRetroS,
+            Phoneme::FricativeRetroZ,
+            Phoneme::FricativeLateralS,
+            Phoneme::FricativeLateralZ,
+            Phoneme::FricativeGlottalH,
+            Phoneme::NasalRetro,
+            Phoneme::NasalPalatal,
+            Phoneme::NasalUvular,
+            Phoneme::TrillBilabial,
+            Phoneme::TrillAlveolar,
+            Phoneme::TrillUvular,
+            Phoneme::ApproximantRetro,
+            Phoneme::LateralPalatal,
+            Phoneme::LateralVelar,
+            Phoneme::FlapRetro,
+            Phoneme::FlapLateral,
+            Phoneme::AffricateTs,
+            Phoneme::AffricateDz,
+            Phoneme::AffricateRetro,
+            Phoneme::AffricateRetroVoiced,
+            Phoneme::AffricatePf,
+            Phoneme::AffricateLateral,
+            // Non-pulmonic
+            Phoneme::ClickBilabial,
+            Phoneme::ClickDental,
+            Phoneme::ClickAlveolar,
+            Phoneme::ClickPalatal,
+            Phoneme::ClickLateral,
+            Phoneme::EjectiveP,
+            Phoneme::EjectiveT,
+            Phoneme::EjectiveK,
+            Phoneme::EjectiveS,
+            Phoneme::EjectiveCh,
+            Phoneme::ImplosiveB,
+            Phoneme::ImplosiveD,
+            Phoneme::ImplosiveG,
+        ];
+        assert!(
+            all_phonemes.len() >= 100,
+            "expected >= 100 phonemes, got {}",
+            all_phonemes.len()
+        );
     }
 }

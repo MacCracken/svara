@@ -20,8 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BatchRenderer`** (`render.rs`): non-real-time batch rendering API with `push`/`extend`/`render_all`/`render_with_progress` callback. Concatenates phoneme audio with stress modification and anticipatory nasalization
 - **Non-pulmonic consonants**: 13 new phonemes — 5 clicks (ʘ ǀ ǃ ǂ ǁ), 5 ejectives (pʼ tʼ kʼ sʼ tʃʼ), 3 implosives (ɓ ɗ ɠ). New `PhonemeClass` variants: `Click`, `Ejective`, `Implosive`. Click synthesis uses sharp transient bursts shaped by place; ejectives use compressed burst with no aspiration; implosives use creaky-voiced LF pulse with reduced amplitude. Phoneme inventory: 48 → 61
 - **Formant trajectory planning** (`trajectory.rs`): `TrajectoryPlanner` computes continuous formant trajectories across 3+ phoneme windows using Catmull-Rom spline interpolation weighted by coarticulation resistance. `PhonemeSequence::render_planned()` synthesizes continuously with per-sample formant updates instead of segment crossfading
+- **IPA-complete phoneme inventory** (100 phonemes, up from 48): 7 additional vowels (y, ø, œ, ɯ, ɤ, ɨ, ʉ), 4 plosives (q, ɢ, ʈ, ɖ), 13 fricatives (ɸ, β, ç, ʝ, χ, ʁ, ħ, ʕ, ʂ, ʐ, ɬ, ɮ, ɦ), 3 nasals (ɳ, ɲ, ɴ), 3 trills (ʙ, r, ʀ), 3 approximants/laterals (ɻ, ʎ, ʟ), 2 flaps (ɽ, ɺ), 6 affricates (ts, dz, ʈʂ, ɖʐ, pf, tɬ). New `PhonemeClass::Trill` variant
+- **Tone language support** (`Tone` enum): 9 lexical tone patterns — High, Rising, Dipping, Falling, Neutral (Mandarin 5 tones) plus Low, Mid, LowRising, HighFalling for Thai/Vietnamese/African languages. `Tone::to_contour()` produces `ProsodyContour` with f0/duration/amplitude scaling. `PhonemeEvent::with_tone()` constructor
 - 2 new benchmarks: `glottal_whisper_1024`, `glottal_creaky_1024`
-- 202 total tests (154 unit + 45 integration + 3 doc)
+- 212 total tests (164 unit + 45 integration + 3 doc)
 
 ### Performance
 
