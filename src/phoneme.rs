@@ -127,6 +127,38 @@ pub enum Phoneme {
     /// /j/ palatal approximant
     ApproximantJ,
 
+    // Clicks (non-pulmonic)
+    /// /ʘ/ bilabial click
+    ClickBilabial,
+    /// /ǀ/ dental click
+    ClickDental,
+    /// /ǃ/ alveolar (postalveolar) click
+    ClickAlveolar,
+    /// /ǂ/ palatal click
+    ClickPalatal,
+    /// /ǁ/ lateral click
+    ClickLateral,
+
+    // Ejectives (glottalic egressive)
+    /// /pʼ/ bilabial ejective
+    EjectiveP,
+    /// /tʼ/ alveolar ejective
+    EjectiveT,
+    /// /kʼ/ velar ejective
+    EjectiveK,
+    /// /sʼ/ alveolar ejective fricative
+    EjectiveS,
+    /// /tʃʼ/ postalveolar ejective affricate
+    EjectiveCh,
+
+    // Implosives (glottalic ingressive)
+    /// /ɓ/ voiced bilabial implosive
+    ImplosiveB,
+    /// /ɗ/ voiced alveolar implosive
+    ImplosiveD,
+    /// /ɠ/ voiced velar implosive
+    ImplosiveG,
+
     // Silence
     /// Silent pause
     Silence,
@@ -152,6 +184,12 @@ pub enum PhonemeClass {
     Vowel,
     /// Gliding vowel sequence.
     Diphthong,
+    /// Non-pulmonic click consonant (velar + oral closure, rarefied release).
+    Click,
+    /// Glottalic egressive stop (larynx raised, compressed burst, no voicing).
+    Ejective,
+    /// Glottalic ingressive stop (larynx lowered, voiced with creaky quality).
+    Implosive,
     /// No sound.
     Silence,
 }
@@ -214,6 +252,20 @@ impl Phoneme {
                 PhonemeClass::Approximant
             }
 
+            Self::ClickBilabial
+            | Self::ClickDental
+            | Self::ClickAlveolar
+            | Self::ClickPalatal
+            | Self::ClickLateral => PhonemeClass::Click,
+
+            Self::EjectiveP
+            | Self::EjectiveT
+            | Self::EjectiveK
+            | Self::EjectiveS
+            | Self::EjectiveCh => PhonemeClass::Ejective,
+
+            Self::ImplosiveB | Self::ImplosiveD | Self::ImplosiveG => PhonemeClass::Implosive,
+
             Self::Silence => PhonemeClass::Silence,
         }
     }
@@ -233,6 +285,16 @@ impl Phoneme {
             | Self::FricativeH
             | Self::AffricateCh
             | Self::GlottalStop
+            | Self::ClickBilabial
+            | Self::ClickDental
+            | Self::ClickAlveolar
+            | Self::ClickPalatal
+            | Self::ClickLateral
+            | Self::EjectiveP
+            | Self::EjectiveT
+            | Self::EjectiveK
+            | Self::EjectiveS
+            | Self::EjectiveCh
             | Self::Silence => false,
             // Everything else is voiced
             _ => true,
@@ -282,6 +344,16 @@ impl Phoneme {
             | Self::DiphthongOI
             | Self::DiphthongEI
             | Self::DiphthongOU => 0.6,
+
+            // Non-pulmonic: high resistance (strong articulatory gestures)
+            Self::ClickBilabial
+            | Self::ClickDental
+            | Self::ClickAlveolar
+            | Self::ClickPalatal
+            | Self::ClickLateral => 0.9,
+            Self::EjectiveP | Self::EjectiveT | Self::EjectiveK => 0.85,
+            Self::EjectiveS | Self::EjectiveCh => 0.85,
+            Self::ImplosiveB | Self::ImplosiveD | Self::ImplosiveG => 0.7,
         }
     }
 }
@@ -396,6 +468,25 @@ pub fn phoneme_formants(phoneme: &Phoneme) -> VowelTarget {
         Phoneme::ApproximantW => VowelTarget::new(300.0, 700.0, 2200.0, 3300.0, 3750.0),
         Phoneme::ApproximantJ => VowelTarget::new(280.0, 2200.0, 2900.0, 3300.0, 3750.0),
 
+        // Clicks: formant locus by place of articulation (burst shaping)
+        Phoneme::ClickBilabial => VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0),
+        Phoneme::ClickDental => VowelTarget::new(400.0, 1500.0, 2600.0, 3300.0, 3750.0),
+        Phoneme::ClickAlveolar => VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0),
+        Phoneme::ClickPalatal => VowelTarget::new(350.0, 2000.0, 2800.0, 3300.0, 3750.0),
+        Phoneme::ClickLateral => VowelTarget::new(400.0, 1500.0, 2500.0, 3300.0, 3750.0),
+
+        // Ejectives: same locus as their pulmonic counterparts
+        Phoneme::EjectiveP => VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0),
+        Phoneme::EjectiveT => VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0),
+        Phoneme::EjectiveK => VowelTarget::new(350.0, 1800.0, 2500.0, 3300.0, 3750.0),
+        Phoneme::EjectiveS => VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0),
+        Phoneme::EjectiveCh => VowelTarget::new(350.0, 1600.0, 2500.0, 3300.0, 3750.0),
+
+        // Implosives: same locus as voiced pulmonic counterparts
+        Phoneme::ImplosiveB => VowelTarget::new(350.0, 900.0, 2400.0, 3300.0, 3750.0),
+        Phoneme::ImplosiveD => VowelTarget::new(400.0, 1750.0, 2600.0, 3300.0, 3750.0),
+        Phoneme::ImplosiveG => VowelTarget::new(350.0, 1800.0, 2500.0, 3300.0, 3750.0),
+
         // Silence
         Phoneme::Silence => VowelTarget::new(500.0, 1500.0, 2500.0, 3300.0, 3750.0),
     }
@@ -412,6 +503,9 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
         PhonemeClass::Nasal => 0.08,
         PhonemeClass::Affricate => 0.12,
         PhonemeClass::Approximant | PhonemeClass::Lateral => 0.07,
+        PhonemeClass::Click => 0.04,     // very short transient burst
+        PhonemeClass::Ejective => 0.10,  // closure + compressed burst
+        PhonemeClass::Implosive => 0.08, // similar to voiced plosives
         PhonemeClass::Silence => 0.05,
     }
 }
@@ -552,6 +646,15 @@ impl SynthesisContext {
                 }
                 PhonemeClass::Approximant | PhonemeClass::Lateral => {
                     self.synthesize_approx_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Click => {
+                    self.synthesize_click_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Ejective => {
+                    self.synthesize_ejective_ctx(phoneme, voice, num_samples)?;
+                }
+                PhonemeClass::Implosive => {
+                    self.synthesize_implosive_ctx(phoneme, voice, num_samples)?;
                 }
                 PhonemeClass::Silence => {
                     for s in self.buffer.iter_mut() {
@@ -766,6 +869,115 @@ impl SynthesisContext {
         self.glottal.set_breathiness(voice.breathiness);
         Ok(())
     }
+
+    /// Click: very short, sharp noise burst shaped by place of articulation.
+    ///
+    /// Clicks are produced by rarefying air between a velar closure and a
+    /// forward closure, then releasing the forward closure. The result is
+    /// an extremely brief, loud transient.
+    fn synthesize_click_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        let formants = target.to_formants();
+        let mut filter = FormantFilter::new(&formants, self.sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+        // Click: silence (closure) then sharp burst in final ~40%
+        let burst_start = num_samples * 6 / 10;
+        for s in self.buffer[..burst_start].iter_mut() {
+            *s = 0.0;
+        }
+        for i in burst_start..num_samples {
+            let n = self.noise.next_f32();
+            // Sharp attack, fast decay
+            let env = 1.0 - (i - burst_start) as f32 / (num_samples - burst_start) as f32;
+            self.buffer[i] = filter.process_sample(n * env * env);
+        }
+        Ok(())
+    }
+
+    /// Ejective: like voiceless plosive but with longer closure, sharper burst,
+    /// and no aspiration. Glottal closure prevents voicing.
+    fn synthesize_ejective_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+
+        // Ejective fricative (/sʼ/) or affricate (/tʃʼ/) gets frication phase
+        let is_fricative_ejective = matches!(phoneme, Phoneme::EjectiveS | Phoneme::EjectiveCh);
+
+        let formants = target.to_formants();
+        let mut filter = FormantFilter::new(&formants, self.sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+        // Closure: ~40%, burst: ~20%, release: ~40%
+        let closure_end = num_samples * 4 / 10;
+        let burst_end = closure_end + num_samples * 2 / 10;
+
+        for s in self.buffer[..closure_end].iter_mut() {
+            *s = 0.0;
+        }
+        // Sharp burst — louder than pulmonic plosive (compressed air)
+        for i in closure_end..burst_end.min(num_samples) {
+            self.buffer[i] = filter.process_sample(self.noise.next_f32() * 1.0);
+        }
+        // Release: frication for ejective fricatives, quick decay for stops
+        if is_fricative_ejective {
+            let fric_f = fricative_formants(phoneme, self.sample_rate);
+            let mut fric_filter = FormantFilter::new(&fric_f, self.sample_rate)
+                .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+            for i in burst_end..num_samples {
+                let t = (i - burst_end) as f32 / (num_samples - burst_end).max(1) as f32;
+                let decay = 1.0 - t * 0.5; // gradual decay
+                self.buffer[i] = fric_filter.process_sample(self.noise.next_f32() * 0.6 * decay);
+            }
+        } else {
+            for i in burst_end..num_samples {
+                let t = (i - burst_end) as f32 / (num_samples - burst_end).max(1) as f32;
+                let decay = (1.0 - t).max(0.0);
+                self.buffer[i] = filter.process_sample(self.noise.next_f32() * 0.3 * decay);
+            }
+        }
+        Ok(())
+    }
+
+    /// Implosive: like voiced plosive but with lowered larynx creating
+    /// ingressive airflow. Lower amplitude, creaky quality.
+    fn synthesize_implosive_ctx(
+        &mut self,
+        phoneme: &Phoneme,
+        voice: &VoiceProfile,
+        num_samples: usize,
+    ) -> Result<()> {
+        let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+        self.tract.set_formants_from_target(&target)?;
+        self.tract.set_nasal_coupling(0.0);
+
+        // Implosive voicing: creaky, low amplitude (larynx lowering)
+        self.glottal.set_creaky(0.5);
+
+        let closure_end = num_samples / 3;
+        // Closure: silence
+        for s in self.buffer[..closure_end].iter_mut() {
+            *s = 0.0;
+        }
+        // Voiced release with creaky quality, reduced amplitude
+        for i in closure_end..num_samples {
+            let exc = self.glottal.next_sample();
+            self.buffer[i] = self.tract.process_sample(exc) * 0.5;
+        }
+        // Restore model
+        self.glottal
+            .set_model(crate::glottal::GlottalModel::Rosenberg);
+        Ok(())
+    }
 }
 
 /// Type alias for phoneme-level noise generation using the shared PRNG.
@@ -865,6 +1077,11 @@ pub fn synthesize_phoneme(
             }
             PhonemeClass::Approximant | PhonemeClass::Lateral => {
                 synthesize_approximant(phoneme, voice, sample_rate, num_samples)
+            }
+            PhonemeClass::Click => synthesize_click(phoneme, voice, sample_rate, num_samples),
+            PhonemeClass::Ejective => synthesize_ejective(phoneme, voice, sample_rate, num_samples),
+            PhonemeClass::Implosive => {
+                synthesize_implosive(phoneme, voice, sample_rate, num_samples)
             }
             PhonemeClass::Silence => Ok(vec![0.0; num_samples]),
         },
@@ -1127,10 +1344,15 @@ fn fricative_formants(phoneme: &Phoneme, _sample_rate: f32) -> Vec<Formant> {
             Formant::new(1500.0, 800.0, 0.4),
             Formant::new(2500.0, 800.0, 0.3),
         ],
-        // /tʃ/ /dʒ/: postalveolar frication, similar to /ʃ/ /ʒ/
-        Phoneme::AffricateCh | Phoneme::AffricateJ => vec![
+        // /tʃ/ /dʒ/ and ejective affricate /tʃʼ/
+        Phoneme::AffricateCh | Phoneme::AffricateJ | Phoneme::EjectiveCh => vec![
             Formant::new(2800.0, 600.0, 1.0),
             Formant::new(5000.0, 800.0, 0.6),
+        ],
+        // /sʼ/ ejective fricative: same spectral shape as /s/
+        Phoneme::EjectiveS => vec![
+            Formant::new(4500.0, 500.0, 1.0),
+            Formant::new(7000.0, 800.0, 0.7),
         ],
         _ => vec![Formant::new(3000.0, 1000.0, 0.5)],
     }
@@ -1233,6 +1455,101 @@ fn synthesize_affricate(
             let n = noise.next_f32() * 0.6;
             *sample = filter.process_sample(n);
         }
+    }
+
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_click(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+) -> Result<Vec<f32>> {
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let formants = target.to_formants();
+    let mut filter = FormantFilter::new(&formants, sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+    let mut noise = NoiseGen::new(41);
+
+    let mut output = vec![0.0; num_samples];
+    let burst_start = num_samples * 6 / 10;
+    let burst_len = (num_samples - burst_start).max(1);
+    for (j, sample) in output[burst_start..].iter_mut().enumerate() {
+        let n = noise.next_f32();
+        let env = 1.0 - j as f32 / burst_len as f32;
+        *sample = filter.process_sample(n * env * env);
+    }
+
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_ejective(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+) -> Result<Vec<f32>> {
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let formants = target.to_formants();
+    let mut filter = FormantFilter::new(&formants, sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+    let mut noise = NoiseGen::new(43);
+
+    let is_fricative_ejective = matches!(phoneme, Phoneme::EjectiveS | Phoneme::EjectiveCh);
+
+    let mut output = vec![0.0; num_samples];
+    let closure_end = num_samples * 4 / 10;
+    let burst_end = closure_end + num_samples * 2 / 10;
+
+    for sample in output[closure_end..burst_end.min(num_samples)].iter_mut() {
+        *sample = filter.process_sample(noise.next_f32());
+    }
+
+    let release_len = num_samples.saturating_sub(burst_end).max(1);
+    if is_fricative_ejective {
+        let fric_f = fricative_formants(phoneme, sample_rate);
+        let mut fric_filter = FormantFilter::new(&fric_f, sample_rate)
+            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+        for (j, sample) in output[burst_end..num_samples].iter_mut().enumerate() {
+            let t = j as f32 / release_len as f32;
+            let decay = 1.0 - t * 0.5;
+            *sample = fric_filter.process_sample(noise.next_f32() * 0.6 * decay);
+        }
+    } else {
+        for (j, sample) in output[burst_end..num_samples].iter_mut().enumerate() {
+            let t = j as f32 / release_len as f32;
+            let decay = (1.0 - t).max(0.0);
+            *sample = filter.process_sample(noise.next_f32() * 0.3 * decay);
+        }
+    }
+
+    apply_amplitude_envelope(&mut output, num_samples);
+    Ok(output)
+}
+
+fn synthesize_implosive(
+    phoneme: &Phoneme,
+    voice: &VoiceProfile,
+    sample_rate: f32,
+    num_samples: usize,
+) -> Result<Vec<f32>> {
+    let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+    let mut tract = VocalTract::new(sample_rate);
+    tract.set_formants_from_target(&target)?;
+
+    let mut glottal = voice
+        .create_glottal_source(sample_rate)
+        .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+    glottal.set_creaky(0.5);
+
+    let mut output = vec![0.0; num_samples];
+    let closure_end = num_samples / 3;
+    for sample in output[closure_end..].iter_mut() {
+        let exc = glottal.next_sample();
+        *sample = tract.process_sample(exc) * 0.5;
     }
 
     apply_amplitude_envelope(&mut output, num_samples);
@@ -1527,5 +1844,123 @@ mod tests {
             .synthesize(&Phoneme::NasalM, &voice, 0.06, None)
             .unwrap();
         assert!(s3.iter().all(|s| s.is_finite()));
+    }
+
+    // --- Non-pulmonic consonant tests ---
+
+    #[test]
+    fn test_click_class() {
+        assert_eq!(Phoneme::ClickDental.class(), PhonemeClass::Click);
+        assert_eq!(Phoneme::ClickAlveolar.class(), PhonemeClass::Click);
+        assert_eq!(Phoneme::ClickBilabial.class(), PhonemeClass::Click);
+        assert!(!Phoneme::ClickDental.is_voiced());
+    }
+
+    #[test]
+    fn test_ejective_class() {
+        assert_eq!(Phoneme::EjectiveT.class(), PhonemeClass::Ejective);
+        assert_eq!(Phoneme::EjectiveS.class(), PhonemeClass::Ejective);
+        assert!(!Phoneme::EjectiveK.is_voiced());
+    }
+
+    #[test]
+    fn test_implosive_class() {
+        assert_eq!(Phoneme::ImplosiveB.class(), PhonemeClass::Implosive);
+        assert!(Phoneme::ImplosiveD.is_voiced());
+    }
+
+    #[test]
+    fn test_synthesize_all_clicks() {
+        let voice = VoiceProfile::new_male();
+        for phoneme in [
+            Phoneme::ClickBilabial,
+            Phoneme::ClickDental,
+            Phoneme::ClickAlveolar,
+            Phoneme::ClickPalatal,
+            Phoneme::ClickLateral,
+        ] {
+            let result = synthesize_phoneme(&phoneme, &voice, 44100.0, 0.04);
+            assert!(result.is_ok(), "{phoneme:?} failed");
+            let samples = result.unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite"
+            );
+        }
+    }
+
+    #[test]
+    fn test_synthesize_all_ejectives() {
+        let voice = VoiceProfile::new_male();
+        for phoneme in [
+            Phoneme::EjectiveP,
+            Phoneme::EjectiveT,
+            Phoneme::EjectiveK,
+            Phoneme::EjectiveS,
+            Phoneme::EjectiveCh,
+        ] {
+            let result = synthesize_phoneme(&phoneme, &voice, 44100.0, 0.1);
+            assert!(result.is_ok(), "{phoneme:?} failed");
+            let samples = result.unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite"
+            );
+        }
+    }
+
+    #[test]
+    fn test_synthesize_all_implosives() {
+        let voice = VoiceProfile::new_male();
+        for phoneme in [
+            Phoneme::ImplosiveB,
+            Phoneme::ImplosiveD,
+            Phoneme::ImplosiveG,
+        ] {
+            let result = synthesize_phoneme(&phoneme, &voice, 44100.0, 0.08);
+            assert!(result.is_ok(), "{phoneme:?} failed");
+            let samples = result.unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite"
+            );
+            assert!(
+                samples.iter().any(|&s| s.abs() > 1e-6),
+                "{phoneme:?} silent"
+            );
+        }
+    }
+
+    #[test]
+    fn test_synthesis_context_non_pulmonic() {
+        let voice = VoiceProfile::new_male();
+        let mut ctx = SynthesisContext::new(&voice, 44100.0).unwrap();
+        for phoneme in [
+            Phoneme::ClickDental,
+            Phoneme::EjectiveT,
+            Phoneme::ImplosiveD,
+        ] {
+            let samples = ctx.synthesize(&phoneme, &voice, 0.08, None).unwrap();
+            assert!(
+                samples.iter().all(|s| s.is_finite()),
+                "{phoneme:?} non-finite in ctx"
+            );
+        }
+    }
+
+    #[test]
+    fn test_serde_roundtrip_non_pulmonic() {
+        for phoneme in [
+            Phoneme::ClickDental,
+            Phoneme::ClickLateral,
+            Phoneme::EjectiveP,
+            Phoneme::EjectiveS,
+            Phoneme::ImplosiveB,
+            Phoneme::ImplosiveG,
+        ] {
+            let json = serde_json::to_string(&phoneme).unwrap();
+            let p2: Phoneme = serde_json::from_str(&json).unwrap();
+            assert_eq!(phoneme, p2);
+        }
     }
 }
