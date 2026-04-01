@@ -32,6 +32,13 @@ pub struct VoiceProfile {
     pub jitter: f32,
     /// Shimmer: cycle-to-cycle amplitude perturbation (fraction, typically 0.02-0.04).
     pub shimmer: f32,
+    /// Extra bandwidth widening factor for singing at high f0.
+    ///
+    /// Applied multiplicatively when `base_f0 > 300 Hz`. At 0.0 only the
+    /// standard `sqrt(f0/120)` scaling is used. At 1.0, an additional
+    /// `1 + 0.3 * ((f0 - 300) / 500)` factor is applied. Default: 0.0.
+    #[serde(default)]
+    pub bandwidth_widening: f32,
 }
 
 impl VoiceProfile {
@@ -49,6 +56,7 @@ impl VoiceProfile {
             vibrato_depth: 0.04,
             jitter: 0.01,
             shimmer: 0.02,
+            bandwidth_widening: 0.0,
         }
     }
 
@@ -66,6 +74,7 @@ impl VoiceProfile {
             vibrato_depth: 0.05,
             jitter: 0.008,
             shimmer: 0.018,
+            bandwidth_widening: 0.0,
         }
     }
 
@@ -83,6 +92,7 @@ impl VoiceProfile {
             vibrato_depth: 0.03,
             jitter: 0.012,
             shimmer: 0.025,
+            bandwidth_widening: 0.0,
         }
     }
 
@@ -142,6 +152,17 @@ impl VoiceProfile {
         self
     }
 
+    /// Sets the extra bandwidth widening factor for singing (builder pattern).
+    ///
+    /// At 0.0, only the standard f0-based bandwidth scaling is applied.
+    /// At 1.0, formant bandwidths are additionally widened at high f0 (>300 Hz)
+    /// to model increased source-tract coupling in singing.
+    #[must_use]
+    pub fn with_bandwidth_widening(mut self, factor: f32) -> Self {
+        self.bandwidth_widening = factor.clamp(0.0, 2.0);
+        self
+    }
+
     /// Creates a [`GlottalSource`] configured with this voice profile's parameters.
     ///
     /// Sets f0, breathiness, jitter, shimmer, and vibrato from the profile.
@@ -163,10 +184,22 @@ impl VoiceProfile {
     /// Frequencies are scaled by `formant_scale` (modeling vocal tract length).
     /// Bandwidths are scaled by `sqrt(base_f0 / 120.0)` — higher f0 voices
     /// (female, child) have wider bandwidths due to increased source-tract coupling.
+    ///
+    /// When `bandwidth_widening > 0` and `base_f0 > 300 Hz`, an additional
+    /// widening factor is applied to model the increased source-tract coupling
+    /// in singing at high pitches.
     #[must_use]
     pub fn apply_formant_scale(&self, target: &VowelTarget) -> VowelTarget {
         // Bandwidth scaling: sqrt(f0 / male_reference_f0)
-        let bw_scale = crate::math::f32::sqrt(self.base_f0 / 120.0);
+        let mut bw_scale = crate::math::f32::sqrt(self.base_f0 / 120.0);
+
+        // Additional singing bandwidth widening at high f0
+        if self.bandwidth_widening > 0.0 && self.base_f0 > 300.0 {
+            let extra = 1.0 + 0.3 * ((self.base_f0 - 300.0) / 500.0);
+            // Blend between 1.0 (no extra) and `extra` by the widening factor
+            bw_scale *= 1.0 + self.bandwidth_widening * (extra - 1.0);
+        }
+
         VowelTarget::with_bandwidths(
             [
                 target.f1 * self.formant_scale,
@@ -258,5 +291,87 @@ mod tests {
     fn test_default() {
         let v = VoiceProfile::default();
         assert!((v.base_f0 - 120.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_bandwidth_widening_default_zero() {
+        let v = VoiceProfile::new_male();
+        assert!(v.bandwidth_widening.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_bandwidth_widening_no_effect_below_300hz() {
+        let target = crate::formant::VowelTarget::from_vowel(crate::formant::Vowel::A);
+
+        let v_no_widen = VoiceProfile::new_male()
+            .with_f0(200.0)
+            .with_bandwidth_widening(1.0);
+        let v_normal = VoiceProfile::new_male().with_f0(200.0);
+
+        let scaled_widen = v_no_widen.apply_formant_scale(&target);
+        let scaled_normal = v_normal.apply_formant_scale(&target);
+
+        // Below 300Hz, widening should have no effect
+        assert!((scaled_widen.b1 - scaled_normal.b1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_bandwidth_widening_increases_above_300hz() {
+        let target = crate::formant::VowelTarget::from_vowel(crate::formant::Vowel::A);
+
+        let v_no_widen = VoiceProfile::new_female()
+            .with_f0(500.0)
+            .with_bandwidth_widening(0.0);
+        let v_widen = VoiceProfile::new_female()
+            .with_f0(500.0)
+            .with_bandwidth_widening(1.0);
+
+        let scaled_normal = v_no_widen.apply_formant_scale(&target);
+        let scaled_wide = v_widen.apply_formant_scale(&target);
+
+        // With widening enabled at high f0, bandwidths should be wider
+        assert!(
+            scaled_wide.b1 > scaled_normal.b1,
+            "bandwidth widening should increase B1: normal={}, wide={}",
+            scaled_normal.b1,
+            scaled_wide.b1
+        );
+    }
+
+    #[test]
+    fn test_bandwidth_widening_scales_with_f0() {
+        let target = crate::formant::VowelTarget::from_vowel(crate::formant::Vowel::A);
+
+        let v_400 = VoiceProfile::new_female()
+            .with_f0(400.0)
+            .with_bandwidth_widening(1.0);
+        let v_800 = VoiceProfile::new_female()
+            .with_f0(800.0)
+            .with_bandwidth_widening(1.0);
+
+        let scaled_400 = v_400.apply_formant_scale(&target);
+        let scaled_800 = v_800.apply_formant_scale(&target);
+
+        // Higher f0 should produce even wider bandwidths
+        assert!(
+            scaled_800.b1 > scaled_400.b1,
+            "higher f0 should widen more: 400Hz={}, 800Hz={}",
+            scaled_400.b1,
+            scaled_800.b1
+        );
+    }
+
+    #[test]
+    fn test_bandwidth_widening_clamped() {
+        let v = VoiceProfile::new_male().with_bandwidth_widening(5.0);
+        assert!((v.bandwidth_widening - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_with_bandwidth_widening() {
+        let v = VoiceProfile::new_female().with_bandwidth_widening(0.8);
+        let json = serde_json::to_string(&v).unwrap();
+        let v2: VoiceProfile = serde_json::from_str(&json).unwrap();
+        assert!((v2.bandwidth_widening - 0.8).abs() < f32::EPSILON);
     }
 }

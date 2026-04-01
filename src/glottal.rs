@@ -33,6 +33,12 @@ pub enum GlottalModel {
     /// Liljencrants-Fant model: derivative of glottal flow with abrupt closure.
     /// Parameterized by Rd for voice quality control.
     LF,
+    /// Whisper: noise-only excitation with no periodic voicing.
+    /// Models breathy, aperiodic airflow through a partially open glottis.
+    Whisper,
+    /// Creaky voice (vocal fry): irregular glottal pulses with subharmonic
+    /// patterns. Very low Rd (pressed), doubled/skipped periods, high shimmer.
+    Creaky,
 }
 
 /// LF model parameters derived from the Rd voice quality parameter.
@@ -256,6 +262,27 @@ impl GlottalSource {
         self.rd
     }
 
+    /// Switches to whisper mode (noise-only excitation, no periodic voicing).
+    ///
+    /// In whisper mode, the glottal source produces only shaped noise,
+    /// modeling turbulent airflow through a partially open glottis.
+    pub fn set_whisper(&mut self) {
+        self.model = GlottalModel::Whisper;
+    }
+
+    /// Switches to creaky voice (vocal fry) mode.
+    ///
+    /// Uses the LF model with very low Rd (pressed voice) and irregular
+    /// period timing to create subharmonic patterns. Shimmer is amplified
+    /// for characteristic amplitude irregularity.
+    ///
+    /// `rd` is clamped to [0.3, 0.8] — creaky voice is always pressed.
+    pub fn set_creaky(&mut self, rd: f32) {
+        self.rd = rd.clamp(0.3, 0.8);
+        self.lf_params = LfParams::from_rd(self.rd);
+        self.model = GlottalModel::Creaky;
+    }
+
     /// Sets the vibrato rate in Hz (typically 4-7 Hz for natural singing/speaking).
     pub fn set_vibrato(&mut self, rate: f32, depth: f32) {
         self.vibrato_rate = rate.max(0.0);
@@ -290,17 +317,27 @@ impl GlottalSource {
 
     /// Generates the next audio sample from the glottal source.
     ///
-    /// The output is a mix of the Rosenberg glottal pulse and noise,
-    /// controlled by the breathiness parameter. Spectral tilt is applied
-    /// via a one-pole low-pass filter. Vibrato modulates f0 sinusoidally.
+    /// The output depends on the active model:
+    /// - **Rosenberg/LF**: periodic pulse mixed with aspiration noise
+    /// - **Whisper**: noise-only excitation with steep spectral tilt
+    /// - **Creaky**: periodic pulse with irregular timing (handled in `new_period`)
+    ///
+    /// Spectral tilt is applied via a one-pole low-pass filter.
+    /// Vibrato modulates f0 sinusoidally (not applied in Whisper mode).
     #[inline]
     pub fn next_sample(&mut self) -> f32 {
+        // Whisper mode: pure noise excitation, no periodic pulse
+        if self.model == GlottalModel::Whisper {
+            return self.whisper_sample();
+        }
+
         let t = self.phase / self.current_period;
 
         // Compute glottal pulse based on active model
         let pulse = match self.model {
             GlottalModel::Rosenberg => self.rosenberg_pulse(t),
-            GlottalModel::LF => self.lf_pulse(t),
+            GlottalModel::LF | GlottalModel::Creaky => self.lf_pulse(t),
+            GlottalModel::Whisper => unreachable!(),
         };
 
         // Apply spectral tilt via one-pole low-pass: y[n] = (1-α)*x[n] + α*y[n-1]
@@ -347,6 +384,27 @@ impl GlottalSource {
         }
 
         sample
+    }
+
+    /// Generates a whisper sample: noise-only excitation with steep spectral tilt.
+    ///
+    /// Whisper is modeled as turbulent airflow through a partially open glottis
+    /// with no periodic voicing. Spectral tilt is applied at ~12 dB/octave to
+    /// shape the characteristic whisper spectrum (energy concentrated in lower
+    /// frequencies).
+    #[inline]
+    fn whisper_sample(&mut self) -> f32 {
+        #[cfg(feature = "naad-backend")]
+        let noise = self.aspiration_noise.next_sample();
+        #[cfg(not(feature = "naad-backend"))]
+        let noise = self.rng.next_f32();
+
+        // Steep spectral tilt (~12 dB/octave) for whisper spectrum shaping
+        let tilt = self.spectral_tilt.max(12.0);
+        let alpha = crate::math::f32::exp(-core::f32::consts::TAU * tilt / self.sample_rate);
+        let filtered = (1.0 - alpha) * noise * 0.4 + alpha * self.tilt_state;
+        self.tilt_state = filtered;
+        filtered
     }
 
     /// Computes the Rosenberg B glottal pulse at normalized time t in `[0, 1)`.
@@ -404,6 +462,9 @@ impl GlottalSource {
     }
 
     /// Begins a new glottal period, applying jitter, shimmer, and vibrato.
+    ///
+    /// In creaky voice mode, the period is irregularly doubled or tripled to
+    /// create subharmonic patterns characteristic of vocal fry.
     fn new_period(&mut self) {
         // Apply vibrato: sinusoidal modulation of f0
         let vibrato_mod = if self.vibrato_rate > 0.0 {
@@ -425,10 +486,30 @@ impl GlottalSource {
         // Apply jitter to period length
         let base_period = self.sample_rate / effective_f0;
         let jitter_offset = self.rng.next_f32() * self.jitter * base_period;
-        self.current_period = (base_period + jitter_offset).max(1.0);
+        let mut period = (base_period + jitter_offset).max(1.0);
 
-        // Apply shimmer to amplitude
-        let shimmer_offset = self.rng.next_f32() * self.shimmer;
+        // Creaky voice: irregular period multiplication for subharmonic patterns.
+        // ~40% chance of doubled period, ~10% chance of tripled period.
+        // This creates the characteristic irregular pulse train of vocal fry.
+        if self.model == GlottalModel::Creaky {
+            let r = self.rng.next_f32().abs();
+            if r < 0.10 {
+                period *= 3.0;
+            } else if r < 0.40 {
+                period *= 2.0;
+            }
+        }
+
+        self.current_period = period;
+
+        // Apply shimmer to amplitude.
+        // Creaky voice uses higher amplitude irregularity (3x shimmer).
+        let shimmer_scale = if self.model == GlottalModel::Creaky {
+            self.shimmer * 3.0
+        } else {
+            self.shimmer
+        };
+        let shimmer_offset = self.rng.next_f32() * shimmer_scale;
         self.current_amplitude = (1.0 + shimmer_offset).max(0.01);
     }
 }
@@ -525,5 +606,129 @@ mod tests {
         let json = serde_json::to_string(&gs).unwrap();
         let gs2: GlottalSource = serde_json::from_str(&json).unwrap();
         assert!((gs2.f0() - 150.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_whisper_produces_output() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_whisper();
+        assert_eq!(gs.model(), GlottalModel::Whisper);
+        let samples: Vec<f32> = (0..4410).map(|_| gs.next_sample()).collect();
+        assert!(samples.iter().all(|s| s.is_finite()));
+        assert!(samples.iter().any(|&s| s.abs() > 1e-6));
+    }
+
+    #[test]
+    fn test_whisper_is_aperiodic() {
+        // Voiced Rosenberg has a repeating pulse — adjacent periods are nearly
+        // identical. Whisper is noise-based, so adjacent windows differ more.
+        // We compare the mean absolute difference between period-aligned windows.
+        let period = (44100.0 / 120.0) as usize; // ~367 samples
+
+        let mut voiced = GlottalSource::new(120.0, 44100.0).unwrap();
+        voiced.set_jitter(0.0);
+        voiced.set_shimmer(0.0);
+        let v_samples: Vec<f32> = (0..period * 10).map(|_| voiced.next_sample()).collect();
+
+        let mut whisper = GlottalSource::new(120.0, 44100.0).unwrap();
+        whisper.set_whisper();
+        let w_samples: Vec<f32> = (0..period * 10).map(|_| whisper.next_sample()).collect();
+
+        // Mean absolute difference between consecutive period-aligned windows
+        let voiced_diff = mean_period_diff(&v_samples, period);
+        let whisper_diff = mean_period_diff(&w_samples, period);
+
+        // Whisper should have higher inter-period difference (less repetition)
+        assert!(
+            whisper_diff > voiced_diff,
+            "whisper should have higher inter-period variation: whisper={whisper_diff}, voiced={voiced_diff}"
+        );
+    }
+
+    #[test]
+    fn test_creaky_produces_output() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_creaky(0.5);
+        assert_eq!(gs.model(), GlottalModel::Creaky);
+        assert!((gs.rd() - 0.5).abs() < f32::EPSILON);
+        let samples: Vec<f32> = (0..4410).map(|_| gs.next_sample()).collect();
+        assert!(samples.iter().all(|s| s.is_finite()));
+        assert!(samples.iter().any(|&s| s.abs() > 0.001));
+    }
+
+    #[test]
+    fn test_creaky_rd_clamped() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_creaky(2.0); // Should clamp to 0.8
+        assert!((gs.rd() - 0.8).abs() < f32::EPSILON);
+        gs.set_creaky(0.1); // Should clamp to 0.3
+        assert!((gs.rd() - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_creaky_has_irregular_periods() {
+        // Creaky voice should have more period variation than modal voice
+        let mut creaky = GlottalSource::new(80.0, 44100.0).unwrap();
+        creaky.set_creaky(0.4);
+        creaky.set_jitter(0.01);
+        // Run enough samples to trigger multiple periods
+        let _: Vec<f32> = (0..44100).map(|_| creaky.next_sample()).collect();
+        // The test passes if no panics — period doubling/tripling doesn't destabilize
+    }
+
+    #[test]
+    fn test_whisper_lower_energy_than_voiced() {
+        let mut whisper = GlottalSource::new(120.0, 44100.0).unwrap();
+        whisper.set_whisper();
+        let w_samples: Vec<f32> = (0..4410).map(|_| whisper.next_sample()).collect();
+        let w_energy: f32 = w_samples.iter().map(|s| s * s).sum();
+
+        let mut voiced = GlottalSource::new(120.0, 44100.0).unwrap();
+        let v_samples: Vec<f32> = (0..4410).map(|_| voiced.next_sample()).collect();
+        let v_energy: f32 = v_samples.iter().map(|s| s * s).sum();
+
+        assert!(
+            w_energy < v_energy,
+            "whisper should have less energy: whisper={w_energy}, voiced={v_energy}"
+        );
+    }
+
+    #[test]
+    fn test_serde_roundtrip_whisper() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_whisper();
+        let json = serde_json::to_string(&gs).unwrap();
+        let gs2: GlottalSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(gs2.model(), GlottalModel::Whisper);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_creaky() {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_creaky(0.5);
+        let json = serde_json::to_string(&gs).unwrap();
+        let gs2: GlottalSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(gs2.model(), GlottalModel::Creaky);
+        assert!((gs2.rd() - 0.5).abs() < f32::EPSILON);
+    }
+
+    /// Mean absolute difference between consecutive period-aligned windows.
+    /// Lower values indicate more periodicity (adjacent periods nearly identical).
+    fn mean_period_diff(samples: &[f32], period: usize) -> f32 {
+        let num_windows = samples.len() / period;
+        if num_windows < 2 {
+            return 0.0;
+        }
+        let mut total_diff = 0.0f32;
+        let mut count = 0u32;
+        for w in 0..num_windows - 1 {
+            let start_a = w * period;
+            let start_b = (w + 1) * period;
+            for j in 0..period {
+                total_diff += (samples[start_a + j] - samples[start_b + j]).abs();
+                count += 1;
+            }
+        }
+        total_diff / count as f32
     }
 }

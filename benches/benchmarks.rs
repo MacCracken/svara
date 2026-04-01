@@ -196,6 +196,31 @@ fn bench_vocal_tract_minimal_1024(c: &mut Criterion) {
     });
 }
 
+fn bench_glottal_whisper_1024(c: &mut Criterion) {
+    c.bench_function("glottal_whisper_1024", |b| {
+        let mut gs = GlottalSource::new(120.0, 44100.0).unwrap();
+        gs.set_model(GlottalModel::Whisper);
+        b.iter(|| {
+            for _ in 0..1024 {
+                black_box(gs.next_sample());
+            }
+        });
+    });
+}
+
+fn bench_glottal_creaky_1024(c: &mut Criterion) {
+    c.bench_function("glottal_creaky_1024", |b| {
+        let mut gs = GlottalSource::new(80.0, 44100.0).unwrap();
+        gs.set_model(GlottalModel::Creaky);
+        gs.set_rd(0.4);
+        b.iter(|| {
+            for _ in 0..1024 {
+                black_box(gs.next_sample());
+            }
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_glottal_source_1024,
@@ -211,6 +236,8 @@ criterion_group!(
     bench_phoneme_render_female_vowel_a,
     bench_sequence_render_5_phonemes,
     bench_sequence_render_10_phonemes,
+    bench_glottal_whisper_1024,
+    bench_glottal_creaky_1024,
 );
 
 criterion_main!(benches);

@@ -127,10 +127,10 @@ All criteria met. Published to crates.io.
 
 ### Voice Quality
 
-- [ ] Whisper mode (noise excitation only, no voicing)
-- [ ] Creaky voice / vocal fry (irregular glottal pulses, very low Rd)
+- [x] Whisper mode (noise excitation only, no voicing) — done 2026-04-01
+- [x] Creaky voice / vocal fry (irregular glottal pulses, very low Rd) — done 2026-04-01
 - [ ] Vocal effort continuum (whisper → normal → shout)
-- [ ] Formant bandwidth widening under high f0 (singing)
+- [x] Formant bandwidth widening under high f0 (singing) — done 2026-04-01
 
 ### Coarticulation
 
