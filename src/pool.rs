@@ -146,8 +146,12 @@ impl SynthesisPool {
 
         for &(phoneme, duration) in phonemes {
             let samples = self.ctx.synthesize(phoneme, voice, duration, None)?;
+            let len = samples.len();
             output.extend_from_slice(samples);
             self.render_count += 1;
+            if len > self.peak_samples {
+                self.peak_samples = len;
+            }
         }
 
         Ok(output)

@@ -158,24 +158,8 @@ impl PhonemeSequence {
             .collect();
 
         // Detect anticipatory nasalization: vowels/diphthongs before nasals
-        let nasalizations: Vec<Option<phoneme::Nasalization>> = self
-            .events
-            .iter()
-            .enumerate()
-            .map(|(i, event)| {
-                let is_vowel_like = matches!(
-                    event.phoneme.class(),
-                    phoneme::PhonemeClass::Vowel | phoneme::PhonemeClass::Diphthong
-                );
-                if is_vowel_like {
-                    self.events
-                        .get(i + 1)
-                        .and_then(|next| phoneme::Nasalization::for_nasal(&next.phoneme))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let phoneme_list: Vec<Phoneme> = self.events.iter().map(|e| e.phoneme).collect();
+        let nasalizations = phoneme::detect_nasalization(&phoneme_list);
 
         // Synthesize each phoneme with anticipatory nasalization
         let mut segments: Vec<Vec<f32>> = Vec::with_capacity(self.events.len());

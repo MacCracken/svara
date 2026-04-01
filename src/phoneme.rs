@@ -416,6 +416,30 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
     }
 }
 
+/// Detects anticipatory nasalization for a sequence of phonemes.
+///
+/// Returns a `Vec<Option<Nasalization>>` aligned with the input, where
+/// vowels/diphthongs preceding nasal consonants get `Some(Nasalization)`
+/// with the appropriate place of articulation.
+#[must_use]
+pub fn detect_nasalization(phonemes: &[Phoneme]) -> Vec<Option<Nasalization>> {
+    phonemes
+        .iter()
+        .enumerate()
+        .map(|(i, phoneme)| {
+            let is_vowel_like = matches!(
+                phoneme.class(),
+                PhonemeClass::Vowel | PhonemeClass::Diphthong
+            );
+            if is_vowel_like {
+                phonemes.get(i + 1).and_then(Nasalization::for_nasal)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Reusable synthesis context that eliminates per-phoneme allocation.
 ///
 /// When rendering a sequence of phonemes, creating a new `VocalTract` and

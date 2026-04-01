@@ -78,8 +78,9 @@ pub mod prelude {
     pub use crate::glottal::{GlottalModel, GlottalSource};
     pub use crate::lod::Quality;
     pub use crate::phoneme::{
-        Nasalization, Phoneme, PhonemeClass, SynthesisContext, f2_locus_equation, phoneme_duration,
-        phoneme_formants, synthesize_phoneme, synthesize_phoneme_nasalized,
+        Nasalization, Phoneme, PhonemeClass, SynthesisContext, detect_nasalization,
+        f2_locus_equation, phoneme_duration, phoneme_formants, synthesize_phoneme,
+        synthesize_phoneme_nasalized,
     };
     pub use crate::pool::SynthesisPool;
     pub use crate::prosody::{IntonationPattern, ProsodyContour, Stress};
@@ -119,6 +120,7 @@ mod assert_traits {
         _assert_send_sync::<crate::pool::SynthesisPool>();
         _assert_send_sync::<crate::render::BatchRenderer>();
         _assert_send_sync::<crate::render::RenderProgress>();
+        _assert_send_sync::<crate::render::RenderOutput>();
         _assert_send_sync::<crate::voice::VoiceProfile>();
         _assert_send_sync::<crate::voice::VocalEffort>();
         _assert_send_sync::<crate::voice::EffortParams>();

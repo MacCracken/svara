@@ -11,13 +11,13 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::phoneme::{Nasalization, Phoneme, PhonemeClass, SynthesisContext};
+use crate::phoneme::{Phoneme, SynthesisContext};
 use crate::prosody::Stress;
 use crate::sequence::PhonemeEvent;
 use crate::voice::VoiceProfile;
 
 /// Progress information emitted during batch rendering.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RenderProgress {
     /// Index of the phoneme just completed (0-based).
     pub phoneme_index: usize,
@@ -75,7 +75,7 @@ pub struct BatchRenderer {
 }
 
 /// The result of a batch render operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderOutput {
     /// The rendered audio samples.
     pub samples: Vec<f32>,
@@ -136,62 +136,7 @@ impl BatchRenderer {
     ///
     /// Returns an error if any phoneme fails to synthesize.
     pub fn render_all(&mut self) -> Result<RenderOutput> {
-        let mut output = Vec::new();
-        let total = self.events.len();
-
-        // Detect nasalization
-        let nasalizations: Vec<Option<Nasalization>> = self
-            .events
-            .iter()
-            .enumerate()
-            .map(|(i, event)| {
-                let is_vowel_like = matches!(
-                    event.phoneme.class(),
-                    PhonemeClass::Vowel | PhonemeClass::Diphthong
-                );
-                if is_vowel_like {
-                    self.events
-                        .get(i + 1)
-                        .and_then(|next| Nasalization::for_nasal(&next.phoneme))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for (i, event) in self.events.iter().enumerate() {
-            let mut event_voice = self.voice.clone();
-            let stress_scale = match event.stress {
-                Stress::Primary => {
-                    event_voice.base_f0 *= 1.10;
-                    1.15
-                }
-                Stress::Secondary => {
-                    event_voice.base_f0 *= 1.05;
-                    1.05
-                }
-                Stress::Unstressed => 0.9,
-            };
-            let dur = event.duration * stress_scale;
-
-            let samples = self.ctx.synthesize(
-                &event.phoneme,
-                &event_voice,
-                dur,
-                nasalizations[i].as_ref(),
-            )?;
-            output.extend_from_slice(samples);
-        }
-
-        let final_len = output.len();
-        Ok(RenderOutput {
-            samples: output,
-            progress: RenderProgress {
-                phoneme_index: total,
-                total_phonemes: total,
-                samples_rendered: final_len,
-            },
-        })
+        self.render_with_progress(|_| {})
     }
 
     /// Renders phonemes one at a time, calling `on_progress` after each.
@@ -210,24 +155,8 @@ impl BatchRenderer {
         let mut output = Vec::new();
         let total = self.events.len();
 
-        let nasalizations: Vec<Option<Nasalization>> = self
-            .events
-            .iter()
-            .enumerate()
-            .map(|(i, event)| {
-                let is_vowel_like = matches!(
-                    event.phoneme.class(),
-                    PhonemeClass::Vowel | PhonemeClass::Diphthong
-                );
-                if is_vowel_like {
-                    self.events
-                        .get(i + 1)
-                        .and_then(|next| Nasalization::for_nasal(&next.phoneme))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let phoneme_list: Vec<Phoneme> = self.events.iter().map(|e| e.phoneme).collect();
+        let nasalizations = crate::phoneme::detect_nasalization(&phoneme_list);
 
         for (i, event) in self.events.iter().enumerate() {
             let mut event_voice = self.voice.clone();
@@ -367,5 +296,29 @@ mod tests {
         let json = serde_json::to_string(&renderer).unwrap();
         let r2: BatchRenderer = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.len(), 1);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_render_output() {
+        let voice = VoiceProfile::new_male();
+        let mut renderer = BatchRenderer::new(&voice, 44100.0).unwrap();
+        renderer.push(Phoneme::VowelA, 0.05, Stress::Primary);
+        let output = renderer.render_all().unwrap();
+        let json = serde_json::to_string(&output).unwrap();
+        let o2: RenderOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(o2.samples.len(), output.samples.len());
+        assert_eq!(o2.progress.total_phonemes, 1);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_render_progress() {
+        let p = RenderProgress {
+            phoneme_index: 3,
+            total_phonemes: 10,
+            samples_rendered: 44100,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let p2: RenderProgress = serde_json::from_str(&json).unwrap();
+        assert_eq!(p2.phoneme_index, 3);
     }
 }

@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`SynthesisPool`** (`pool.rs`): pre-allocated object pool wrapping `SynthesisContext` with `render`/`render_nasalized`/`render_batch`, pre-warmed buffer via `with_capacity`, diagnostic counters (render_count, peak_samples)
 - **`BatchRenderer`** (`render.rs`): non-real-time batch rendering API with `push`/`extend`/`render_all`/`render_with_progress` callback. Concatenates phoneme audio with stress modification and anticipatory nasalization
 - 2 new benchmarks: `glottal_whisper_1024`, `glottal_creaky_1024`
-- 180 total tests (132 unit + 45 integration + 3 doc)
+- 182 total tests (134 unit + 45 integration + 3 doc), 34 serde roundtrips
 
 ### Performance
 
