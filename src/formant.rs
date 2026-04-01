@@ -94,7 +94,7 @@ pub struct VowelTarget {
 const DEFAULT_BANDWIDTHS: [f32; 5] = [60.0, 80.0, 100.0, 120.0, 140.0];
 
 /// Default amplitudes (linear) for formants F1-F5 in the parallel filter bank.
-const DEFAULT_AMPLITUDES: [f32; 5] = [1.0, 0.8, 0.5, 0.3, 0.2];
+pub const DEFAULT_AMPLITUDES: [f32; 5] = [1.0, 0.8, 0.5, 0.3, 0.2];
 
 impl VowelTarget {
     /// Creates a new vowel target with specified formant frequencies and default bandwidths.

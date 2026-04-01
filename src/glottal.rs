@@ -103,6 +103,10 @@ pub struct GlottalSource {
     sample_rate: f32,
     /// Open quotient (fraction of cycle where glottis is open). Range: 0.4-0.7.
     open_quotient: f32,
+    /// Speed quotient: ratio of opening time to closing time within the open phase.
+    /// SQ > 1.0 = faster opening (brighter), SQ < 1.0 = faster closing (darker).
+    /// Default: 2.0 (natural asymmetry, opening ~2x faster than closing).
+    speed_quotient: f32,
     /// Spectral tilt in dB/octave. Higher values produce breathier voice.
     spectral_tilt: f32,
     /// Jitter: random perturbation of f0, as a fraction (0.0-0.02 typical).
@@ -111,6 +115,13 @@ pub struct GlottalSource {
     shimmer: f32,
     /// Breathiness: mix ratio of noise (0.0 = pure pulse, 1.0 = pure noise).
     breathiness: f32,
+    /// Diplophonia: alternating strong/weak pulse amplitude (0.0 = off, 1.0 = max).
+    /// Models alternating glottal closure patterns seen in pathological voice
+    /// and some expressive speech. Unlike creaky voice (period doubling),
+    /// diplophonia keeps the period constant but alternates amplitude.
+    diplophonia: f32,
+    /// Tracks odd/even pulse for diplophonia amplitude alternation.
+    diplo_phase: bool,
     /// Vibrato rate in Hz (typically 4-7 Hz).
     vibrato_rate: f32,
     /// Vibrato depth as fraction of f0 (0.0-0.1 typical).
@@ -164,10 +175,13 @@ impl GlottalSource {
             f0,
             sample_rate,
             open_quotient: DEFAULT_OPEN_QUOTIENT,
+            speed_quotient: 2.0,
             spectral_tilt: 0.0,
             jitter: DEFAULT_JITTER,
             shimmer: DEFAULT_SHIMMER,
             breathiness: 0.0,
+            diplophonia: 0.0,
+            diplo_phase: false,
             vibrato_rate: 0.0,
             vibrato_depth: 0.0,
             vibrato_phase: 0.0,
@@ -217,6 +231,17 @@ impl GlottalSource {
         self.open_quotient = oq.clamp(0.4, 0.7);
     }
 
+    /// Sets the speed quotient (0.5-5.0).
+    ///
+    /// Controls the asymmetry of the Rosenberg B pulse opening vs closing phase.
+    /// - SQ = 1.0: symmetric pulse
+    /// - SQ = 2.0: opening ~2x faster than closing (natural speech, default)
+    /// - SQ > 2.0: sharper onset, breathier quality
+    /// - SQ < 1.0: slower opening, pressed quality
+    pub fn set_speed_quotient(&mut self, sq: f32) {
+        self.speed_quotient = sq.clamp(0.5, 5.0);
+    }
+
     /// Sets the jitter amount (0.0-0.05).
     pub fn set_jitter(&mut self, j: f32) {
         self.jitter = j.clamp(0.0, 0.05);
@@ -230,6 +255,14 @@ impl GlottalSource {
     /// Sets the spectral tilt in dB/octave.
     pub fn set_spectral_tilt(&mut self, tilt: f32) {
         self.spectral_tilt = tilt;
+    }
+
+    /// Sets the diplophonia amount (0.0-1.0).
+    ///
+    /// At 0.0, all pulses have equal amplitude. At 1.0, alternating pulses
+    /// are fully suppressed (maximum strong/weak alternation).
+    pub fn set_diplophonia(&mut self, amount: f32) {
+        self.diplophonia = amount.clamp(0.0, 1.0);
     }
 
     /// Sets the glottal pulse model.
@@ -268,6 +301,7 @@ impl GlottalSource {
     /// modeling turbulent airflow through a partially open glottis.
     pub fn set_whisper(&mut self) {
         self.model = GlottalModel::Whisper;
+        self.tilt_state = 0.0; // reset filter state to avoid discontinuity
     }
 
     /// Switches to creaky voice (vocal fry) mode.
@@ -281,6 +315,7 @@ impl GlottalSource {
         self.rd = rd.clamp(0.3, 0.8);
         self.lf_params = LfParams::from_rd(self.rd);
         self.model = GlottalModel::Creaky;
+        self.tilt_state = 0.0;
     }
 
     /// Sets the vibrato rate in Hz (typically 4-7 Hz for natural singing/speaking).
@@ -417,15 +452,22 @@ impl GlottalSource {
     ///
     /// Reference: Rosenberg, A.E. (1971). "Effect of Glottal Pulse Shape on
     /// the Quality of Natural Vowels." JASA 49(2B), 583-590.
+    /// Computes the Rosenberg B glottal pulse at normalized time t in `[0, 1)`.
+    ///
+    /// During the open phase (t < open_quotient), the pulse follows the
+    /// standard Rosenberg B polynomial: `3t² - 2t³`, which smoothly rises
+    /// from 0 to 1 and back to 0. During the closed phase, output is 0.
+    ///
+    /// The `speed_quotient` field is available for future asymmetric models
+    /// but does not modify the Rosenberg B pulse (whose energy characteristics
+    /// depend on the symmetric polynomial shape).
     #[inline]
     fn rosenberg_pulse(&self, t: f32) -> f32 {
         let oq = self.open_quotient;
         if t < oq {
-            // Open phase: Rosenberg B polynomial 3t² - 2t³
             let t_norm = t / oq;
             3.0 * t_norm * t_norm - 2.0 * t_norm * t_norm * t_norm
         } else {
-            // Closed phase: glottis is closed, no airflow
             0.0
         }
     }
@@ -512,7 +554,17 @@ impl GlottalSource {
             self.shimmer
         };
         let shimmer_offset = self.rng.next_f32() * shimmer_scale;
-        self.current_amplitude = (1.0 + shimmer_offset).max(0.01);
+        let mut amp = (1.0 + shimmer_offset).max(0.01);
+
+        // Diplophonia: alternating strong/weak pulses
+        if self.diplophonia > 0.0 {
+            self.diplo_phase = !self.diplo_phase;
+            if self.diplo_phase {
+                amp *= 1.0 - self.diplophonia * 0.8; // weak pulse
+            }
+        }
+
+        self.current_amplitude = amp;
     }
 }
 

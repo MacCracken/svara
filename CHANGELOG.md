@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Formant trajectory planning** (`trajectory.rs`): `TrajectoryPlanner` computes continuous formant trajectories across 3+ phoneme windows using Catmull-Rom spline interpolation weighted by coarticulation resistance. `PhonemeSequence::render_planned()` synthesizes continuously with per-sample formant updates instead of segment crossfading
 - **IPA-complete phoneme inventory** (100 phonemes, up from 48): 7 additional vowels (y, ø, œ, ɯ, ɤ, ɨ, ʉ), 4 plosives (q, ɢ, ʈ, ɖ), 13 fricatives (ɸ, β, ç, ʝ, χ, ʁ, ħ, ʕ, ʂ, ʐ, ɬ, ɮ, ɦ), 3 nasals (ɳ, ɲ, ɴ), 3 trills (ʙ, r, ʀ), 3 approximants/laterals (ɻ, ʎ, ʟ), 2 flaps (ɽ, ɺ), 6 affricates (ts, dz, ʈʂ, ɖʐ, pf, tɬ). New `PhonemeClass::Trill` variant
 - **Tone language support** (`Tone` enum): 9 lexical tone patterns — High, Rising, Dipping, Falling, Neutral (Mandarin 5 tones) plus Low, Mid, LowRising, HighFalling for Thai/Vietnamese/African languages. `Tone::to_contour()` produces `ProsodyContour` with f0/duration/amplitude scaling. `PhonemeEvent::with_tone()` constructor
+- **Synthesis quality improvements**:
+  - `VoiceOnsetTime`: per-phoneme VOT with place-dependent closure/burst/aspiration fractions (Lisker & Abramson 1964). Voiceless stops get long-lag aspiration, voiced stops get short-lag
+  - `phoneme_spectral_tilt()`: per-vowel spectral tilt (0-2 dB/oct based on F1 height), available as metadata
+  - `height_adjusted_amplitudes()`: F3-F5 attenuate with vowel openness, modeling source-tract coupling (Fant 1960)
+  - `GlottalSource::set_speed_quotient()`: speed quotient (0.5-5.0) for asymmetric pulse models
+  - `GlottalSource::set_diplophonia()`: alternating strong/weak pulse amplitude for pathological/expressive voice
+  - `PhonemeSequence::set_speaking_rate()`: Lindblom undershoot — faster speech reduces coarticulation resistance in trajectory planning
 - 2 new benchmarks: `glottal_whisper_1024`, `glottal_creaky_1024`
 - 212 total tests (164 unit + 45 integration + 3 doc)
 

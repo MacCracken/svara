@@ -14,32 +14,16 @@ LF glottal model, Hillenbrand formant data, SOA formant bank (2x), look-ahead co
 
 Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter smoothing, validation hardening, ADRs, examples, docs.
 
-### v1.2.0 → v2.0.0 (2026-04-01)
+### v2.0.0 (2026-04-01)
 
-- Whisper mode, creaky voice / vocal fry, vocal effort continuum (5 levels)
+- Whisper mode, creaky voice, vocal effort continuum (5 levels)
 - Formant bandwidth widening for singing
-- Anticipatory nasalization (vowels before nasals)
-- Consonant cluster handling with duration compression
-- SynthesisContext (reusable state for block synthesis)
-- SIMD: auto-vectorization already optimal (SSE2 4.8µs, AVX2 3.8µs with `-C target-cpu=native`); manual intrinsics slower due to `#[target_feature]` call boundary
-- 162 tests, 15 benchmarks
-
-## v2.0.0 — Remaining
-
-### Coarticulation
-
-- [x] Formant trajectory planning across 3+ phoneme windows — done 2026-04-01
-
-### Multi-Language
-
-- [x] IPA-complete phoneme inventory (100 phonemes) — done 2026-04-01
-- [x] Tone language support (9 tone patterns incl. Mandarin 4+neutral) — done 2026-04-01
-- [x] Click consonants (ʘ ǀ ǃ ǂ ǁ), ejectives (pʼ tʼ kʼ sʼ tʃʼ), implosives (ɓ ɗ ɠ) — done 2026-04-01
-
-### Infrastructure
-
-- [x] Object pooling (`SynthesisPool`) — done 2026-04-01
-- [x] Batch rendering API (`BatchRenderer`) with progress callbacks — done 2026-04-01
+- Anticipatory nasalization, consonant cluster handling, formant trajectory planning (Catmull-Rom 3+ windows)
+- SynthesisContext, SynthesisPool, BatchRenderer with progress callbacks
+- IPA-complete inventory (100 phonemes), tone language support (9 tones)
+- Non-pulmonic consonants (clicks, ejectives, implosives)
+- SIMD: auto-vectorization optimal; manual intrinsics slower due to call boundary
+- 213 tests, 15 benchmarks
 
 ## v3.0.0 — Future
 
@@ -59,3 +43,37 @@ Bridge module, LOD/Quality system (-34%/-38%), naad-backend wiring, parameter sm
 - [ ] 2D vocal tract area function (replace parallel biquads with waveguide)
 - [ ] Subglottal system with tracheal resonances
 - [ ] Turbulence noise model at constrictions
+
+## Post-3.0 — Research Findings
+
+### Synthesis Quality (P(-1) domain research, 2026-04-01)
+
+- [x] **Aspiration VOT modeling** (`VoiceOnsetTime`): per-phoneme voice onset time with place-dependent closure/burst/aspiration fractions (Lisker & Abramson 1964) — done 2026-04-01
+- [x] **Speaking rate formant transitions** (`PhonemeSequence::set_speaking_rate`): Lindblom undershoot via `TrajectoryPlanner::apply_speaking_rate` — faster speech reduces coarticulation resistance — done 2026-04-01
+- [x] **Per-vowel spectral tilt** (`phoneme_spectral_tilt`): returns height-dependent tilt (0-2 dB/oct based on F1), available as metadata for post-processing — done 2026-04-01
+- [x] **Formant amplitude coupling** (`height_adjusted_amplitudes`): F3-F5 attenuate with vowel openness (high F1), modeling source-tract coupling (Fant 1960) — done 2026-04-01
+- [x] **Glottal pulse asymmetry** (`GlottalSource::set_speed_quotient`): speed quotient field (0.5-5.0) for future asymmetric pulse models — done 2026-04-01
+- [x] **Diplophonia** (`GlottalSource::set_diplophonia`): alternating strong/weak pulse amplitude (0.0-1.0), distinct from creaky voice period doubling — done 2026-04-01
+
+### Coarticulation & Prosody
+
+- [ ] **Prosodic phrase boundaries**: pitch reset, pre-boundary lengthening, and final lowering at phrase/utterance boundaries. Current sequences are flat (no phrase structure)
+- [ ] **Durational model (Klatt 1979)**: segment durations depend on position in word/phrase, phonological context, speaking rate. Current model uses fixed class-based defaults
+- [ ] **Tone sandhi**: Mandarin tone 3 + tone 3 → tone 2 + tone 3. Current tones don't interact with neighbors
+- [ ] **Stress-to-vowel reduction**: unstressed vowels should centralize toward schwa, not just shorten. Current stress only scales f0/duration/amplitude
+- [ ] **Phonological processes**: assimilation (voicing, place), elision, lenition. Currently phonemes are synthesized as specified with no phonological rules
+
+### Multi-Language & Phonetics
+
+- [ ] **Vowel nasalization as phonemic contrast**: French, Portuguese have phonemically nasal vowels (not just anticipatory). Need distinct nasal vowel targets, not just coupling ramp
+- [ ] **Geminate consonants**: Italian, Japanese, Arabic have phonemic length contrast for consonants. Current duration model has no gemination support
+- [ ] **Prenasalized stops**: common in Bantu languages (/mb/, /nd/, /ŋɡ/). Hybrid nasal+plosive synthesis
+- [ ] **Labialization, palatalization, pharyngealization**: secondary articulations that modify formants. Common in Caucasian, Semitic, Slavic languages
+- [ ] **Breathy/murmured vowels**: Hindi, Gujarati have breathy vowels as phonemic contrast. Need per-phoneme breathiness, not just per-voice
+
+### Performance & Architecture
+
+- [ ] **Ring buffer for real-time streaming**: current `Vec`-based synthesis has latency from allocation. A pre-allocated ring buffer would enable true real-time output
+- [ ] **WASM target**: verify no_std + alloc works for WebAssembly. May need wasm-bindgen bindings for browser-based TTS
+- [ ] **Parallel multi-voice rendering**: current `Send + Sync` assertions enable this, but no API exists for rendering multiple voices concurrently with shared output mixing
+- [ ] **Incremental sequence rendering**: add phonemes to a running sequence and get audio output incrementally, without re-rendering the entire sequence

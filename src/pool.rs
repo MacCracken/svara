@@ -169,7 +169,10 @@ impl SynthesisPool {
         self.peak_samples
     }
 
-    /// Resets pool state (clears filter history, resets counters).
+    /// Resets pool diagnostic counters.
+    ///
+    /// Filter state is automatically reset per-phoneme by `SynthesisContext`,
+    /// so explicit state clearing is not needed.
     pub fn reset(&mut self) {
         self.render_count = 0;
         self.peak_samples = 0;

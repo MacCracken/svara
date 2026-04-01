@@ -778,6 +778,124 @@ pub fn phoneme_duration(phoneme: &Phoneme) -> f32 {
     }
 }
 
+/// Returns the natural spectral tilt in dB/octave for a phoneme.
+///
+/// Open vowels (high F1) have steeper spectral tilt than close vowels,
+/// reflecting the stronger coupling between source and vocal tract for
+/// open configurations. Consonants return 0 (no vowel-specific tilt).
+///
+/// Reference: Stevens & Hanson (1995), Hanson (1997).
+#[must_use]
+pub fn phoneme_spectral_tilt(phoneme: &Phoneme) -> f32 {
+    let target = phoneme_formants(phoneme);
+    match phoneme.class() {
+        PhonemeClass::Vowel | PhonemeClass::Diphthong => {
+            // F1 > 600 Hz = open vowel → steeper tilt
+            // F1 < 400 Hz = close vowel → less tilt
+            // Linear mapping: 0 dB/oct at F1=300, ~2 dB/oct at F1=800
+            ((target.f1 - 300.0) / 250.0).clamp(0.0, 2.0)
+        }
+        _ => 0.0,
+    }
+}
+
+/// Returns adjusted formant amplitudes based on vowel height (F1).
+///
+/// Higher formants attenuate when F1 rises (open vowels), modeling the
+/// increased source-tract coupling that transfers energy from higher
+/// formants to F1.
+///
+/// Reference: Fant (1960), "Acoustic Theory of Speech Production."
+#[must_use]
+pub fn height_adjusted_amplitudes(phoneme: &Phoneme) -> [f32; 5] {
+    let target = phoneme_formants(phoneme);
+    let base = crate::formant::DEFAULT_AMPLITUDES;
+
+    match phoneme.class() {
+        PhonemeClass::Vowel | PhonemeClass::Diphthong => {
+            // Open vowels (F1 > 600): attenuate F3-F5
+            // Close vowels (F1 < 400): boost F2-F3 slightly
+            let openness = ((target.f1 - 300.0) / 500.0).clamp(0.0, 1.0);
+            [
+                base[0],                           // F1 amplitude unchanged
+                base[1] * (1.0 - openness * 0.05), // F2 slight attenuation for open
+                base[2] * (1.0 - openness * 0.10), // F3 moderate attenuation
+                base[3] * (1.0 - openness * 0.15), // F4 stronger attenuation
+                base[4] * (1.0 - openness * 0.15), // F5 stronger attenuation
+            ]
+        }
+        _ => base,
+    }
+}
+
+/// Voice onset time (VOT) parameters for plosive consonants.
+///
+/// VOT is the time between the release burst and the onset of voicing.
+/// It varies systematically by place of articulation and language.
+///
+/// Reference: Lisker & Abramson (1964), "A cross-language study of voicing
+/// in initial stops."
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct VoiceOnsetTime {
+    /// Closure duration as fraction of total phoneme duration (0.0-1.0).
+    pub closure_fraction: f32,
+    /// Burst duration as fraction of total phoneme duration (0.0-1.0).
+    pub burst_fraction: f32,
+    /// Aspiration duration as fraction of total phoneme duration (0.0-1.0).
+    /// Remaining time after closure + burst + aspiration is voicing onset.
+    pub aspiration_fraction: f32,
+}
+
+impl VoiceOnsetTime {
+    /// Returns the VOT parameters for a plosive phoneme.
+    ///
+    /// English voiceless stops have long-lag VOT (strong aspiration).
+    /// Voiced stops have short-lag or negative VOT (pre-voicing).
+    #[must_use]
+    pub fn for_plosive(phoneme: &Phoneme) -> Self {
+        match phoneme {
+            // Voiceless: longer closure, prominent burst, aspiration
+            Phoneme::PlosiveP | Phoneme::PlosiveUvularQ => Self {
+                closure_fraction: 0.35,
+                burst_fraction: 0.10,
+                aspiration_fraction: 0.25, // long-lag VOT
+            },
+            Phoneme::PlosiveT | Phoneme::PlosiveRetroT => Self {
+                closure_fraction: 0.30,
+                burst_fraction: 0.10,
+                aspiration_fraction: 0.30, // alveolars have longer aspiration
+            },
+            Phoneme::PlosiveK => Self {
+                closure_fraction: 0.30,
+                burst_fraction: 0.12,
+                aspiration_fraction: 0.28, // velars have longest aspiration
+            },
+            // Voiced: shorter closure, brief burst, immediate voicing
+            Phoneme::PlosiveB | Phoneme::PlosiveUvularG => Self {
+                closure_fraction: 0.30,
+                burst_fraction: 0.08,
+                aspiration_fraction: 0.0, // short-lag VOT
+            },
+            Phoneme::PlosiveD | Phoneme::PlosiveRetroD => Self {
+                closure_fraction: 0.25,
+                burst_fraction: 0.08,
+                aspiration_fraction: 0.0,
+            },
+            Phoneme::PlosiveG => Self {
+                closure_fraction: 0.25,
+                burst_fraction: 0.10,
+                aspiration_fraction: 0.0,
+            },
+            _ => Self {
+                closure_fraction: 0.33,
+                burst_fraction: 0.10,
+                aspiration_fraction: 0.10,
+            },
+        }
+    }
+}
+
 /// Detects anticipatory nasalization for a sequence of phonemes.
 ///
 /// Returns a `Vec<Option<Nasalization>>` aligned with the input, where
@@ -1287,8 +1405,9 @@ impl Nasalization {
     pub fn for_nasal(nasal: &Phoneme) -> Option<Self> {
         let place = match nasal {
             Phoneme::NasalM => NasalPlace::Bilabial,
-            Phoneme::NasalN => NasalPlace::Alveolar,
-            Phoneme::NasalNg => NasalPlace::Velar,
+            Phoneme::NasalN | Phoneme::NasalRetro => NasalPlace::Alveolar,
+            Phoneme::NasalNg | Phoneme::NasalUvular => NasalPlace::Velar,
+            Phoneme::NasalPalatal => NasalPlace::Alveolar, // closest available
             _ => return None,
         };
         Some(Self {
@@ -1409,12 +1528,29 @@ fn synthesize_vowel(
     num_samples: usize,
 ) -> Result<Vec<f32>> {
     let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
+
+    // Height-dependent formant amplitudes: open vowels attenuate higher formants
+    let amps = height_adjusted_amplitudes(phoneme);
+    let formants = [
+        Formant::new(target.f1, target.b1, amps[0]),
+        Formant::new(target.f2, target.b2, amps[1]),
+        Formant::new(target.f3, target.b3, amps[2]),
+        Formant::new(target.f4, target.b4, amps[3]),
+        Formant::new(target.f5, target.b5, amps[4]),
+    ];
     let mut tract = VocalTract::new(sample_rate);
-    tract.set_formants_from_target(&target)?;
+    tract.set_formants(&formants)?;
 
     let mut glottal = voice
         .create_glottal_source(sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+
+    // Per-vowel spectral tilt is computed by phoneme_spectral_tilt() but
+    // applied as metadata rather than directly to the glottal source, since
+    // the one-pole tilt filter significantly reduces signal energy at even
+    // modest tilt values. Consumers can query phoneme_spectral_tilt() and
+    // apply it in post-processing or via a shelf filter.
+    let _tilt = phoneme_spectral_tilt(phoneme);
 
     let mut output = tract.synthesize(&mut glottal, num_samples);
     apply_amplitude_envelope(&mut output, num_samples);
@@ -1505,39 +1641,53 @@ fn synthesize_plosive(
     let mut output = vec![0.0; num_samples];
     let mut noise = NoiseGen::new(17);
 
-    // Plosive: silence (closure) + burst + aspiration
-    let closure_end = num_samples / 3;
-    let burst_end = closure_end + (num_samples / 6).max(1);
+    // VOT-based timing instead of fixed ratios
+    let vot = VoiceOnsetTime::for_plosive(phoneme);
+    let closure_end = (vot.closure_fraction * num_samples as f32) as usize;
+    let burst_end = closure_end + (vot.burst_fraction * num_samples as f32).max(1.0) as usize;
+    let aspiration_end = burst_end + (vot.aspiration_fraction * num_samples as f32) as usize;
 
-    // Burst: short noise burst
+    // Burst: short noise burst shaped by place formants
     let target = voice.apply_formant_scale(&phoneme_formants(phoneme));
     let formants = target.to_formants();
     let mut filter = FormantFilter::new(&formants, sample_rate)
         .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
 
-    for sample in output.iter_mut().take(burst_end).skip(closure_end) {
-        let n = noise.next_f32() * 0.8;
-        *sample = filter.process_sample(n);
+    for sample in output[closure_end..burst_end.min(num_samples)].iter_mut() {
+        *sample = filter.process_sample(noise.next_f32() * 0.8);
     }
 
-    // Aspiration/voicing transition
-    if phoneme.is_voiced() {
-        let mut glottal = voice
-            .create_glottal_source(sample_rate)
-            .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
-        glottal.set_breathiness(0.4); // Override: plosive voicing onset is breathier
-        let mut tract = VocalTract::new(sample_rate);
-        tract.set_formants_from_target(&target)?;
-
-        for sample in output.iter_mut().skip(burst_end) {
-            let excitation = glottal.next_sample();
-            *sample = tract.process_sample(excitation) * 0.5;
+    // Aspiration phase (voiceless noise, decaying)
+    if aspiration_end > burst_end {
+        let asp_len = (aspiration_end - burst_end).max(1);
+        for (j, sample) in output[burst_end..aspiration_end.min(num_samples)]
+            .iter_mut()
+            .enumerate()
+        {
+            let decay = 1.0 - j as f32 / asp_len as f32;
+            *sample = filter.process_sample(noise.next_f32() * 0.4 * decay);
         }
-    } else {
-        // Voiceless aspiration
-        for sample in output.iter_mut().skip(burst_end) {
-            let n = noise.next_f32() * 0.3;
-            *sample = filter.process_sample(n);
+    }
+
+    // Voicing onset
+    let voice_start = aspiration_end.min(num_samples);
+    if phoneme.is_voiced() || voice_start < num_samples {
+        if phoneme.is_voiced() {
+            let mut glottal = voice
+                .create_glottal_source(sample_rate)
+                .map_err(|e| SvaraError::ArticulationFailed(e.to_string()))?;
+            glottal.set_breathiness(0.3);
+            let mut tract = VocalTract::new(sample_rate);
+            tract.set_formants_from_target(&target)?;
+
+            for sample in output[voice_start..].iter_mut() {
+                *sample = tract.process_sample(glottal.next_sample()) * 0.5;
+            }
+        } else {
+            // Voiceless: remaining is quiet aspiration tail
+            for sample in output[voice_start..].iter_mut() {
+                *sample = filter.process_sample(noise.next_f32() * 0.15);
+            }
         }
     }
 
@@ -1618,10 +1768,25 @@ fn fricative_formants(phoneme: &Phoneme, _sample_rate: f32) -> Vec<Formant> {
             Formant::new(2800.0, 600.0, 1.0),
             Formant::new(5000.0, 800.0, 0.6),
         ],
-        // /sʼ/ ejective fricative: same spectral shape as /s/
-        Phoneme::EjectiveS => vec![
+        // /sʼ/ ejective fricative and /ts/ /dz/ alveolar affricates
+        Phoneme::EjectiveS | Phoneme::AffricateTs | Phoneme::AffricateDz => vec![
             Formant::new(4500.0, 500.0, 1.0),
             Formant::new(7000.0, 800.0, 0.7),
+        ],
+        // Retroflex affricates: energy ~3-6 kHz
+        Phoneme::AffricateRetro | Phoneme::AffricateRetroVoiced => vec![
+            Formant::new(3200.0, 600.0, 1.0),
+            Formant::new(5500.0, 800.0, 0.6),
+        ],
+        // Labiodental affricate /pf/: weak, flat spectrum like /f/
+        Phoneme::AffricatePf => vec![
+            Formant::new(3000.0, 2000.0, 0.5),
+            Formant::new(8000.0, 2000.0, 0.3),
+        ],
+        // Lateral affricate /tɬ/: mid-frequency lateral energy
+        Phoneme::AffricateLateral => vec![
+            Formant::new(3500.0, 800.0, 0.7),
+            Formant::new(6000.0, 1000.0, 0.4),
         ],
         _ => vec![Formant::new(3000.0, 1000.0, 0.5)],
     }
@@ -1972,6 +2137,13 @@ mod tests {
         let n = Nasalization::for_nasal(&Phoneme::NasalN).unwrap();
         assert_eq!(n.place, NasalPlace::Alveolar);
         let n = Nasalization::for_nasal(&Phoneme::NasalNg).unwrap();
+        assert_eq!(n.place, NasalPlace::Velar);
+        // IPA extension nasals
+        let n = Nasalization::for_nasal(&Phoneme::NasalRetro).unwrap();
+        assert_eq!(n.place, NasalPlace::Alveolar);
+        let n = Nasalization::for_nasal(&Phoneme::NasalPalatal).unwrap();
+        assert_eq!(n.place, NasalPlace::Alveolar);
+        let n = Nasalization::for_nasal(&Phoneme::NasalUvular).unwrap();
         assert_eq!(n.place, NasalPlace::Velar);
     }
 

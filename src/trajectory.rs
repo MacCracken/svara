@@ -156,6 +156,23 @@ impl TrajectoryPlanner {
         VowelTarget::interpolate(&k0.target, &k1.target, t_smooth)
     }
 
+    /// Adjusts coarticulation resistance by speaking rate (Lindblom undershoot).
+    ///
+    /// Faster speech (rate > 1.0) reduces resistance, causing more formant
+    /// undershoot and blending. Slower speech increases resistance for
+    /// more precise articulation.
+    pub fn apply_speaking_rate(&mut self, rate: f32) {
+        if (rate - 1.0).abs() < f32::EPSILON {
+            return;
+        }
+        // At rate=2.0, resistance is halved (more blending).
+        // At rate=0.5, resistance is doubled (more precise), clamped to 1.0.
+        let factor = 1.0 / rate;
+        for kp in &mut self.keypoints {
+            kp.resistance = (kp.resistance * factor).clamp(0.0, 1.0);
+        }
+    }
+
     /// Returns the total number of samples in the planned trajectory.
     #[must_use]
     pub fn total_samples(&self) -> usize {

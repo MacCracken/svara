@@ -78,6 +78,18 @@ pub struct PhonemeSequence {
     /// begins (0.0 = start, 1.0 = end). Default 0.6 means the last 40% of each
     /// segment transitions toward the next phoneme's formant targets.
     lookahead_onset: f32,
+    /// Speaking rate multiplier (1.0 = normal, >1.0 = faster).
+    ///
+    /// At faster rates, formant transitions undershoot their targets
+    /// (Lindblom 1963 undershoot theory): vowels centralize toward schwa
+    /// and consonant loci weaken. This scales the coarticulation resistance
+    /// inversely — faster speech = lower effective resistance = more blending.
+    #[serde(default = "default_speaking_rate")]
+    speaking_rate: f32,
+}
+
+fn default_speaking_rate() -> f32 {
+    1.0
 }
 
 impl PhonemeSequence {
@@ -86,8 +98,9 @@ impl PhonemeSequence {
     pub fn new() -> Self {
         Self {
             events: Vec::new(),
-            transition_window: 0.05, // 50ms default
-            lookahead_onset: 0.6,    // transition starts at 60% of segment
+            transition_window: 0.05,
+            lookahead_onset: 0.6,
+            speaking_rate: 1.0,
         }
     }
 
@@ -100,6 +113,21 @@ impl PhonemeSequence {
     /// at 60% of each segment.
     pub fn set_lookahead_onset(&mut self, onset: f32) {
         self.lookahead_onset = onset.clamp(0.0, 1.0);
+    }
+
+    /// Sets the speaking rate multiplier (0.5-3.0).
+    ///
+    /// Faster speech (>1.0) compresses formant transitions non-linearly
+    /// (Lindblom undershoot): vowels centralize, consonant loci weaken.
+    /// Slower speech (<1.0) allows fuller articulation.
+    pub fn set_speaking_rate(&mut self, rate: f32) {
+        self.speaking_rate = rate.clamp(0.5, 3.0);
+    }
+
+    /// Returns the speaking rate multiplier.
+    #[must_use]
+    pub fn speaking_rate(&self) -> f32 {
+        self.speaking_rate
     }
 
     /// Returns the transition window in seconds.
@@ -277,8 +305,9 @@ impl PhonemeSequence {
         let phoneme_list: Vec<Phoneme> = self.events.iter().map(|e| e.phoneme).collect();
         let nasalizations = phoneme::detect_nasalization(&phoneme_list);
 
-        // Build trajectory plan
-        let plan = TrajectoryPlanner::plan(&phoneme_list, &durations, voice, sample_rate);
+        // Build trajectory plan with speaking rate undershoot
+        let mut plan = TrajectoryPlanner::plan(&phoneme_list, &durations, voice, sample_rate);
+        plan.apply_speaking_rate(self.speaking_rate);
         let total_samples = plan.total_samples();
         if total_samples == 0 {
             return Ok(Vec::new());
@@ -340,13 +369,23 @@ impl PhonemeSequence {
             // Update formants from trajectory
             let _ = tract.set_formants_from_target(&target);
 
-            // Apply stress f0 modification
-            let stress_f0 = match self.events[current_phoneme_idx].stress {
+            // Apply f0 modification: tone overrides stress-based scaling
+            let event = &self.events[current_phoneme_idx];
+            let base_f0 = match event.stress {
                 Stress::Primary => voice.base_f0 * 1.10,
                 Stress::Secondary => voice.base_f0 * 1.05,
                 Stress::Unstressed => voice.base_f0,
             };
-            let _ = glottal.set_f0(stress_f0);
+            let effective_f0 = if let Some(tone) = event.tone {
+                let contour = tone.to_contour();
+                let seg_start = boundaries[current_phoneme_idx];
+                let seg_len = (boundaries[current_phoneme_idx + 1] - seg_start).max(1);
+                let t = (sample_idx - seg_start) as f32 / seg_len as f32;
+                base_f0 * contour.f0_at(t)
+            } else {
+                base_f0
+            };
+            let _ = glottal.set_f0(effective_f0);
 
             // Class-specific excitation
             let sample = match phoneme.class() {
@@ -415,14 +454,9 @@ fn detect_consonant_clusters(events: &[PhonemeEvent]) -> Vec<bool> {
     let mut in_cluster = alloc::vec![false; n];
 
     let is_consonant = |p: &Phoneme| {
-        matches!(
+        !matches!(
             p.class(),
-            PhonemeClass::Plosive
-                | PhonemeClass::Fricative
-                | PhonemeClass::Nasal
-                | PhonemeClass::Affricate
-                | PhonemeClass::Approximant
-                | PhonemeClass::Lateral
+            PhonemeClass::Vowel | PhonemeClass::Diphthong | PhonemeClass::Silence
         )
     };
 
@@ -770,6 +804,31 @@ mod tests {
 
         let voice = VoiceProfile::new_male();
         let samples = seq.render_planned(&voice, 44100.0).unwrap();
+        assert!(samples.iter().any(|&s| s.abs() > 1e-6));
+    }
+
+    #[test]
+    fn test_render_planned_with_tone() {
+        use crate::prosody::Tone;
+
+        let mut seq = PhonemeSequence::new();
+        seq.push(PhonemeEvent::with_tone(
+            Phoneme::VowelA,
+            0.15,
+            Stress::Unstressed,
+            Tone::Falling,
+        ));
+        seq.push(PhonemeEvent::with_tone(
+            Phoneme::VowelI,
+            0.15,
+            Stress::Unstressed,
+            Tone::Rising,
+        ));
+
+        let voice = VoiceProfile::new_male();
+        let samples = seq.render_planned(&voice, 44100.0).unwrap();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|s| s.is_finite()));
         assert!(samples.iter().any(|&s| s.abs() > 1e-6));
     }
 }
