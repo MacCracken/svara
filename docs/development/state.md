@@ -62,9 +62,9 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-610 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+632 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
 glottal / tract / voice / phoneme / prosody / trajectory / sequence / pool / render /
-bridge — all passing (all 16 test files lint-clean). Run one suite:
+bridge / **serde** — all passing, all lint-clean, zero build warnings. Run one suite:
 `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
@@ -89,16 +89,25 @@ Direct (declared in `cyrius.cyml`):
 
 dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.cyr`.
 
-## Next — 3.0.0 finish (no more module ports)
+## Serde (M-serde) — done via `#derive(Serialize)`
 
-1. **`cyrius distlib`** → `dist/svara.cyr` bundle (all 16 modules, dependency order)
-   + confirm it links for a consumer that provides hisab/naad/goonj.
-2. **M-serde** — hand-written JSON codecs (`svara_<type>_to_json`/`_from_json`) +
-   roundtrip `.tcyr` for the ~40 serializable types (the Rust "every type roundtrips"
-   invariant). See M-serde in [`roadmap.md`](roadmap.md) + the `#derive(json)`
-   proposal filed in the cyrius repo.
+Cyrius already ships `#derive(Serialize)` (emits `Type_to_json`/`_from_json`/
+`_from_json_str` over bayan's typed DOM); **6.3.40 fixed f64-field support** (the
+"repair"). 8 pure-scalar public types derive it + round-trip (tests/serde.tcyr, 22
+tests): Formant, VowelTarget, VoiceProfile, EffortParams, PhonemeEvent, Nasalization,
+VoiceOnsetTime, RenderProgress. `bayan` is opt-in (`include "lib/bayan.cyr"`, not a
+`[deps] stdlib` module) — tests that include a deriving module also include
+`lib/hashmap.cyr` + `lib/bayan.cyr` so codecs are callable + warning-free.
+**Deferred:** container types (vec/buffer fields — ProsodyContour/PhonemeSequence/
+TrajectoryPlanner/RenderOutput/SynthesisContext/pool/BiquadBankSoa/FormantFilter/
+GlottalSource) can't derive until Cyrius gains array-typed struct fields (compiler v6.4.x).
+
+## Next — 3.0.0 finish
+
+1. ✅ `cyrius distlib` → `dist/svara.cyr` (4507 lines, + `dist/svara.deps`).
+2. ✅ M-serde — `#derive(Serialize)` on the value types + roundtrip tests.
 3. **Benchmarks** — `.bcyr` reproducing the 15 Rust benches (hot paths: formant
    filter, glottal, tract, phoneme synth). Run `./scripts/bench-history.sh`.
-4. **`cyrius audit`** green; confirm ~213-test parity coverage.
+4. **`cyrius audit`** green; confirm ~213-test parity coverage (have 632 assertions).
 5. **Version bump** `VERSION` 0.1.0 → **3.0.0** + CHANGELOG/roadmap; optional
    dhvani/vansh consumer smoke.

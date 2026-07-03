@@ -41,15 +41,18 @@ var SV_V_55   = 0x4016000000000000;   # 5.5
 
 # EffortParams -- coordinated acoustic changes for a vocal-effort level.
 #derive(accessors)
+#derive(Serialize)
 struct SvEffortParams {
-    model; rd; breathiness; spectral_tilt; f0_range_scale; bandwidth_scale; jitter_scale; shimmer_scale;
+    model: i64; rd: f64; breathiness: f64; spectral_tilt: f64;
+    f0_range_scale: f64; bandwidth_scale: f64; jitter_scale: f64; shimmer_scale: f64;
 }
 
 # VoiceProfile -- a speaker's voice characteristics.
 #derive(accessors)
+#derive(Serialize)
 struct SvVoiceProfile {
-    base_f0; f0_range; formant_scale; breathiness;
-    vibrato_rate; vibrato_depth; jitter; shimmer; bandwidth_widening;
+    base_f0: f64; f0_range: f64; formant_scale: f64; breathiness: f64;
+    vibrato_rate: f64; vibrato_depth: f64; jitter: f64; shimmer: f64; bandwidth_widening: f64;
 }
 
 # params -- coordinated parameters for an effort level (Traunmüller & Eriksson 2000).

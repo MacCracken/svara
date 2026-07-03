@@ -25,7 +25,8 @@ var SVARA_AMP_4 = 0x3FC999999999999A;   # 0.2
 # Formant -- a single resonance spec (frequency, bandwidth, amplitude in Hz/Hz/linear).
 # ================================================================
 #derive(accessors)
-struct SvFormant { frequency; bandwidth; amplitude; }
+#derive(Serialize)
+struct SvFormant { frequency: f64; bandwidth: f64; amplitude: f64; }
 
 #must_use
 fn svara_formant_new(frequency, bandwidth, amplitude) {
@@ -54,7 +55,11 @@ var SVARA_VOWEL_NEARU = 9;   # near-close near-back
 # VowelTarget -- F1..F5 frequencies + B1..B5 bandwidths (Hz).
 # ================================================================
 #derive(accessors)
-struct SvVowelTarget { f1; f2; f3; f4; f5; b1; b2; b3; b4; b5; }
+#derive(Serialize)
+struct SvVowelTarget {
+    f1: f64; f2: f64; f3: f64; f4: f64; f5: f64;
+    b1: f64; b2: f64; b3: f64; b4: f64; b5: f64;
+}
 
 # with_bandwidths -- explicit frequencies and bandwidths.
 #must_use

@@ -454,7 +454,8 @@ fn svara_phoneme_height_adjusted_amplitudes(p, out) {
 # Abramson 1964). `0` == 0.0.
 # ================================================================
 #derive(accessors)
-struct SvVOT { closure_fraction; burst_fraction; aspiration_fraction; }
+#derive(Serialize)
+struct SvVOT { closure_fraction: f64; burst_fraction: f64; aspiration_fraction: f64; }
 
 #must_use
 fn svara_vot_for_plosive(p) {
@@ -493,7 +494,8 @@ fn svara_vot_for_plosive(p) {
 # nasal. onset=0.65, peak_coupling=0.4, place from the following nasal.
 # ================================================================
 #derive(accessors)
-struct SvNasalization { onset; peak_coupling; place; }
+#derive(Serialize)
+struct SvNasalization { onset: f64; peak_coupling: f64; place: i64; }
 
 # for_nasal -- returns a Nasalization pointer if `nasal` is a nasal consonant,
 # else 0 (null = Rust None). place maps to tract.cyr's SVARA_NASAL_*.

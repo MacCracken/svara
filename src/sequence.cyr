@@ -17,7 +17,8 @@ var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 
 # PhonemeEvent -- a timed phoneme. tone = SVARA_TONE_NONE or a SVARA_TONE_* value.
 #derive(accessors)
-struct SvPhonemeEvent { phoneme; duration; stress; tone; }
+#derive(Serialize)
+struct SvPhonemeEvent { phoneme: i64; duration: f64; stress: i64; tone: i64; }
 
 #must_use
 fn svara_phoneme_event_new(phoneme, duration, stress) {

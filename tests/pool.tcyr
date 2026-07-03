@@ -3,6 +3,8 @@
 include "lib/hisab.cyr"
 include "lib/goonj.cyr"
 include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/rng.cyr"
 include "src/smooth.cyr"

@@ -12,7 +12,8 @@
 
 # RenderProgress -- progress snapshot.
 #derive(accessors)
-struct SvRenderProgress { phoneme_index; total_phonemes; samples_rendered; }
+#derive(Serialize)
+struct SvRenderProgress { phoneme_index: i64; total_phonemes: i64; samples_rendered: i64; }
 
 #must_use
 fn svara_render_progress_new(phoneme_index, total_phonemes, samples_rendered) {

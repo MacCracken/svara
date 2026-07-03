@@ -114,6 +114,14 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   goonj acoustics, badal weather) to synth parameters. **37 tests.**
 - **All 19 Rust modules are now ported** (16 `.cyr` modules; `dsp` folded into
   `error`, `math` maps to `ganita`). **610 tests total, all lint-clean.**
+- **Serialization** — 8 pure-scalar public value types use Cyrius `#derive(Serialize)`
+  (`Type_to_json`/`_from_json_str`, f64 fields via toolchain v6.3.40): `Formant`,
+  `VowelTarget`, `VoiceProfile`, `EffortParams`, `PhonemeEvent`, `Nasalization`,
+  `VoiceOnsetTime`, `RenderProgress`. JSON round-trip tests in `tests/serde.tcyr`
+  (**22 tests → 632 total**). Container types (vec/buffer-bearing) await Cyrius
+  array-typed struct fields (v6.4.x). Toolchain pin → `6.3.40`.
+- **distlib** — `cyrius distlib` bundles all modules into `dist/svara.cyr` (+ `.deps`)
+  for consumers (dhvani/vansh), which supply hisab/naad/goonj + stdlib.
 
 ### Changed
 

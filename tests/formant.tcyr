@@ -5,6 +5,8 @@
 # (coeffs, filter output) use loose tolerances since Cyrius f64_cos/sin may
 # differ from the reference libm by a few ULP; integer-valued targets are exact.
 
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/formant.cyr"
 

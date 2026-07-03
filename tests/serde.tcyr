@@ -1,0 +1,105 @@
+# serde.tcyr -- JSON round-trip tests for the #derive(Serialize) value types.
+# Reproduces the Rust "every serializable type round-trips" invariant for svara's
+# pure-scalar public config/data types. bayan (opt-in) is included so the
+# generated Type_to_json / Type_from_json_str codecs are callable; f64 fields
+# round-trip through 6-decimal text (tolerance ~1e-3, per the toolchain fixture).
+#
+# Container types (ProsodyContour/PhonemeSequence/TrajectoryPlanner/RenderOutput/
+# SynthesisContext/pool/BiquadBankSoa) hold vec/buffer fields and are NOT derived:
+# Cyrius has no array-typed struct fields yet (deferred to the compiler's v6.4.x).
+
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/bayan.cyr"
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/render.cyr"
+
+var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3 (6-decimal text round-trip tolerance)
+
+#must_use
+fn se_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
+# serialize `ptr` via `to_json` fn-ptr into JSON, return the cstr.
+#must_use
+fn se_json(to_json, ptr) {
+    var sb = str_builder_new();
+    var r = callptr(to_json, ptr, sb);
+    return str_data(str_builder_build(sb));
+}
+
+alloc_init();
+
+# ================================================================
+test_group("Formant round-trip");
+var f = svara_formant_new(f64_from(700), f64_from(90), F64_HALF);
+var f2 = SvFormant_from_json_str(se_json(&SvFormant_to_json, f));
+assert_eq(se_approx(SvFormant_frequency(f2), f64_from(700), TOL_1EM3), 1, "freq 700");
+assert_eq(se_approx(SvFormant_bandwidth(f2), f64_from(90), TOL_1EM3), 1, "bw 90");
+assert_eq(se_approx(SvFormant_amplitude(f2), F64_HALF, TOL_1EM3), 1, "amp 0.5");
+
+# ================================================================
+test_group("VowelTarget round-trip");
+var vt = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+var vt2 = SvVowelTarget_from_json_str(se_json(&SvVowelTarget_to_json, vt));
+assert_eq(se_approx(SvVowelTarget_f1(vt2), f64_from(768), TOL_1EM3), 1, "f1 768");
+assert_eq(se_approx(SvVowelTarget_f2(vt2), f64_from(1333), TOL_1EM3), 1, "f2 1333");
+assert_eq(se_approx(SvVowelTarget_b1(vt2), f64_from(90), TOL_1EM3), 1, "b1 90");
+
+# ================================================================
+test_group("VoiceProfile round-trip");
+var vp = svara_voice_new_female();
+var vp2 = SvVoiceProfile_from_json_str(se_json(&SvVoiceProfile_to_json, vp));
+assert_eq(se_approx(SvVoiceProfile_base_f0(vp2), f64_from(220), TOL_1EM3), 1, "base_f0 220");
+assert_eq(se_approx(SvVoiceProfile_formant_scale(vp2), SV_V_117, TOL_1EM3), 1, "formant_scale 1.17");
+assert_eq(se_approx(SvVoiceProfile_jitter(vp2), SV_V_0008, TOL_1EM3), 1, "jitter 0.008");
+
+# ================================================================
+test_group("EffortParams round-trip");
+var ep = svara_effort_params(SVARA_EFFORT_WHISPER);
+var ep2 = SvEffortParams_from_json_str(se_json(&SvEffortParams_to_json, ep));
+assert_eq(SvEffortParams_model(ep2), SVARA_GLOTTAL_WHISPER, "model (i64) exact");
+assert_eq(se_approx(SvEffortParams_rd(ep2), SV_V_27, TOL_1EM3), 1, "rd 2.7");
+assert_eq(se_approx(SvEffortParams_breathiness(ep2), F64_ONE, TOL_1EM3), 1, "breathiness 1.0");
+
+# ================================================================
+test_group("PhonemeEvent round-trip");
+var pe = svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0.15, SVARA_STRESS_PRIMARY, SVARA_TONE_RISING);
+var pe2 = SvPhonemeEvent_from_json_str(se_json(&SvPhonemeEvent_to_json, pe));
+assert_eq(SvPhonemeEvent_phoneme(pe2), SVARA_PH_VOWEL_A, "phoneme (i64) exact");
+assert_eq(SvPhonemeEvent_stress(pe2), SVARA_STRESS_PRIMARY, "stress (i64) exact");
+assert_eq(SvPhonemeEvent_tone(pe2), SVARA_TONE_RISING, "tone (i64) exact");
+assert_eq(se_approx(SvPhonemeEvent_duration(pe2), 0.15, TOL_1EM3), 1, "duration 0.15");
+
+# ================================================================
+test_group("Nasalization + VoiceOnsetTime round-trip");
+var na = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+var na2 = SvNasalization_from_json_str(se_json(&SvNasalization_to_json, na));
+assert_eq(SvNasalization_place(na2), SVARA_NASAL_BILABIAL, "place (i64) exact");
+assert_eq(se_approx(SvNasalization_onset(na2), SV_PH_R065, TOL_1EM3), 1, "onset 0.65");
+var vo = svara_vot_for_plosive(SVARA_PH_PLOSIVE_P);
+var vo2 = SvVOT_from_json_str(se_json(&SvVOT_to_json, vo));
+assert_eq(se_approx(SvVOT_closure_fraction(vo2), SV_PH_035, TOL_1EM3), 1, "closure 0.35");
+
+# ================================================================
+test_group("RenderProgress round-trip");
+var rp = svara_render_progress_new(3, 10, 44100);
+var rp2 = SvRenderProgress_from_json_str(se_json(&SvRenderProgress_to_json, rp));
+assert_eq(SvRenderProgress_phoneme_index(rp2), 3, "index 3");
+assert_eq(SvRenderProgress_total_phonemes(rp2), 10, "total 10");
+assert_eq(SvRenderProgress_samples_rendered(rp2), 44100, "samples 44100");
+
+var rc = assert_summary();
+syscall(60, rc);
