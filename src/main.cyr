@@ -17,6 +17,7 @@ include "src/formant.cyr"
 include "src/spectral.cyr"
 include "src/glottal.cyr"
 include "src/tract.cyr"
+include "src/voice.cyr"
 include "src/phoneme.cyr"
 
 fn main() {
@@ -92,6 +93,13 @@ fn main() {
     }
     if (svara_phoneme_is_voiced(SVARA_PH_FRIC_S) != 0) {
         println("svara: phoneme voicing broken");
+        return 1;
+    }
+    # Smoke: a female voice profile builds a glottal source at its base f0.
+    var vp = svara_voice_new_female();
+    var vgs = svara_voice_create_glottal_source(vp, f64_from(44100));
+    if (svara_is_err(vgs) == 1) {
+        println("svara: voice glottal source failed");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

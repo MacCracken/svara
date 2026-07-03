@@ -160,7 +160,8 @@ assert_eq(approx(svara_glottal_rd(cc), SV_G_0_3, SV_EPSILON), 1, "creaky(0.1) ->
 test_group("period approximately correct (jitter off)");
 var gp = svara_glottal_new(f64_from(120), SR);
 svara_glottal_set_jitter(gp, 0);
-assert_eq(approx(svara_glottal_period_samples(gp), f64_div(f64_from(44100), f64_from(120)), F64_ONE), 1, "period ~ 367.5");
+var exp_period = f64_div(f64_from(44100), f64_from(120));
+assert_eq(approx(svara_glottal_period_samples(gp), exp_period, F64_ONE), 1, "period ~ 367.5");
 
 var rc = assert_summary();
 syscall(60, rc);

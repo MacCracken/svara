@@ -64,6 +64,13 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   `height_adjusted_amplitudes`, `f2_locus_equation`, `VoiceOnsetTime` (+`for_plosive`),
   `Nasalization` (+`for_nasal`), `detect_nasalization`. Integer targets exact;
   computed values (tilt, height amps) golden-verified. **+44 tests (273 total).**
+- **`src/voice.cyr`** (L3) — ports `voice.rs`: `VoiceProfile` (presets
+  male/female/child, builder methods, `apply_formant_scale` with f0/singing
+  bandwidth scaling), `VocalEffort` + `EffortParams` (whisper..shout continuum →
+  coordinated glottal params), and `create_glottal_source[_with_effort]`.
+  Formant-scaling goldens + effort energy ordering verified. **33 tests.**
+- Cleanup: all 10 `.tcyr` suites brought under the 120-col lint (test files are
+  audit-gated too).
 
 ### Changed
 

@@ -1,0 +1,276 @@
+# voice.cyr -- speaker voice profiles + vocal effort.
+# Ports rust-old/src/voice.rs. VoiceProfile captures the acoustic parameters
+# distinguishing speakers (f0, formant scaling, breathiness, vibrato, jitter/
+# shimmer); VocalEffort maps a whisper..shout continuum to coordinated glottal
+# parameters. f32 -> f64 throughout. Builders mutate the profile in place and
+# return it (Rust's `mut self` chain). serde dropped (M-serde; roadmap.md).
+#
+# Requires (from the build/test unit): stdlib alloc/math, error.cyr, formant.cyr
+# (VowelTarget + with_bandwidths), glottal.cyr (GlottalSource + SVARA_GLOTTAL_*).
+
+# VocalEffort levels (was `enum VocalEffort`). Rust variant order.
+var SVARA_EFFORT_WHISPER = 0;
+var SVARA_EFFORT_SOFT    = 1;
+var SVARA_EFFORT_NORMAL  = 2;
+var SVARA_EFFORT_LOUD    = 3;
+var SVARA_EFFORT_SHOUT   = 4;
+
+# f64 literals (bit patterns) for speaker/effort parameters.
+var SV_V_0008 = 0x3F80624DD2F1A9FC;   # 0.008
+var SV_V_001  = 0x3F847AE147AE147B;   # 0.01
+var SV_V_0012 = 0x3F889374BC6A7EFA;   # 0.012
+var SV_V_0018 = 0x3F926E978D4FDF3B;   # 0.018
+var SV_V_002  = 0x3F947AE147AE147B;   # 0.02
+var SV_V_0025 = 0x3F9999999999999A;   # 0.025
+var SV_V_003  = 0x3F9EB851EB851EB8;   # 0.03
+var SV_V_004  = 0x3FA47AE147AE147B;   # 0.04
+var SV_V_005  = 0x3FA999999999999A;   # 0.05
+var SV_V_01   = 0x3FB999999999999A;   # 0.1
+var SV_V_015  = 0x3FC3333333333333;   # 0.15
+var SV_V_03   = 0x3FD3333333333333;   # 0.3
+var SV_V_06   = 0x3FE3333333333333;   # 0.6
+var SV_V_08   = 0x3FE999999999999A;   # 0.8
+var SV_V_09   = 0x3FECCCCCCCCCCCCD;   # 0.9
+var SV_V_11   = 0x3FF199999999999A;   # 1.1
+var SV_V_117  = 0x3FF2B851EB851EB8;   # 1.17
+var SV_V_12   = 0x3FF3333333333333;   # 1.2
+var SV_V_13   = 0x3FF4CCCCCCCCCCCD;   # 1.3
+var SV_V_16   = 0x3FF999999999999A;   # 1.6
+var SV_V_27   = 0x400599999999999A;   # 2.7
+var SV_V_55   = 0x4016000000000000;   # 5.5
+
+# EffortParams -- coordinated acoustic changes for a vocal-effort level.
+#derive(accessors)
+struct SvEffortParams {
+    model; rd; breathiness; spectral_tilt; f0_range_scale; bandwidth_scale; jitter_scale; shimmer_scale;
+}
+
+# VoiceProfile -- a speaker's voice characteristics.
+#derive(accessors)
+struct SvVoiceProfile {
+    base_f0; f0_range; formant_scale; breathiness;
+    vibrato_rate; vibrato_depth; jitter; shimmer; bandwidth_widening;
+}
+
+# params -- coordinated parameters for an effort level (Traunmüller & Eriksson 2000).
+#must_use
+fn svara_effort_params(effort) {
+    var p = alloc(sizeof(SvEffortParams));
+    if (effort == SVARA_EFFORT_WHISPER) {
+        SvEffortParams_set_model(p, SVARA_GLOTTAL_WHISPER);
+        SvEffortParams_set_rd(p, SV_V_27);
+        SvEffortParams_set_breathiness(p, F64_ONE);
+        SvEffortParams_set_spectral_tilt(p, f64_from(12));
+        SvEffortParams_set_f0_range_scale(p, F64_HALF);
+        SvEffortParams_set_bandwidth_scale(p, SV_V_13);
+        SvEffortParams_set_jitter_scale(p, 0);
+        SvEffortParams_set_shimmer_scale(p, 0);
+        return p;
+    }
+    if (effort == SVARA_EFFORT_SOFT) {
+        SvEffortParams_set_model(p, SVARA_GLOTTAL_LF);
+        SvEffortParams_set_rd(p, F64_TWO);
+        SvEffortParams_set_breathiness(p, SV_V_015);
+        SvEffortParams_set_spectral_tilt(p, f64_from(6));
+        SvEffortParams_set_f0_range_scale(p, SV_V_08);
+        SvEffortParams_set_bandwidth_scale(p, SV_V_11);
+        SvEffortParams_set_jitter_scale(p, SV_V_12);
+        SvEffortParams_set_shimmer_scale(p, SV_V_12);
+        return p;
+    }
+    if (effort == SVARA_EFFORT_NORMAL) {
+        SvEffortParams_set_model(p, SVARA_GLOTTAL_LF);
+        SvEffortParams_set_rd(p, F64_ONE);
+        SvEffortParams_set_breathiness(p, SV_V_002);
+        SvEffortParams_set_spectral_tilt(p, F64_TWO);
+        SvEffortParams_set_f0_range_scale(p, F64_ONE);
+        SvEffortParams_set_bandwidth_scale(p, F64_ONE);
+        SvEffortParams_set_jitter_scale(p, F64_ONE);
+        SvEffortParams_set_shimmer_scale(p, F64_ONE);
+        return p;
+    }
+    if (effort == SVARA_EFFORT_LOUD) {
+        SvEffortParams_set_model(p, SVARA_GLOTTAL_LF);
+        SvEffortParams_set_rd(p, SV_V_06);
+        SvEffortParams_set_breathiness(p, 0);
+        SvEffortParams_set_spectral_tilt(p, 0);
+        SvEffortParams_set_f0_range_scale(p, SV_V_13);
+        SvEffortParams_set_bandwidth_scale(p, SV_V_09);
+        SvEffortParams_set_jitter_scale(p, SV_V_08);
+        SvEffortParams_set_shimmer_scale(p, SV_V_08);
+        return p;
+    }
+    # SHOUT
+    SvEffortParams_set_model(p, SVARA_GLOTTAL_LF);
+    SvEffortParams_set_rd(p, SV_V_03);
+    SvEffortParams_set_breathiness(p, 0);
+    SvEffortParams_set_spectral_tilt(p, 0);
+    SvEffortParams_set_f0_range_scale(p, SV_V_16);
+    SvEffortParams_set_bandwidth_scale(p, SV_V_08);
+    SvEffortParams_set_jitter_scale(p, F64_HALF);
+    SvEffortParams_set_shimmer_scale(p, F64_HALF);
+    return p;
+}
+
+# ---- presets --------------------------------------------------------------
+#must_use
+fn svara_voice_new_male() {
+    var self = alloc(sizeof(SvVoiceProfile));
+    SvVoiceProfile_set_base_f0(self, f64_from(120));
+    SvVoiceProfile_set_f0_range(self, f64_from(40));
+    SvVoiceProfile_set_formant_scale(self, F64_ONE);
+    SvVoiceProfile_set_breathiness(self, SV_V_002);
+    SvVoiceProfile_set_vibrato_rate(self, f64_from(5));
+    SvVoiceProfile_set_vibrato_depth(self, SV_V_004);
+    SvVoiceProfile_set_jitter(self, SV_V_001);
+    SvVoiceProfile_set_shimmer(self, SV_V_002);
+    SvVoiceProfile_set_bandwidth_widening(self, 0);
+    return self;
+}
+
+#must_use
+fn svara_voice_new_female() {
+    var self = alloc(sizeof(SvVoiceProfile));
+    SvVoiceProfile_set_base_f0(self, f64_from(220));
+    SvVoiceProfile_set_f0_range(self, f64_from(50));
+    SvVoiceProfile_set_formant_scale(self, SV_V_117);
+    SvVoiceProfile_set_breathiness(self, SV_V_005);
+    SvVoiceProfile_set_vibrato_rate(self, SV_V_55);
+    SvVoiceProfile_set_vibrato_depth(self, SV_V_005);
+    SvVoiceProfile_set_jitter(self, SV_V_0008);
+    SvVoiceProfile_set_shimmer(self, SV_V_0018);
+    SvVoiceProfile_set_bandwidth_widening(self, 0);
+    return self;
+}
+
+#must_use
+fn svara_voice_new_child() {
+    var self = alloc(sizeof(SvVoiceProfile));
+    SvVoiceProfile_set_base_f0(self, f64_from(300));
+    SvVoiceProfile_set_f0_range(self, f64_from(60));
+    SvVoiceProfile_set_formant_scale(self, SV_V_13);
+    SvVoiceProfile_set_breathiness(self, SV_V_003);
+    SvVoiceProfile_set_vibrato_rate(self, f64_from(6));
+    SvVoiceProfile_set_vibrato_depth(self, SV_V_003);
+    SvVoiceProfile_set_jitter(self, SV_V_0012);
+    SvVoiceProfile_set_shimmer(self, SV_V_0025);
+    SvVoiceProfile_set_bandwidth_widening(self, 0);
+    return self;
+}
+
+#must_use
+fn svara_voice_default() { return svara_voice_new_male(); }
+
+# ---- builders (mutate + return self) --------------------------------------
+#must_use
+fn svara_voice_with_f0(self, f0) { SvVoiceProfile_set_base_f0(self, f0); return self; }
+#must_use
+fn svara_voice_with_breathiness(self, b) {
+    SvVoiceProfile_set_breathiness(self, f64_clamp(b, 0, F64_ONE)); return self;
+}
+#must_use
+fn svara_voice_with_vibrato_rate(self, rate) {
+    SvVoiceProfile_set_vibrato_rate(self, f64_max(rate, 0)); return self;
+}
+#must_use
+fn svara_voice_with_vibrato_depth(self, depth) {
+    SvVoiceProfile_set_vibrato_depth(self, f64_clamp(depth, 0, F64_HALF)); return self;
+}
+#must_use
+fn svara_voice_with_jitter(self, j) {
+    SvVoiceProfile_set_jitter(self, f64_clamp(j, 0, SV_V_005)); return self;
+}
+#must_use
+fn svara_voice_with_shimmer(self, s) {
+    SvVoiceProfile_set_shimmer(self, f64_clamp(s, 0, SV_V_01)); return self;
+}
+#must_use
+fn svara_voice_with_formant_scale(self, scale) {
+    SvVoiceProfile_set_formant_scale(self, f64_max(scale, SV_V_01)); return self;
+}
+#must_use
+fn svara_voice_with_f0_range(self, range) {
+    SvVoiceProfile_set_f0_range(self, f64_max(range, 0)); return self;
+}
+#must_use
+fn svara_voice_with_bandwidth_widening(self, factor) {
+    SvVoiceProfile_set_bandwidth_widening(self, f64_clamp(factor, 0, F64_TWO)); return self;
+}
+
+# with_effort -- override breathiness + scale jitter/shimmer/f0_range to match effort.
+#must_use
+fn svara_voice_with_effort(self, effort) {
+    var p = svara_effort_params(effort);
+    SvVoiceProfile_set_breathiness(self, SvEffortParams_breathiness(p));
+    SvVoiceProfile_set_jitter(self, f64_mul(SvVoiceProfile_jitter(self), SvEffortParams_jitter_scale(p)));
+    SvVoiceProfile_set_shimmer(self, f64_mul(SvVoiceProfile_shimmer(self), SvEffortParams_shimmer_scale(p)));
+    SvVoiceProfile_set_f0_range(self, f64_mul(SvVoiceProfile_f0_range(self), SvEffortParams_f0_range_scale(p)));
+    return self;
+}
+
+# ---- glottal-source construction ------------------------------------------
+# create_glottal_source -- GlottalSource from the profile. Returns ptr or neg error.
+#must_use
+fn svara_voice_create_glottal_source(self, sample_rate) {
+    var gs = svara_glottal_new(SvVoiceProfile_base_f0(self), sample_rate);
+    if (svara_is_err(gs) == 1) { return gs; }
+    svara_glottal_set_breathiness(gs, SvVoiceProfile_breathiness(self));
+    svara_glottal_set_jitter(gs, SvVoiceProfile_jitter(self));
+    svara_glottal_set_shimmer(gs, SvVoiceProfile_shimmer(self));
+    svara_glottal_set_vibrato(gs, SvVoiceProfile_vibrato_rate(self), SvVoiceProfile_vibrato_depth(self));
+    return gs;
+}
+
+# create_glottal_source_with_effort -- as above + effort model/tilt/scaling.
+#must_use
+fn svara_voice_create_glottal_source_with_effort(self, effort, sample_rate) {
+    var p = svara_effort_params(effort);
+    var gs = svara_glottal_new(SvVoiceProfile_base_f0(self), sample_rate);
+    if (svara_is_err(gs) == 1) { return gs; }
+    svara_glottal_set_breathiness(gs, SvEffortParams_breathiness(p));
+    svara_glottal_set_jitter(gs, f64_mul(SvVoiceProfile_jitter(self), SvEffortParams_jitter_scale(p)));
+    svara_glottal_set_shimmer(gs, f64_mul(SvVoiceProfile_shimmer(self), SvEffortParams_shimmer_scale(p)));
+    svara_glottal_set_spectral_tilt(gs, SvEffortParams_spectral_tilt(p));
+    svara_glottal_set_vibrato(gs, SvVoiceProfile_vibrato_rate(self), SvVoiceProfile_vibrato_depth(self));
+    var model = SvEffortParams_model(p);
+    if (model == SVARA_GLOTTAL_WHISPER) { svara_glottal_set_whisper(gs); }
+    elif (model == SVARA_GLOTTAL_CREAKY) { svara_glottal_set_creaky(gs, SvEffortParams_rd(p)); }
+    elif (model == SVARA_GLOTTAL_LF) { svara_glottal_set_rd(gs, SvEffortParams_rd(p)); }
+    else { svara_glottal_set_model(gs, SVARA_GLOTTAL_ROSENBERG); }
+    return gs;
+}
+
+# ---- formant scaling ------------------------------------------------------
+# apply_formant_scale -- scale frequencies by formant_scale, bandwidths by
+# sqrt(f0/120) (+ optional singing widening at f0>300). Returns a new VowelTarget.
+#must_use
+fn svara_voice_apply_formant_scale(self, target) {
+    var f0 = SvVoiceProfile_base_f0(self);
+    var bw_scale = f64_sqrt(f64_div(f0, f64_from(120)));
+    if ((f64_gt(SvVoiceProfile_bandwidth_widening(self), 0) == 1) & (f64_gt(f0, f64_from(300)) == 1)) {
+        var extra = f64_add(F64_ONE, f64_mul(SV_V_03, f64_div(f64_sub(f0, f64_from(300)), f64_from(500))));
+        bw_scale = f64_mul(bw_scale,
+            f64_add(F64_ONE, f64_mul(SvVoiceProfile_bandwidth_widening(self), f64_sub(extra, F64_ONE))));
+    }
+    var fs = SvVoiceProfile_formant_scale(self);
+    return svara_vowel_target_with_bandwidths(
+        f64_mul(SvVowelTarget_f1(target), fs), f64_mul(SvVowelTarget_f2(target), fs),
+        f64_mul(SvVowelTarget_f3(target), fs), f64_mul(SvVowelTarget_f4(target), fs),
+        f64_mul(SvVowelTarget_f5(target), fs),
+        f64_mul(SvVowelTarget_b1(target), bw_scale), f64_mul(SvVowelTarget_b2(target), bw_scale),
+        f64_mul(SvVowelTarget_b3(target), bw_scale), f64_mul(SvVowelTarget_b4(target), bw_scale),
+        f64_mul(SvVowelTarget_b5(target), bw_scale));
+}
+
+# apply_formant_scale_with_effort -- apply_formant_scale then effort bandwidth factor.
+#must_use
+fn svara_voice_apply_formant_scale_with_effort(self, target, effort) {
+    var base = svara_voice_apply_formant_scale(self, target);
+    var ebw = SvEffortParams_bandwidth_scale(svara_effort_params(effort));
+    return svara_vowel_target_with_bandwidths(
+        SvVowelTarget_f1(base), SvVowelTarget_f2(base), SvVowelTarget_f3(base),
+        SvVowelTarget_f4(base), SvVowelTarget_f5(base),
+        f64_mul(SvVowelTarget_b1(base), ebw), f64_mul(SvVowelTarget_b2(base), ebw),
+        f64_mul(SvVowelTarget_b3(base), ebw), f64_mul(SvVowelTarget_b4(base), ebw),
+        f64_mul(SvVowelTarget_b5(base), ebw));
+}

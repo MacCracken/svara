@@ -26,6 +26,7 @@ modules = [
     "src/spectral.cyr",
     "src/glottal.cyr",
     "src/tract.cyr",
+    "src/voice.cyr",
     "src/phoneme.cyr",
 ]
 

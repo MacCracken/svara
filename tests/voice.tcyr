@@ -1,0 +1,139 @@
+# voice.tcyr -- tests for src/voice.cyr. Ports rust-old/src/voice.rs #[test]
+# blocks (serde dropped). Include order: hisab -> goonj -> naad -> error -> rng
+# -> formant -> glottal -> voice.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/voice.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+
+#must_use
+fn v_approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+#must_use
+fn v_energy(gs, n) {
+    var e = 0;
+    var i = 0;
+    while (i < n) {
+        var s = svara_glottal_next_sample(gs);
+        e = f64_add(e, f64_mul(s, s));
+        i = i + 1;
+    }
+    return e;
+}
+#must_use
+fn v_all_finite(gs, n) {
+    var fin = 1;
+    var i = 0;
+    while (i < n) {
+        if (svara_is_finite(svara_glottal_next_sample(gs)) == 0) { fin = 0; }
+        i = i + 1;
+    }
+    return fin;
+}
+
+alloc_init();
+var SR = f64_from(44100);
+
+# ================================================================
+test_group("presets");
+assert_eq(SvVoiceProfile_base_f0(svara_voice_new_male()), f64_from(120), "male f0=120");
+assert_eq(SvVoiceProfile_formant_scale(svara_voice_new_male()), F64_ONE, "male fscale=1.0");
+assert_eq(SvVoiceProfile_base_f0(svara_voice_new_female()), f64_from(220), "female f0=220");
+assert_eq(SvVoiceProfile_formant_scale(svara_voice_new_female()), SV_V_117, "female fscale=1.17");
+assert_eq(SvVoiceProfile_base_f0(svara_voice_new_child()), f64_from(300), "child f0=300");
+assert_eq(SvVoiceProfile_formant_scale(svara_voice_new_child()), SV_V_13, "child fscale=1.3");
+assert_eq(SvVoiceProfile_base_f0(svara_voice_default()), f64_from(120), "default = male");
+
+# ================================================================
+test_group("builders + clamping");
+var vb = svara_voice_new_male();
+vb = svara_voice_with_f0(vb, f64_from(150));
+vb = svara_voice_with_breathiness(vb, SV_V_03);
+vb = svara_voice_with_vibrato_rate(vb, f64_from(6));
+assert_eq(SvVoiceProfile_base_f0(vb), f64_from(150), "with_f0(150)");
+assert_eq(SvVoiceProfile_breathiness(vb), SV_V_03, "with_breathiness(0.3)");
+assert_eq(SvVoiceProfile_vibrato_rate(vb), f64_from(6), "with_vibrato_rate(6)");
+var bhi = svara_voice_with_breathiness(svara_voice_new_male(), f64_from(5));
+assert_eq(SvVoiceProfile_breathiness(bhi), F64_ONE, "breathiness clamps to 1.0");
+var blo = svara_voice_with_breathiness(svara_voice_new_male(), f64_neg(F64_ONE));
+assert_eq(SvVoiceProfile_breathiness(blo), 0, "breathiness clamps to 0.0");
+var bww = svara_voice_with_bandwidth_widening(svara_voice_new_male(), f64_from(5));
+assert_eq(SvVoiceProfile_bandwidth_widening(bww), F64_TWO, "bandwidth_widening clamps to 2.0");
+
+# ================================================================
+test_group("apply_formant_scale (female, VowelA)");
+var scaled = svara_voice_apply_formant_scale(svara_voice_new_female(), svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+assert_eq(v_approx(SvVowelTarget_f1(scaled), 0x408C147AE147AE14, TOL_1EM6), 1, "f1 = 768*1.17 = 898.56");
+assert_eq(v_approx(SvVowelTarget_b1(scaled), 0x405E7713ADA69916, TOL_1EM6), 1, "b1 = 90*sqrt(220/120)");
+
+# ================================================================
+test_group("bandwidth widening (>300 Hz only)");
+var target_a = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+# below 300 Hz: widening has no effect
+var below_wp = svara_voice_with_f0(svara_voice_new_male(), f64_from(200));
+below_wp = svara_voice_with_bandwidth_widening(below_wp, F64_ONE);
+var below_w = svara_voice_apply_formant_scale(below_wp, target_a);
+var below_np = svara_voice_with_f0(svara_voice_new_male(), f64_from(200));
+var below_n = svara_voice_apply_formant_scale(below_np, target_a);
+assert_eq(SvVowelTarget_b1(below_w), SvVowelTarget_b1(below_n), "no widening below 300 Hz");
+# above 300 Hz: widening increases bandwidth
+var above_wp = svara_voice_with_f0(svara_voice_new_female(), f64_from(500));
+above_wp = svara_voice_with_bandwidth_widening(above_wp, F64_ONE);
+var above_w = svara_voice_apply_formant_scale(above_wp, target_a);
+var above_np = svara_voice_with_f0(svara_voice_new_female(), f64_from(500));
+var above_n = svara_voice_apply_formant_scale(above_np, target_a);
+assert_eq(f64_gt(SvVowelTarget_b1(above_w), SvVowelTarget_b1(above_n)), 1, "widening increases B1 above 300 Hz");
+
+# ================================================================
+test_group("VocalEffort params");
+var wp = svara_effort_params(SVARA_EFFORT_WHISPER);
+assert_eq(SvEffortParams_model(wp), SVARA_GLOTTAL_WHISPER, "whisper model");
+assert_eq(SvEffortParams_breathiness(wp), F64_ONE, "whisper breathiness 1.0");
+assert_eq(f64_gt(SvEffortParams_spectral_tilt(wp), f64_from(10)), 1, "whisper tilt > 10");
+var sp = svara_effort_params(SVARA_EFFORT_SHOUT);
+assert_eq(SvEffortParams_model(sp), SVARA_GLOTTAL_LF, "shout model LF");
+assert_eq(SvEffortParams_rd(sp), SV_V_03, "shout rd 0.3");
+assert_eq(SvEffortParams_breathiness(sp), 0, "shout breathiness 0");
+assert_eq(SvEffortParams_spectral_tilt(sp), 0, "shout tilt 0");
+
+# ================================================================
+test_group("with_effort builder");
+var we = svara_voice_with_effort(svara_voice_new_male(), SVARA_EFFORT_WHISPER);
+assert_eq(SvVoiceProfile_breathiness(we), F64_ONE, "whisper breathiness -> 1.0");
+assert_eq(SvVoiceProfile_f0_range(we), f64_from(20), "f0_range 40 * 0.5 = 20");
+
+# ================================================================
+test_group("apply_formant_scale_with_effort");
+var male = svara_voice_new_male();
+var wsc = svara_voice_apply_formant_scale_with_effort(male, target_a, SVARA_EFFORT_WHISPER);
+var nsc = svara_voice_apply_formant_scale_with_effort(male, target_a, SVARA_EFFORT_NORMAL);
+var ssc = svara_voice_apply_formant_scale_with_effort(male, target_a, SVARA_EFFORT_SHOUT);
+assert_eq(f64_gt(SvVowelTarget_b1(wsc), SvVowelTarget_b1(nsc)), 1, "whisper BW wider than normal");
+assert_eq(f64_lt(SvVowelTarget_b1(ssc), SvVowelTarget_b1(nsc)), 1, "shout BW narrower than normal");
+
+# ================================================================
+test_group("effort energy extremes + finite");
+var wgs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_WHISPER, SR);
+var ngs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_NORMAL, SR);
+var sgs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_SHOUT, SR);
+assert_eq(svara_is_err(wgs), 0, "whisper source builds");
+var e_w = v_energy(wgs, 4410);
+var e_n = v_energy(ngs, 4410);
+var e_s = v_energy(sgs, 4410);
+assert_eq(f64_lt(e_w, e_n), 1, "whisper energy < normal");
+assert_eq(f64_lt(e_n, e_s), 1, "normal energy < shout");
+var soft_gs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_SOFT, SR);
+assert_eq(v_all_finite(soft_gs, 1024), 1, "soft all finite");
+var loud_gs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_LOUD, SR);
+assert_eq(v_all_finite(loud_gs, 1024), 1, "loud all finite");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -99,7 +99,8 @@ assert_eq(f64_gt(diff, TOL_1EM6), 1, "/a/ and /i/ diverge over impulse response"
 # ================================================================
 test_group("reset clears state");
 svara_formant_filter_reset(ff2);
-assert_eq(approx(svara_formant_filter_process_sample(ff2, F64_ONE), 0x3F77A8C7BC46D43A, TOL_1EM6), 1, "post-reset impulse == out[0]");
+var pr = svara_formant_filter_process_sample(ff2, F64_ONE);
+assert_eq(approx(pr, 0x3F77A8C7BC46D43A, TOL_1EM6), 1, "post-reset impulse == out[0]");
 
 var rc = assert_summary();
 syscall(60, rc);

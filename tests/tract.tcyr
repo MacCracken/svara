@@ -75,7 +75,8 @@ var gp = svara_glottal_new(f64_from(120), SR);
 var outp = svara_tract_synthesize(vtp, gp, 256);
 buf_scan(outp, 256, TOL_1EM6, scan);
 assert_eq(load64(scan + 8), 1, "bilabial-nasal output all finite");
-assert_eq(approx(svara_nasal_place_antiformant_frequency(SVARA_NASAL_VELAR), f64_from(3000), SV_EPSILON), 1, "velar antiformant 3000 Hz");
+var velar_af = svara_nasal_place_antiformant_frequency(SVARA_NASAL_VELAR);
+assert_eq(approx(velar_af, f64_from(3000), SV_EPSILON), 1, "velar antiformant 3000 Hz");
 
 # ================================================================
 test_group("reset -> silence");

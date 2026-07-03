@@ -47,18 +47,18 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
 | L3 | phoneme.rs | src/phoneme.cyr | 🔨 part 2/3 | 273 | inventory + classification + data tables (formants/duration/tilt/amps/f2-locus/VOT/Nasalization) done, golden-verified. Part 3 = synthesis (needs voice) |
-| L3 | voice.rs | src/voice.cyr | ⏳ next | — | VoiceProfile — needed by phoneme synthesis |
+| L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
 | L3 | prosody/sequence/trajectory | … | ⏳ | — | speech-science layer |
 | L4 | pool/render/bridge | … | ⏳ | — | orchestration + glue |
 
-**Total ported: 8⅔ modules, 424 tests passing.** (phoneme part 2/3 done.) Smoke
+**Total ported: 9⅔ modules, 457 tests passing.** (phoneme part 2/3 done.) Smoke
 binary (`build/svara`) green — runs the full glottal→tract pipeline + classification.
 
 ## Tests
 
-424 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
-glottal / tract / phoneme — all passing. Run one suite: `cyrius test tests/<mod>.tcyr`
-(no auto-discovery).
+457 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract / voice / phoneme — all passing (all 10 test files lint-clean).
+Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
 
@@ -84,7 +84,8 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-**`voice.cyr`** (VoiceProfile / VocalEffort / EffortParams) — needed by phoneme
-part 3. Then **phoneme part 3** (per-class synthesis functions + `SynthesisContext`,
-using voice + glottal + tract). Then prosody / sequence / trajectory, then
-pool / render / bridge. See [`roadmap.md`](roadmap.md).
+**phoneme part 3/3** — the per-class synthesis functions (`synthesize_phoneme`,
+`synthesize_phoneme_nasalized`, the per-class `synthesize_*`, `SynthesisContext`
++ its `synthesize`/`synthesize_*_ctx` methods) tying voice + glottal + tract
+together. Then prosody / sequence / trajectory, then pool / render / bridge.
+See [`roadmap.md`](roadmap.md).
