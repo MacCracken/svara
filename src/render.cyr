@@ -1,0 +1,125 @@
+# render.cyr -- batch rendering API for non-real-time synthesis.
+# Ports rust-old/src/render.rs. BatchRenderer renders a queue of phoneme events
+# (stress-scaled + anticipatory nasalization, no crossfade) into one buffer,
+# with optional per-phoneme progress. f32 -> f64 throughout.
+#
+# The Rust FnMut progress callback becomes a Cyrius fn-pointer + user-data
+# pointer: `callptr(cb, user, progress)` (non-capturing; the idiomatic form).
+#
+# Requires: stdlib alloc/vec/math/fnptr, error.cyr, phoneme.cyr (SynthesisContext,
+# detect_nasalization), prosody.cyr (Stress), sequence.cyr (PhonemeEvent, voice_clone),
+# voice.cyr.
+
+# RenderProgress -- progress snapshot.
+#derive(accessors)
+struct SvRenderProgress { phoneme_index; total_phonemes; samples_rendered; }
+
+#must_use
+fn svara_render_progress_new(phoneme_index, total_phonemes, samples_rendered) {
+    var p = alloc(sizeof(SvRenderProgress));
+    SvRenderProgress_set_phoneme_index(p, phoneme_index);
+    SvRenderProgress_set_total_phonemes(p, total_phonemes);
+    SvRenderProgress_set_samples_rendered(p, samples_rendered);
+    return p;
+}
+
+# fraction complete (0.0-1.0); 1.0 when there are no phonemes.
+#must_use
+fn svara_render_progress_fraction(p) {
+    if (SvRenderProgress_total_phonemes(p) == 0) { return F64_ONE; }
+    return f64_div(f64_from(SvRenderProgress_phoneme_index(p)), f64_from(SvRenderProgress_total_phonemes(p)));
+}
+
+# RenderOutput -- rendered samples (vec<f64>) + final progress.
+#derive(accessors)
+struct SvRenderOutput { samples; progress; }
+
+#must_use
+fn svara_render_output_new(samples, progress) {
+    var o = alloc(sizeof(SvRenderOutput));
+    SvRenderOutput_set_samples(o, samples);
+    SvRenderOutput_set_progress(o, progress);
+    return o;
+}
+
+# BatchRenderer -- phoneme queue + reusable context + cloned voice.
+#derive(accessors)
+struct SvBatchRenderer { events; ctx; voice; sample_rate; }
+
+#must_use
+fn svara_batch_new(voice, sample_rate) {
+    var ctx = svara_synthctx_new(voice, sample_rate);
+    if (svara_is_err(ctx) == 1) { return ctx; }
+    var r = alloc(sizeof(SvBatchRenderer));
+    SvBatchRenderer_set_events(r, vec_new());
+    SvBatchRenderer_set_ctx(r, ctx);
+    SvBatchRenderer_set_voice(r, svara_seq_voice_clone(voice));
+    SvBatchRenderer_set_sample_rate(r, sample_rate);
+    return r;
+}
+
+fn svara_batch_push(r, phoneme, duration, stress) {
+    vec_push(SvBatchRenderer_events(r), svara_phoneme_event_new(phoneme, duration, stress));
+}
+fn svara_batch_extend(r, events) {
+    var dst = SvBatchRenderer_events(r);
+    var i = 0;
+    while (i < vec_len(events)) { vec_push(dst, vec_get(events, i)); i = i + 1; }
+}
+fn svara_batch_clear(r) { SvBatchRenderer_set_events(r, vec_new()); }
+#must_use
+fn svara_batch_len(r) { return vec_len(SvBatchRenderer_events(r)); }
+#must_use
+fn svara_batch_is_empty(r) {
+    if (vec_len(SvBatchRenderer_events(r)) == 0) { return 1; }
+    return 0;
+}
+
+# render_with_progress -- render all queued phonemes; if `cb` != 0, invoke
+# callptr(cb, user, progress) after each phoneme. Returns RenderOutput or neg error.
+#must_use
+fn svara_batch_render_with_progress(r, cb, user) {
+    var events = SvBatchRenderer_events(r);
+    var total = vec_len(events);
+    var voice = SvBatchRenderer_voice(r);
+    var ctx = SvBatchRenderer_ctx(r);
+    var output = vec_new();
+
+    var pl = vec_new();
+    var i = 0;
+    while (i < total) { vec_push(pl, SvPhonemeEvent_phoneme(vec_get(events, i))); i = i + 1; }
+    var nasals = svara_detect_nasalization(pl);
+
+    i = 0;
+    while (i < total) {
+        var e = vec_get(events, i);
+        var ev = svara_seq_voice_clone(voice);
+        var ss = 0.9;
+        var st = SvPhonemeEvent_stress(e);
+        if (st == SVARA_STRESS_PRIMARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10));
+            ss = 1.15;
+        } elif (st == SVARA_STRESS_SECONDARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
+            ss = 1.05;
+        }
+        var dur = f64_mul(SvPhonemeEvent_duration(e), ss);
+        var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, dur, vec_get(nasals, i));
+        if (svara_is_err(n) == 1) { return n; }
+        var buf = svara_synthctx_buffer(ctx);
+        var j = 0;
+        while (j < n) { vec_push(output, load64(buf + j * 8)); j = j + 1; }
+        if (cb != 0) {
+            var cbr = callptr(cb, user, svara_render_progress_new(i + 1, total, vec_len(output)));
+            if (cbr < 0) { return cbr; }
+        }
+        i = i + 1;
+    }
+    return svara_render_output_new(output, svara_render_progress_new(total, total, vec_len(output)));
+}
+
+# render_all -- render synchronously, no progress callback.
+#must_use
+fn svara_batch_render_all(r) {
+    return svara_batch_render_with_progress(r, 0, 0);
+}

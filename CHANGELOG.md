@@ -102,6 +102,18 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   (trajectory-driven continuous synthesis with per-sample formant updates + tone f0),
   `detect_consonant_clusters`, and the variable crossfade blender. **29 tests.**
   Completes the L3 speech-science layer — svara renders whole utterances.
+- **`src/pool.cyr`** (L4) — ports `pool.rs`: `SynthesisPool` (pooled `SynthesisContext`
+  with `render`/`render_nasalized`/`render_batch`, pre-warmed `with_capacity`, and
+  render-count/peak-samples diagnostics). **16 tests.**
+- **`src/render.cyr`** (L4) — ports `render.rs`: `BatchRenderer` / `RenderOutput` /
+  `RenderProgress` (queue phonemes, render concatenated, stress-scaled + nasalized).
+  The Rust FnMut progress callback becomes a `callptr`-based fn-pointer + user-data
+  cell. **16 tests.**
+- **`src/bridge.cyr`** (L4) — ports `bridge.rs`: 18 dependency-free scalar bridges
+  mapping upstream AGNOS crate outputs (bhava emotion, vansh TTS, prani creature,
+  goonj acoustics, badal weather) to synth parameters. **37 tests.**
+- **All 19 Rust modules are now ported** (16 `.cyr` modules; `dsp` folded into
+  `error`, `math` maps to `ganita`). **610 tests total, all lint-clean.**
 
 ### Changed
 

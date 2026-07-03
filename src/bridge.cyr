@@ -1,0 +1,148 @@
+# bridge.cyr -- dependency-free ecosystem-integration glue.
+# Ports rust-old/src/bridge.rs. Pure scalar maps converting upstream AGNOS crate
+# outputs (bhava emotion, vansh TTS, prani creature, goonj acoustics, badal
+# weather) into svara synthesis parameters, without depending on those crates.
+# f32 -> f64 throughout; non-integer constants are Cyrius float literals.
+#
+# Requires: stdlib math, glottal.cyr (SVARA_GLOTTAL_*), prosody.cyr
+# (SVARA_INTONATION_* / SVARA_STRESS_*).
+
+# ---- bhava (emotion/affect) ----
+# rd_from_arousal -- arousal [0,1] -> Rd (2.2 calm .. 0.4 excited).
+#must_use
+fn svara_bridge_rd_from_arousal(arousal) {
+    var a = f64_clamp(arousal, 0, F64_ONE);
+    return f64_sub(2.2, f64_mul(1.8, a));
+}
+# vibrato_depth_from_valence -- valence [-1,1] -> depth [0,0.06].
+#must_use
+fn svara_bridge_vibrato_depth_from_valence(valence) {
+    var v = f64_clamp(valence, f64_neg(F64_ONE), F64_ONE);
+    return f64_clamp(f64_add(0.03, f64_mul(0.03, v)), 0, 0.06);
+}
+# breathiness_from_arousal -- 0.3 calm .. 0.02 excited.
+#must_use
+fn svara_bridge_breathiness_from_arousal(arousal) {
+    var a = f64_clamp(arousal, 0, F64_ONE);
+    return f64_sub(0.3, f64_mul(0.28, a));
+}
+# jitter_from_arousal -- U-shaped, min at 0.5. [0.005, 0.03].
+#must_use
+fn svara_bridge_jitter_from_arousal(arousal) {
+    var a = f64_clamp(arousal, 0, F64_ONE);
+    var dist = f64_abs(f64_sub(a, F64_HALF));
+    return f64_add(0.005, f64_mul(f64_mul(0.025, dist), F64_TWO));
+}
+# intonation_from_emotion -- emotion category -> IntonationPattern, or -1 (None).
+#must_use
+fn svara_bridge_intonation_from_emotion(category) {
+    if (category == 0) { return SVARA_INTONATION_DECLARATIVE; }
+    if ((category == 1) | (category == 3)) { return SVARA_INTONATION_EXCLAMATORY; }
+    if (category == 2) { return SVARA_INTONATION_DECLARATIVE; }
+    if (category == 4) { return SVARA_INTONATION_INTERROGATIVE; }
+    if (category == 5) { return SVARA_INTONATION_CONTINUATION; }
+    return (0 - 1);
+}
+# f0_range_scale_from_arousal -- 0.6 .. 1.8.
+#must_use
+fn svara_bridge_f0_range_scale_from_arousal(arousal) {
+    var a = f64_clamp(arousal, 0, F64_ONE);
+    return f64_add(0.6, f64_mul(1.2, a));
+}
+
+# ---- vansh (TTS) ----
+# duration_scale_from_speech_rate -- 1/rate clamped [0.3,3.0]; 1.0 for rate<=0.
+#must_use
+fn svara_bridge_duration_scale_from_speech_rate(rate) {
+    if (f64_le(rate, 0) == 1) { return F64_ONE; }
+    return f64_clamp(f64_div(F64_ONE, rate), 0.3, 3.0);
+}
+# stress_from_tobi_accent -- 0=unstressed, 1=secondary, 2+=primary.
+#must_use
+fn svara_bridge_stress_from_tobi_accent(level) {
+    if (level == 0) { return SVARA_STRESS_UNSTRESSED; }
+    if (level == 1) { return SVARA_STRESS_SECONDARY; }
+    return SVARA_STRESS_PRIMARY;
+}
+# f0_peak_from_prominence -- 1.0 .. 1.3.
+#must_use
+fn svara_bridge_f0_peak_from_prominence(prominence) {
+    var p = f64_clamp(prominence, 0, F64_ONE);
+    return f64_add(F64_ONE, f64_mul(0.3, p));
+}
+
+# ---- prani (creature/character) ----
+# formant_scale_from_body_size -- 1.4 small .. 0.85 large.
+#must_use
+fn svara_bridge_formant_scale_from_body_size(size) {
+    var s = f64_clamp(size, 0, F64_ONE);
+    return f64_sub(1.4, f64_mul(0.55, s));
+}
+# f0_from_body_size -- 400 small .. 70 large (Hz).
+#must_use
+fn svara_bridge_f0_from_body_size(size) {
+    var s = f64_clamp(size, 0, F64_ONE);
+    return f64_sub(f64_from(400), f64_mul(f64_from(330), s));
+}
+# jitter_from_age -- U-shaped, min at 0.4. [0.005, 0.04].
+#must_use
+fn svara_bridge_jitter_from_age(age) {
+    var a = f64_clamp(age, 0, F64_ONE);
+    var dist = f64_abs(f64_sub(a, 0.4));
+    return f64_add(0.005, f64_div(f64_mul(0.035, dist), 0.6));
+}
+# glottal_model_from_effort -- writes (model, rd) into out (2 slots).
+fn svara_bridge_glottal_model_from_effort(effort, out) {
+    var e = f64_clamp(effort, 0, F64_ONE);
+    if (f64_lt(e, 0.3) == 1) {
+        store64(out, SVARA_GLOTTAL_LF);
+        store64(out + 8, f64_add(F64_TWO, f64_mul(f64_sub(0.3, e), 2.3)));
+    } elif (f64_gt(e, 0.7) == 1) {
+        store64(out, SVARA_GLOTTAL_LF);
+        store64(out + 8, f64_sub(0.8, f64_mul(f64_sub(e, 0.7), 1.5)));
+    } else {
+        store64(out, SVARA_GLOTTAL_ROSENBERG);
+        store64(out + 8, F64_ONE);
+    }
+}
+
+# ---- goonj (acoustics) ----
+# gain_from_distance -- inverse-distance gain [0,1]; 1.0 if closer than ref.
+#must_use
+fn svara_bridge_gain_from_distance(ref_distance, distance) {
+    if ((f64_le(distance, ref_distance) == 1) | (f64_le(ref_distance, 0) == 1)) { return F64_ONE; }
+    return f64_clamp(f64_div(ref_distance, distance), 0, F64_ONE);
+}
+# bandwidth_scale_from_reverb -- 1.0 dry .. 2.0 (cap) wet.
+#must_use
+fn svara_bridge_bandwidth_scale_from_reverb(rt60) {
+    var r = f64_max(rt60, 0);
+    return f64_min(f64_add(F64_ONE, f64_mul(0.4, r)), F64_TWO);
+}
+# spectral_tilt_from_distance -- air absorption, capped at 6 dB/oct.
+#must_use
+fn svara_bridge_spectral_tilt_from_distance(distance_m) {
+    return f64_min(f64_mul(distance_m, 0.005), f64_from(6));
+}
+
+# ---- badal (weather) ----
+# lombard_effort_from_noise -- 1.0 (<45 dB) .. 1.8 (>85 dB).
+#must_use
+fn svara_bridge_lombard_effort_from_noise(ambient_db_spl) {
+    if (f64_lt(ambient_db_spl, f64_from(45)) == 1) { return F64_ONE; }
+    if (f64_gt(ambient_db_spl, f64_from(85)) == 1) { return 1.8; }
+    return f64_add(F64_ONE, f64_div(f64_mul(0.8, f64_sub(ambient_db_spl, f64_from(45))), f64_from(40)));
+}
+# lombard_f0_shift -- f0 rise (Hz) in noise, capped at 30.
+#must_use
+fn svara_bridge_lombard_f0_shift(ambient_db_spl) {
+    var excess = f64_max(f64_sub(ambient_db_spl, f64_from(50)), 0);
+    return f64_min(f64_mul(excess, 0.75), f64_from(30));
+}
+# breathiness_reduction_from_wind -- 1.0 (<5 m/s) .. [0.2,1] reduction factor.
+#must_use
+fn svara_bridge_breathiness_reduction_from_wind(wind_speed_ms) {
+    var wind = f64_max(wind_speed_ms, 0);
+    if (f64_lt(wind, f64_from(5)) == 1) { return F64_ONE; }
+    return f64_clamp(f64_sub(F64_ONE, f64_div(f64_sub(wind, f64_from(5)), f64_from(10))), 0.2, F64_ONE);
+}

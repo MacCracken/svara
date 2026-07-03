@@ -1,0 +1,91 @@
+# pool.tcyr -- tests for src/pool.cyr. Ports rust-old/src/pool.rs (serde dropped).
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/pool.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
+
+#must_use
+fn pl_finite(buf, n) {
+    var f = 1;
+    var i = 0;
+    while (i < n) { if (svara_is_finite(load64(buf + i * 8)) == 0) { f = 0; } i = i + 1; }
+    return f;
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var male = svara_voice_new_male();
+
+# ================================================================
+test_group("creation + with_capacity");
+var p = svara_pool_new(male, SR);
+assert_eq(svara_is_err(p), 0, "pool creation ok");
+assert_eq(svara_pool_render_count(p), 0, "render_count starts 0");
+var pc = svara_pool_with_capacity(male, SR, F64_HALF);
+assert_eq(svara_is_err(pc), 0, "with_capacity ok");
+assert_eq(svara_pool_peak_samples(pc) >= 22050, 1, "peak >= 0.5s = 22050");
+
+# ================================================================
+test_group("render single + multiple");
+var n = svara_pool_render(p, SVARA_PH_VOWEL_A, male, 0.1);
+assert_eq(svara_is_err(n), 0, "render ok");
+assert_eq(f64_gt(f64_from(n), 0), 1, "produced samples");
+assert_eq(pl_finite(svara_pool_buffer(p), n), 1, "finite");
+assert_eq(svara_pool_render_count(p), 1, "render_count 1");
+
+var p2 = svara_pool_new(male, SR);
+var multi = vec_new();
+vec_push(multi, SVARA_PH_VOWEL_A);
+vec_push(multi, SVARA_PH_FRIC_S);
+vec_push(multi, SVARA_PH_NASAL_N);
+var mi = 0;
+var mok = 1;
+while (mi < vec_len(multi)) {
+    var mn = svara_pool_render(p2, vec_get(multi, mi), male, 0.08);
+    if (pl_finite(svara_pool_buffer(p2), mn) == 0) { mok = 0; }
+    mi = mi + 1;
+}
+assert_eq(mok, 1, "multi render finite");
+assert_eq(svara_pool_render_count(p2), 3, "render_count 3");
+
+# ================================================================
+test_group("render_batch");
+var p3 = svara_pool_new(male, SR);
+var bph = vec_new();
+vec_push(bph, SVARA_PH_VOWEL_A);
+vec_push(bph, SVARA_PH_NASAL_N);
+vec_push(bph, SVARA_PH_VOWEL_I);
+var bdu = vec_new();
+vec_push(bdu, 0.08);
+vec_push(bdu, 0.05);
+vec_push(bdu, 0.08);
+var bout = svara_pool_render_batch(p3, bph, bdu, male);
+assert_eq(svara_is_err(bout), 0, "batch ok");
+assert_eq(f64_gt(f64_from(vec_len(bout)), 0), 1, "batch non-empty");
+assert_eq(svara_pool_render_count(p3), 3, "batch render_count 3");
+
+# ================================================================
+test_group("peak tracking + reset");
+var p4 = svara_pool_new(male, SR);
+svara_pool_render(p4, SVARA_PH_VOWEL_A, male, 0.05);
+var peak1 = svara_pool_peak_samples(p4);
+svara_pool_render(p4, SVARA_PH_VOWEL_A, male, 0.2);
+assert_eq(svara_pool_peak_samples(p4) > peak1, 1, "peak grows with longer render");
+svara_pool_reset(p4);
+assert_eq(svara_pool_render_count(p4), 0, "reset render_count 0");
+assert_eq(svara_pool_peak_samples(p4), 0, "reset peak 0");
+
+var rc = assert_summary();
+syscall(60, rc);

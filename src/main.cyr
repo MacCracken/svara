@@ -22,6 +22,9 @@ include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
+include "src/bridge.cyr"
 
 fn main() {
     alloc_init();
@@ -142,6 +145,22 @@ fn main() {
     }
     if (vec_len(utt) == 0) {
         println("svara: sequence render produced no samples");
+        return 1;
+    }
+    # Smoke: pooled render + batch renderer + a bridge mapping.
+    var pool = svara_pool_new(vp, f64_from(44100));
+    if (svara_pool_render(pool, SVARA_PH_VOWEL_A, vp, F64_HALF) <= 0) {
+        println("svara: pool render produced no samples");
+        return 1;
+    }
+    var br = svara_batch_new(vp, f64_from(44100));
+    svara_batch_push(br, SVARA_PH_VOWEL_A, F64_HALF, SVARA_STRESS_PRIMARY);
+    if (vec_len(SvRenderOutput_samples(svara_batch_render_all(br))) == 0) {
+        println("svara: batch render produced no samples");
+        return 1;
+    }
+    if (f64_le(svara_bridge_rd_from_arousal(0), svara_bridge_rd_from_arousal(F64_ONE)) == 1) {
+        println("svara: bridge mapping broken");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

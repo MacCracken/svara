@@ -31,6 +31,9 @@ modules = [
     "src/prosody.cyr",
     "src/trajectory.cyr",
     "src/sequence.cyr",
+    "src/pool.cyr",
+    "src/render.cyr",
+    "src/bridge.cyr",
 ]
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives

@@ -51,20 +51,21 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L3 | prosody.rs | src/prosody.cyr | ✅ ported | 17 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
 | L3 | trajectory.rs | src/trajectory.cyr | ✅ ported | 12 | TrajectoryPlanner + FormantKeypoint; Catmull-Rom + resistance blend; speaking-rate |
 | L3 | sequence.rs | src/sequence.cyr | ✅ ported | 29 | PhonemeEvent/Sequence; coarticulation crossfade render + trajectory-planned render_planned; cluster compression |
-| L4 | pool.rs | src/pool.cyr | ⏳ next | — | SynthesisPool (pre-allocated SynthesisContext wrapper) |
-| L4 | render.rs | src/render.cyr | ⏳ | — | BatchRenderer / RenderOutput / RenderProgress |
-| L4 | bridge.rs | src/bridge.cyr | ⏳ | — | 18 scalar clamp/lerp glue fns for sibling AGNOS crates |
+| L4 | pool.rs | src/pool.cyr | ✅ ported | 16 | SynthesisPool (pooled SynthesisContext + render_batch + counters) |
+| L4 | render.rs | src/render.cyr | ✅ ported | 16 | BatchRenderer / RenderOutput / RenderProgress; progress via callptr |
+| L4 | bridge.rs | src/bridge.cyr | ✅ ported | 37 | 18 scalar emotion/TTS/creature/acoustics/weather → synth-param maps |
 
-**Total ported: 13 modules, 541 tests passing.** The entire speech-science layer
-(L3) is done. Smoke binary (`build/svara`) green — **renders a full 2-phoneme
-utterance** (/a/-/i/) via `sequence.render`, plus the phoneme/context/prosody/
-trajectory paths.
+**ALL 19 Rust modules ported (16 `.cyr` modules; dsp folded into error, math → ganita).
+610 tests passing, all lint-clean.** The full library builds + links; the smoke binary
+exercises the entire pipeline (synthesize phoneme, SynthesisContext, sequence render,
+pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-541 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
-glottal / tract / voice / phoneme / prosody / trajectory / sequence — all passing
-(all 13 test files lint-clean). Run one suite: `cyrius test tests/<mod>.tcyr`.
+610 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract / voice / phoneme / prosody / trajectory / sequence / pool / render /
+bridge — all passing (all 16 test files lint-clean). Run one suite:
+`cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
 
@@ -88,11 +89,16 @@ Direct (declared in `cyrius.cyml`):
 
 dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.cyr`.
 
-## Next
+## Next — 3.0.0 finish (no more module ports)
 
-The L4 orchestration/glue layer: **`pool.cyr`** (SynthesisPool — pooled
-SynthesisContext with render/render_batch + diagnostics), **`render.cyr`**
-(BatchRenderer / RenderOutput / RenderProgress), **`bridge.cyr`** (scalar
-clamp/lerp glue for sibling AGNOS crates). Then M-serde codecs + the
-213-test/15-bench parity gate + `cyrius distlib` → `dist/svara.cyr`.
-See [`roadmap.md`](roadmap.md).
+1. **`cyrius distlib`** → `dist/svara.cyr` bundle (all 16 modules, dependency order)
+   + confirm it links for a consumer that provides hisab/naad/goonj.
+2. **M-serde** — hand-written JSON codecs (`svara_<type>_to_json`/`_from_json`) +
+   roundtrip `.tcyr` for the ~40 serializable types (the Rust "every type roundtrips"
+   invariant). See M-serde in [`roadmap.md`](roadmap.md) + the `#derive(json)`
+   proposal filed in the cyrius repo.
+3. **Benchmarks** — `.bcyr` reproducing the 15 Rust benches (hot paths: formant
+   filter, glottal, tract, phoneme synth). Run `./scripts/bench-history.sh`.
+4. **`cyrius audit`** green; confirm ~213-test parity coverage.
+5. **Version bump** `VERSION` 0.1.0 → **3.0.0** + CHANGELOG/roadmap; optional
+   dhvani/vansh consumer smoke.

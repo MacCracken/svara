@@ -1,0 +1,95 @@
+# render.tcyr -- tests for src/render.cyr. Ports rust-old/src/render.rs
+# (serde dropped). The progress callback is a Cyrius fn-ptr + user-data cell.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/render.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
+
+#must_use
+fn rn_finite(v) {
+    var f = 1;
+    var i = 0;
+    while (i < vec_len(v)) { if (svara_is_finite(vec_get(v, i)) == 0) { f = 0; } i = i + 1; }
+    return f;
+}
+#must_use
+fn rn_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
+
+# progress callback: increments the counter cell in `user`; also checks fraction.
+fn rn_count_cb(user, progress) {
+    store64(user, load64(user) + 1);
+    return 0;
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var male = svara_voice_new_male();
+
+# ================================================================
+test_group("creation + empty");
+var re = svara_batch_new(male, SR);
+assert_eq(svara_is_err(re), 0, "renderer creation ok");
+assert_eq(svara_batch_is_empty(re), 1, "starts empty");
+var eout = svara_batch_render_all(re);
+assert_eq(vec_len(SvRenderOutput_samples(eout)), 0, "empty render -> no samples");
+assert_eq(SvRenderProgress_total_phonemes(SvRenderOutput_progress(eout)), 0, "empty total 0");
+
+# ================================================================
+test_group("render single + sequence");
+var r1 = svara_batch_new(male, SR);
+svara_batch_push(r1, SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
+var o1 = svara_batch_render_all(r1);
+assert_eq(f64_gt(f64_from(vec_len(SvRenderOutput_samples(o1))), 0), 1, "single non-empty");
+assert_eq(rn_finite(SvRenderOutput_samples(o1)), 1, "single finite");
+assert_eq(SvRenderProgress_phoneme_index(SvRenderOutput_progress(o1)), 1, "progress index 1");
+assert_eq(SvRenderProgress_total_phonemes(SvRenderOutput_progress(o1)), 1, "progress total 1");
+
+var r3 = svara_batch_new(male, SR);
+svara_batch_push(r3, SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
+svara_batch_push(r3, SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED);
+svara_batch_push(r3, SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY);
+var o3 = svara_batch_render_all(r3);
+assert_eq(SvRenderProgress_total_phonemes(SvRenderOutput_progress(o3)), 3, "seq total 3");
+assert_eq(rn_finite(SvRenderOutput_samples(o3)), 1, "seq finite");
+
+# ================================================================
+test_group("render_with_progress callback");
+var rp = svara_batch_new(male, SR);
+svara_batch_push(rp, SVARA_PH_VOWEL_A, 0.08, SVARA_STRESS_PRIMARY);
+svara_batch_push(rp, SVARA_PH_FRIC_S, 0.06, SVARA_STRESS_UNSTRESSED);
+svara_batch_push(rp, SVARA_PH_VOWEL_E, 0.08, SVARA_STRESS_PRIMARY);
+var counter = alloc(8);
+store64(counter, 0);
+var po = svara_batch_render_with_progress(rp, &rn_count_cb, counter);
+assert_eq(load64(counter), 3, "progress callback invoked once per phoneme");
+assert_eq(f64_gt(f64_from(vec_len(SvRenderOutput_samples(po))), 0), 1, "progress render non-empty");
+
+# ================================================================
+test_group("progress fraction + clear");
+var frac_p = svara_render_progress_new(5, 10, 22050);
+assert_eq(rn_approx(svara_render_progress_fraction(frac_p), F64_HALF, TOL_1EM6), 1, "5/10 = 0.5");
+var frac_empty = svara_render_progress_new(0, 0, 0);
+assert_eq(rn_approx(svara_render_progress_fraction(frac_empty), F64_ONE, TOL_1EM6), 1, "0/0 -> 1.0");
+var rcl = svara_batch_new(male, SR);
+svara_batch_push(rcl, SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
+assert_eq(svara_batch_len(rcl), 1, "len 1 after push");
+svara_batch_clear(rcl);
+assert_eq(svara_batch_is_empty(rcl), 1, "empty after clear");
+
+var rc = assert_summary();
+syscall(60, rc);
