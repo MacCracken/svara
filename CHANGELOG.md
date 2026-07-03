@@ -51,6 +51,14 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   biquad, place-dependent) → subglottal resonance (naad `BandPass` ~600 Hz) → lip-radiation
   HPF → gain, all LOD-gated. Carries the naad-backend path (CFG split collapsed).
   Determinism verified. **14 tests.**
+- **`src/phoneme.cyr` (part 1/3)** (L3) — ports `phoneme.rs` inventory +
+  classification: the 101-phoneme IPA inventory (`Phoneme` → integer constants in
+  exact Rust order), `PhonemeClass`, and the pure lookups `class` / `is_voiced` /
+  `coarticulation_resistance` (Recasens DAC). All 101 phonemes golden-verified
+  against an independent transcription of the Rust match logic. **229 tests.**
+  Data tables (part 2) + synthesis (part 3, after `voice`) follow. The phoneme
+  tables are `match`-based pure functions → ported as embedded Cyrius (if-chains),
+  not externalized data files.
 
 ### Changed
 

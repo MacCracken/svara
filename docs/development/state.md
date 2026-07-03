@@ -17,8 +17,13 @@
 
 - **Backend**: carry only the `naad-backend` path (reuse Cyrius naad's biquad /
   noise / LFO); drop svara's internal fallback; collapse the tract/glottal CFG split.
-- **Static data tables** (phoneme / vowel / formant / duration / tilt): ship as
-  `.cyml` files parsed once at init (vidya pattern), not per-type serde codecs.
+- **Static data tables** (phoneme / vowel / formant / duration / tilt): the Rust
+  tables are `match`-based *pure functions*, not serde — so they port as **embedded
+  Cyrius code** (if-chains, like formant's `from_vowel`), NOT externalized data
+  files. (Refined 2026-07-03 after reading phoneme.rs — a synth library shouldn't
+  carry a runtime data-file dependency; JSON typed-DOM belongs to the actual serde
+  surface, M-serde.) A `#derive(json)` proposal to erase the serde-codec tedium was
+  filed in the cyrius repo: `docs/development/proposals/2026-07-03-derive-json-codec.md`.
 - **Parity bar**: tolerance parity — port the 213 Rust tests as `.tcyr` with f64
   within-epsilon assertions + benchmark parity. Transcendentals aren't bit-identical across arches.
 - **v2.0.1 quirks**: preserve all three for parity (unapplied per-vowel spectral
@@ -41,17 +46,19 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L2 | glottal.rs | src/glottal.cyr | ✅ ported | 35 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
 | L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
-| L3 | phoneme.rs | src/phoneme.cyr | ⏳ next | — | 2,636 LOC; `.cyml` data tables |
-| L3 | prosody/voice/sequence/trajectory | … | ⏳ | — | speech-science layer |
+| L3 | phoneme.rs | src/phoneme.cyr | 🔨 part 1/3 | 229 | inventory + class/voiced/resistance done (all 101 golden-verified). Part 2 = data tables; part 3 = synthesis (needs voice) |
+| L3 | voice.rs | src/voice.cyr | ⏳ next | — | VoiceProfile — needed by phoneme synthesis |
+| L3 | prosody/sequence/trajectory | … | ⏳ | — | speech-science layer |
 | L4 | pool/render/bridge | … | ⏳ | — | orchestration + glue |
 
-**Total ported: 8 modules, 151 tests passing.** Smoke binary (`build/svara`) green —
-runs the full glottal→tract pipeline.
+**Total ported: 8½ modules, 380 tests passing.** (phoneme part 1/3 done.) Smoke
+binary (`build/svara`) green — runs the full glottal→tract pipeline + classification.
 
 ## Tests
 
-151 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
-glottal / tract — all passing. Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
+380 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract / phoneme — all passing. Run one suite: `cyrius test tests/<mod>.tcyr`
+(no auto-discovery).
 
 ## Dependencies
 
@@ -77,8 +84,8 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-L3 speech-science layer, starting with `phoneme.cyr` — the crate's largest module
-(2,636 LOC): 101-phoneme inventory, 13 PhonemeClass strategies, per-class synthesis,
-formant/duration/tilt/VOT/nasalization data tables. Data tables to ship as `.cyml`
-files parsed once at init (vidya pattern). Then prosody / voice / sequence /
-trajectory, then the remaining orchestration (pool / render / bridge). See [`roadmap.md`](roadmap.md).
+Continue L3: **phoneme part 2** (data tables — `phoneme_formants` / `phoneme_duration` /
+`phoneme_spectral_tilt` / `height_adjusted_amplitudes` / `f2_locus_equation` / VOT /
+Nasalization, embedded Cyrius). Then **`voice.cyr`** (VoiceProfile), which unblocks
+**phoneme part 3** (per-class synthesis + SynthesisContext). Then prosody / sequence /
+trajectory, then pool / render / bridge. See [`roadmap.md`](roadmap.md).

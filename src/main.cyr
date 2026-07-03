@@ -17,6 +17,7 @@ include "src/formant.cyr"
 include "src/spectral.cyr"
 include "src/glottal.cyr"
 include "src/tract.cyr"
+include "src/phoneme.cyr"
 
 fn main() {
     alloc_init();
@@ -82,6 +83,15 @@ fn main() {
     }
     if (svara_is_finite(svara_tract_process_sample(vt, svara_glottal_next_sample(gs))) == 0) {
         println("svara: tract output not finite");
+        return 1;
+    }
+    # Smoke: phoneme classification (/a/ is a vowel, /s/ is voiceless).
+    if (svara_phoneme_class(SVARA_PH_VOWEL_A) != SVARA_CLASS_VOWEL) {
+        println("svara: phoneme class broken");
+        return 1;
+    }
+    if (svara_phoneme_is_voiced(SVARA_PH_FRIC_S) != 0) {
+        println("svara: phoneme voicing broken");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

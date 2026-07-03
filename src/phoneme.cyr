@@ -1,0 +1,218 @@
+# phoneme.cyr -- IPA phoneme inventory + articulatory classification.
+# Ports rust-old/src/phoneme.rs. This is the crate's largest module; it is
+# ported in layers:
+#   PART 1 (this bite): the 101-phoneme inventory (Phoneme enum -> integer
+#     constants, in exact Rust order so indices match), PhonemeClass, and the
+#     pure classification/lookup functions: class / is_voiced /
+#     coarticulation_resistance. No external deps beyond error.cyr.
+#   PART 2 (next): the data tables -- phoneme_formants / phoneme_duration /
+#     phoneme_spectral_tilt / height_adjusted_amplitudes / f2_locus_equation /
+#     VoiceOnsetTime / Nasalization -- as embedded Cyrius (like formant's
+#     from_vowel), NOT externalized (a synth lib shouldn't need a runtime data file).
+#   PART 3 (after voice.cyr): the per-class synthesis functions + SynthesisContext.
+#
+# f32 -> f64 throughout. serde on Phoneme/PhonemeClass dropped (the actual serde
+# surface -- config/state types -- is tracked in docs/development/roadmap.md M-serde).
+
+# ================================================================
+# Phoneme inventory (was `enum Phoneme`) -> integer constants 0..100, in exact
+# Rust variant order so any index/serialization mapping matches the oracle.
+# ================================================================
+# Vowels (0-14)
+var SVARA_PH_VOWEL_A = 0;   var SVARA_PH_VOWEL_E = 1;   var SVARA_PH_VOWEL_I = 2;
+var SVARA_PH_VOWEL_O = 3;   var SVARA_PH_VOWEL_U = 4;   var SVARA_PH_VOWEL_SCHWA = 5;
+var SVARA_PH_VOWEL_OPEN_O = 6;   var SVARA_PH_VOWEL_ASH = 7;   var SVARA_PH_VOWEL_NEAR_I = 8;
+var SVARA_PH_VOWEL_NEAR_U = 9;   var SVARA_PH_VOWEL_OPEN_A = 10;   var SVARA_PH_VOWEL_OPEN_E = 11;
+var SVARA_PH_VOWEL_CUP_V = 12;   var SVARA_PH_VOWEL_BIRD = 13;   var SVARA_PH_VOWEL_LONG_I = 14;
+# Diphthongs (15-19)
+var SVARA_PH_DIPH_AI = 15;   var SVARA_PH_DIPH_AU = 16;   var SVARA_PH_DIPH_OI = 17;
+var SVARA_PH_DIPH_EI = 18;   var SVARA_PH_DIPH_OU = 19;
+# Plosives (20-25)
+var SVARA_PH_PLOSIVE_P = 20;   var SVARA_PH_PLOSIVE_B = 21;   var SVARA_PH_PLOSIVE_T = 22;
+var SVARA_PH_PLOSIVE_D = 23;   var SVARA_PH_PLOSIVE_K = 24;   var SVARA_PH_PLOSIVE_G = 25;
+# Fricatives (26-34)
+var SVARA_PH_FRIC_F = 26;   var SVARA_PH_FRIC_V = 27;   var SVARA_PH_FRIC_S = 28;
+var SVARA_PH_FRIC_Z = 29;   var SVARA_PH_FRIC_SH = 30;   var SVARA_PH_FRIC_ZH = 31;
+var SVARA_PH_FRIC_TH = 32;   var SVARA_PH_FRIC_DH = 33;   var SVARA_PH_FRIC_H = 34;
+# Nasals (35-37)
+var SVARA_PH_NASAL_M = 35;   var SVARA_PH_NASAL_N = 36;   var SVARA_PH_NASAL_NG = 37;
+# Affricates (38-39)
+var SVARA_PH_AFFR_CH = 38;   var SVARA_PH_AFFR_J = 39;
+# Glottal / Tap (40-41)
+var SVARA_PH_GLOTTAL_STOP = 40;   var SVARA_PH_TAP_FLAP = 41;
+# Approximants / lateral (42-45)
+var SVARA_PH_LATERAL_L = 42;   var SVARA_PH_APPROX_R = 43;   var SVARA_PH_APPROX_W = 44;
+var SVARA_PH_APPROX_J = 45;
+# IPA additional vowels (46-52)
+var SVARA_PH_VOWEL_Y = 46;   var SVARA_PH_VOWEL_FRONT_ROUND_O = 47;   var SVARA_PH_VOWEL_OPEN_FRONT_ROUND_O = 48;
+var SVARA_PH_VOWEL_CLOSE_BACK_UNROUNDED = 49;   var SVARA_PH_VOWEL_MID_BACK_UNROUNDED = 50;
+var SVARA_PH_VOWEL_CLOSE_CENTRAL = 51;   var SVARA_PH_VOWEL_CLOSE_CENTRAL_ROUNDED = 52;
+# Uvular / retroflex plosives (53-56)
+var SVARA_PH_PLOSIVE_UVULAR_Q = 53;   var SVARA_PH_PLOSIVE_UVULAR_G = 54;
+var SVARA_PH_PLOSIVE_RETRO_T = 55;   var SVARA_PH_PLOSIVE_RETRO_D = 56;
+# Additional fricatives (57-69)
+var SVARA_PH_FRIC_BILABIAL_PH = 57;   var SVARA_PH_FRIC_BILABIAL_B = 58;   var SVARA_PH_FRIC_PALATAL_C = 59;
+var SVARA_PH_FRIC_PALATAL_J = 60;   var SVARA_PH_FRIC_UVULAR_CH = 61;   var SVARA_PH_FRIC_UVULAR_R = 62;
+var SVARA_PH_FRIC_PHARYNGEAL_H = 63;   var SVARA_PH_FRIC_PHARYNGEAL_A = 64;   var SVARA_PH_FRIC_RETRO_S = 65;
+var SVARA_PH_FRIC_RETRO_Z = 66;   var SVARA_PH_FRIC_LATERAL_S = 67;   var SVARA_PH_FRIC_LATERAL_Z = 68;
+var SVARA_PH_FRIC_GLOTTAL_H = 69;
+# Additional nasals (70-72)
+var SVARA_PH_NASAL_RETRO = 70;   var SVARA_PH_NASAL_PALATAL = 71;   var SVARA_PH_NASAL_UVULAR = 72;
+# Trills (73-75)
+var SVARA_PH_TRILL_BILABIAL = 73;   var SVARA_PH_TRILL_ALVEOLAR = 74;   var SVARA_PH_TRILL_UVULAR = 75;
+# Additional approximants / laterals (76-78)
+var SVARA_PH_APPROX_RETRO = 76;   var SVARA_PH_LATERAL_PALATAL = 77;   var SVARA_PH_LATERAL_VELAR = 78;
+# Additional flaps (79-80)
+var SVARA_PH_FLAP_RETRO = 79;   var SVARA_PH_FLAP_LATERAL = 80;
+# Additional affricates (81-86)
+var SVARA_PH_AFFR_TS = 81;   var SVARA_PH_AFFR_DZ = 82;   var SVARA_PH_AFFR_RETRO = 83;
+var SVARA_PH_AFFR_RETRO_VOICED = 84;   var SVARA_PH_AFFR_PF = 85;   var SVARA_PH_AFFR_LATERAL = 86;
+# Clicks (87-91)
+var SVARA_PH_CLICK_BILABIAL = 87;   var SVARA_PH_CLICK_DENTAL = 88;   var SVARA_PH_CLICK_ALVEOLAR = 89;
+var SVARA_PH_CLICK_PALATAL = 90;   var SVARA_PH_CLICK_LATERAL = 91;
+# Ejectives (92-96)
+var SVARA_PH_EJECTIVE_P = 92;   var SVARA_PH_EJECTIVE_T = 93;   var SVARA_PH_EJECTIVE_K = 94;
+var SVARA_PH_EJECTIVE_S = 95;   var SVARA_PH_EJECTIVE_CH = 96;
+# Implosives (97-99)
+var SVARA_PH_IMPLOSIVE_B = 97;   var SVARA_PH_IMPLOSIVE_D = 98;   var SVARA_PH_IMPLOSIVE_G = 99;
+# Silence (100)
+var SVARA_PH_SILENCE = 100;
+
+var SVARA_PHONEME_COUNT = 101;
+
+# ================================================================
+# PhonemeClass (was `enum PhonemeClass`) -> integer constants 0..12.
+# ================================================================
+var SVARA_CLASS_PLOSIVE = 0;   var SVARA_CLASS_FRICATIVE = 1;   var SVARA_CLASS_NASAL = 2;
+var SVARA_CLASS_APPROXIMANT = 3;   var SVARA_CLASS_AFFRICATE = 4;   var SVARA_CLASS_LATERAL = 5;
+var SVARA_CLASS_VOWEL = 6;   var SVARA_CLASS_DIPHTHONG = 7;   var SVARA_CLASS_TRILL = 8;
+var SVARA_CLASS_CLICK = 9;   var SVARA_CLASS_EJECTIVE = 10;   var SVARA_CLASS_IMPLOSIVE = 11;
+var SVARA_CLASS_SILENCE = 12;
+
+# Coarticulation-resistance values (Recasens 1999 DAC), f64 bit patterns.
+var SV_PH_R01  = 0x3FB999999999999A;   # 0.10
+var SV_PH_R015 = 0x3FC3333333333333;   # 0.15
+var SV_PH_R02  = 0x3FC999999999999A;   # 0.20
+var SV_PH_R04  = 0x3FD999999999999A;   # 0.40
+var SV_PH_R05  = 0x3FE0000000000000;   # 0.50
+var SV_PH_R055 = 0x3FE199999999999A;   # 0.55
+var SV_PH_R06  = 0x3FE3333333333333;   # 0.60
+var SV_PH_R065 = 0x3FE4CCCCCCCCCCCD;   # 0.65
+var SV_PH_R07  = 0x3FE6666666666666;   # 0.70
+var SV_PH_R075 = 0x3FE8000000000000;   # 0.75
+var SV_PH_R085 = 0x3FEB333333333333;   # 0.85
+var SV_PH_R09  = 0x3FECCCCCCCCCCCCD;   # 0.90
+
+# ================================================================
+# class -- articulatory class of a phoneme. Range-based over the ordered
+# inventory (contiguous class runs), with the scattered specials explicit.
+# ================================================================
+#must_use
+fn svara_phoneme_class(p) {
+    if (p <= 14) { return SVARA_CLASS_VOWEL; }                       # 0-14 vowels
+    if ((p >= 15) & (p <= 19)) { return SVARA_CLASS_DIPHTHONG; }     # 15-19
+    if ((p >= 20) & (p <= 25)) { return SVARA_CLASS_PLOSIVE; }       # 20-25
+    if ((p >= 26) & (p <= 34)) { return SVARA_CLASS_FRICATIVE; }     # 26-34
+    if ((p >= 35) & (p <= 37)) { return SVARA_CLASS_NASAL; }         # 35-37
+    if ((p >= 38) & (p <= 39)) { return SVARA_CLASS_AFFRICATE; }     # 38-39
+    if (p == SVARA_PH_GLOTTAL_STOP) { return SVARA_CLASS_PLOSIVE; }  # 40
+    if (p == SVARA_PH_TAP_FLAP) { return SVARA_CLASS_PLOSIVE; }      # 41
+    if (p == SVARA_PH_LATERAL_L) { return SVARA_CLASS_LATERAL; }     # 42
+    if ((p >= 43) & (p <= 45)) { return SVARA_CLASS_APPROXIMANT; }   # 43-45
+    if ((p >= 46) & (p <= 52)) { return SVARA_CLASS_VOWEL; }         # 46-52 IPA vowels
+    if ((p >= 53) & (p <= 56)) { return SVARA_CLASS_PLOSIVE; }       # 53-56 uvular/retroflex
+    if ((p >= 57) & (p <= 69)) { return SVARA_CLASS_FRICATIVE; }     # 57-69
+    if ((p >= 70) & (p <= 72)) { return SVARA_CLASS_NASAL; }         # 70-72
+    if ((p >= 73) & (p <= 75)) { return SVARA_CLASS_TRILL; }         # 73-75
+    if (p == SVARA_PH_APPROX_RETRO) { return SVARA_CLASS_APPROXIMANT; }  # 76
+    if ((p >= 77) & (p <= 78)) { return SVARA_CLASS_LATERAL; }       # 77-78
+    if ((p >= 79) & (p <= 80)) { return SVARA_CLASS_PLOSIVE; }       # 79-80 flaps (short contacts)
+    if ((p >= 81) & (p <= 86)) { return SVARA_CLASS_AFFRICATE; }     # 81-86
+    if ((p >= 87) & (p <= 91)) { return SVARA_CLASS_CLICK; }         # 87-91
+    if ((p >= 92) & (p <= 96)) { return SVARA_CLASS_EJECTIVE; }      # 92-96
+    if ((p >= 97) & (p <= 99)) { return SVARA_CLASS_IMPLOSIVE; }     # 97-99
+    return SVARA_CLASS_SILENCE;                                      # 100
+}
+
+# ================================================================
+# is_voiced -- 1 if voiced, 0 if voiceless. Voiceless set is explicit
+# (clicks 87-91 + ejectives 92-96 grouped); everything else is voiced.
+# ================================================================
+#must_use
+fn svara_phoneme_is_voiced(p) {
+    if ((p >= 87) & (p <= 96)) { return 0; }   # clicks + ejectives
+    if (p == SVARA_PH_SILENCE) { return 0; }
+    if (p == SVARA_PH_PLOSIVE_P) { return 0; }
+    if (p == SVARA_PH_PLOSIVE_T) { return 0; }
+    if (p == SVARA_PH_PLOSIVE_K) { return 0; }
+    if (p == SVARA_PH_PLOSIVE_UVULAR_Q) { return 0; }
+    if (p == SVARA_PH_PLOSIVE_RETRO_T) { return 0; }
+    if (p == SVARA_PH_FRIC_F) { return 0; }
+    if (p == SVARA_PH_FRIC_S) { return 0; }
+    if (p == SVARA_PH_FRIC_SH) { return 0; }
+    if (p == SVARA_PH_FRIC_TH) { return 0; }
+    if (p == SVARA_PH_FRIC_H) { return 0; }
+    if (p == SVARA_PH_FRIC_BILABIAL_PH) { return 0; }
+    if (p == SVARA_PH_FRIC_PALATAL_C) { return 0; }
+    if (p == SVARA_PH_FRIC_UVULAR_CH) { return 0; }
+    if (p == SVARA_PH_FRIC_PHARYNGEAL_H) { return 0; }
+    if (p == SVARA_PH_FRIC_RETRO_S) { return 0; }
+    if (p == SVARA_PH_FRIC_LATERAL_S) { return 0; }
+    if (p == SVARA_PH_AFFR_CH) { return 0; }
+    if (p == SVARA_PH_AFFR_TS) { return 0; }
+    if (p == SVARA_PH_AFFR_RETRO) { return 0; }
+    if (p == SVARA_PH_AFFR_PF) { return 0; }
+    if (p == SVARA_PH_AFFR_LATERAL) { return 0; }
+    if (p == SVARA_PH_GLOTTAL_STOP) { return 0; }
+    return 1;
+}
+
+# ================================================================
+# coarticulation_resistance -- Recasens (1999) DAC. Explicit per-phoneme arms,
+# then a class-based default for the IPA-extension phonemes. `0` == 0.0.
+# ================================================================
+#must_use
+fn svara_phoneme_coarticulation_resistance(p) {
+    if ((p == SVARA_PH_VOWEL_I) | (p == SVARA_PH_VOWEL_LONG_I) | (p == SVARA_PH_VOWEL_NEAR_I)) { return SV_PH_R09; }
+    if ((p == SVARA_PH_VOWEL_U) | (p == SVARA_PH_VOWEL_NEAR_U)) { return SV_PH_R085; }
+    if ((p == SVARA_PH_FRIC_S) | (p == SVARA_PH_FRIC_Z)
+        | (p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH)) { return SV_PH_R085; }
+    if ((p == SVARA_PH_AFFR_CH) | (p == SVARA_PH_AFFR_J)) { return SV_PH_R085; }
+    if ((p == SVARA_PH_VOWEL_A) | (p == SVARA_PH_VOWEL_OPEN_A) | (p == SVARA_PH_VOWEL_ASH)) { return SV_PH_R07; }
+    if ((p == SVARA_PH_VOWEL_E) | (p == SVARA_PH_VOWEL_O)
+        | (p == SVARA_PH_VOWEL_OPEN_O) | (p == SVARA_PH_VOWEL_OPEN_E)) { return SV_PH_R07; }
+    if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D)
+        | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_LATERAL_L)) { return SV_PH_R075; }
+    if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)) { return SV_PH_R07; }
+    if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_NASAL_M)) { return SV_PH_R065; }
+    if ((p == SVARA_PH_FRIC_F) | (p == SVARA_PH_FRIC_V)) { return SV_PH_R06; }
+    if ((p == SVARA_PH_FRIC_TH) | (p == SVARA_PH_FRIC_DH)) { return SV_PH_R06; }
+    if ((p == SVARA_PH_VOWEL_CUP_V) | (p == SVARA_PH_VOWEL_BIRD)) { return SV_PH_R05; }
+    if ((p == SVARA_PH_APPROX_R) | (p == SVARA_PH_APPROX_J)) { return SV_PH_R055; }
+    if (p == SVARA_PH_APPROX_W) { return SV_PH_R05; }
+    if (p == SVARA_PH_TAP_FLAP) { return SV_PH_R04; }
+    if (p == SVARA_PH_VOWEL_SCHWA) { return SV_PH_R02; }
+    if (p == SVARA_PH_FRIC_H) { return SV_PH_R015; }
+    if (p == SVARA_PH_GLOTTAL_STOP) { return SV_PH_R01; }
+    if (p == SVARA_PH_SILENCE) { return 0; }
+    if ((p >= SVARA_PH_DIPH_AI) & (p <= SVARA_PH_DIPH_OU)) { return SV_PH_R06; }
+    if ((p >= SVARA_PH_CLICK_BILABIAL) & (p <= SVARA_PH_CLICK_LATERAL)) { return SV_PH_R09; }
+    if ((p >= SVARA_PH_EJECTIVE_P) & (p <= SVARA_PH_EJECTIVE_CH)) { return SV_PH_R085; }
+    if ((p >= SVARA_PH_IMPLOSIVE_B) & (p <= SVARA_PH_IMPLOSIVE_G)) { return SV_PH_R07; }
+
+    # IPA-extension defaults, keyed by class
+    var c = svara_phoneme_class(p);
+    if (c == SVARA_CLASS_VOWEL) { return SV_PH_R07; }
+    if (c == SVARA_CLASS_PLOSIVE) { return SV_PH_R07; }
+    if (c == SVARA_CLASS_FRICATIVE) { return SV_PH_R07; }
+    if (c == SVARA_CLASS_NASAL) { return SV_PH_R07; }
+    if (c == SVARA_CLASS_TRILL) { return SV_PH_R06; }
+    if (c == SVARA_CLASS_APPROXIMANT) { return SV_PH_R055; }
+    if (c == SVARA_CLASS_LATERAL) { return SV_PH_R055; }
+    if (c == SVARA_CLASS_AFFRICATE) { return SV_PH_R085; }
+    if (c == SVARA_CLASS_CLICK) { return SV_PH_R09; }
+    if (c == SVARA_CLASS_EJECTIVE) { return SV_PH_R085; }
+    if (c == SVARA_CLASS_IMPLOSIVE) { return SV_PH_R07; }
+    if (c == SVARA_CLASS_DIPHTHONG) { return SV_PH_R06; }
+    return 0;   # Silence
+}

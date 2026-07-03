@@ -26,6 +26,7 @@ modules = [
     "src/spectral.cyr",
     "src/glottal.cyr",
     "src/tract.cyr",
+    "src/phoneme.cyr",
 ]
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives
