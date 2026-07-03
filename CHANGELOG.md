@@ -91,6 +91,11 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   insertion + sort), the 4 `IntonationPattern`s, 9 lexical `Tone`s (`to_contour`),
   and `Stress`. Contour constants use Cyrius decimal float literals. **17 tests.**
 - Toolchain pin → `6.3.39`.
+- **`src/trajectory.cyr`** (L3) — ports `trajectory.rs`: `TrajectoryPlanner` +
+  `FormantKeypoint`. `plan` builds lead/midpoint/trailing keypoints from phoneme
+  events; `formants_at` interpolates with 4-point Catmull-Rom (resistance-weighted
+  blend with linear) or sigmoid fallback; `apply_speaking_rate` (Lindblom
+  undershoot). Endpoint/boundary/finite behavior verified. **12 tests.**
 
 ### Changed
 

@@ -1,0 +1,107 @@
+# trajectory.tcyr -- tests for src/trajectory.cyr. Ports rust-old/src/trajectory.rs
+# #[test] blocks (serde dropped). phoneme pulls the full stack.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/trajectory.cyr"
+
+#must_use
+fn tr_approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var male = svara_voice_new_male();
+
+# ================================================================
+test_group("empty + single + three-phoneme plans");
+var empty_ph = vec_new();
+var empty_du = vec_new();
+var pe = svara_trajectory_plan(empty_ph, empty_du, male, SR);
+assert_eq(svara_trajectory_total_samples(pe), 0, "empty total_samples 0");
+assert_eq(svara_trajectory_num_keypoints(pe), 0, "empty keypoints 0");
+
+var one_ph = vec_new();
+vec_push(one_ph, SVARA_PH_VOWEL_A);
+var one_du = vec_new();
+vec_push(one_du, 0.1);
+var p1 = svara_trajectory_plan(one_ph, one_du, male, SR);
+assert_eq(svara_trajectory_total_samples(p1), 4410, "single total 4410");
+assert_eq(svara_trajectory_num_keypoints(p1), 3, "single: lead+mid+trail = 3 keypoints");
+
+var three_ph = vec_new();
+vec_push(three_ph, SVARA_PH_VOWEL_A);
+vec_push(three_ph, SVARA_PH_NASAL_N);
+vec_push(three_ph, SVARA_PH_VOWEL_I);
+var three_du = vec_new();
+vec_push(three_du, 0.1);
+vec_push(three_du, 0.06);
+vec_push(three_du, 0.1);
+var p3 = svara_trajectory_plan(three_ph, three_du, male, SR);
+assert_eq(svara_trajectory_num_keypoints(p3), 5, "three: lead+3mid+trail = 5 keypoints");
+assert_eq(svara_trajectory_total_samples(p3), 11466, "three total 11466");
+
+# ================================================================
+test_group("formants_at endpoints + boundary blend");
+var ai_ph = vec_new();
+vec_push(ai_ph, SVARA_PH_VOWEL_A);
+vec_push(ai_ph, SVARA_PH_VOWEL_I);
+var ai_du = vec_new();
+vec_push(ai_du, 0.1);
+vec_push(ai_du, 0.1);
+var pai = svara_trajectory_plan(ai_ph, ai_du, male, SR);
+# male fscale=1.0 -> /a/ f1=768, /i/ f1=342
+var at0 = svara_trajectory_formants_at(pai, 0);
+assert_eq(tr_approx(SvVowelTarget_f1(at0), f64_from(768), F64_ONE), 1, "start f1 ~ /a/ 768");
+var atend = svara_trajectory_formants_at(pai, svara_trajectory_total_samples(pai));
+assert_eq(tr_approx(SvVowelTarget_f1(atend), f64_from(342), F64_ONE), 1, "end f1 ~ /i/ 342");
+# boundary f1 between 342 and 768
+var atmid = svara_trajectory_formants_at(pai, svara_trajectory_total_samples(pai) / 2);
+var f1mid = SvVowelTarget_f1(atmid);
+assert_eq(f64_gt(f1mid, f64_from(332)), 1, "boundary f1 above /i/-10");
+assert_eq(f64_lt(f1mid, f64_from(778)), 1, "boundary f1 below /a/+10");
+
+# ================================================================
+test_group("Catmull-Rom trajectory finite + positive");
+var cr_ph = vec_new();
+vec_push(cr_ph, SVARA_PH_VOWEL_SCHWA);
+vec_push(cr_ph, SVARA_PH_VOWEL_A);
+vec_push(cr_ph, SVARA_PH_VOWEL_SCHWA);
+var cr_du = vec_new();
+vec_push(cr_du, 0.1);
+vec_push(cr_du, 0.1);
+vec_push(cr_du, 0.1);
+var pcr = svara_trajectory_plan(cr_ph, cr_du, male, SR);
+var s = 0;
+var tot = svara_trajectory_total_samples(pcr);
+var cr_ok = 1;
+while (s < tot) {
+    var tg = svara_trajectory_formants_at(pcr, s);
+    if (svara_is_finite(SvVowelTarget_f1(tg)) == 0) { cr_ok = 0; }
+    if (svara_is_finite(SvVowelTarget_f2(tg)) == 0) { cr_ok = 0; }
+    if (f64_le(SvVowelTarget_f1(tg), 0) == 1) { cr_ok = 0; }
+    s = s + 100;
+}
+assert_eq(cr_ok, 1, "Catmull-Rom trajectory finite + positive");
+
+# ================================================================
+test_group("apply_speaking_rate (Lindblom undershoot)");
+# VowelA resistance = 0.7; rate 2.0 -> factor 0.5 -> 0.35
+var rp = svara_trajectory_plan(one_ph, one_du, male, SR);
+svara_trajectory_apply_speaking_rate(rp, F64_TWO);
+var kp0 = vec_get(svara_trajectory_keypoints(rp), 0);
+assert_eq(tr_approx(SvFormantKeypoint_resistance(kp0), 0.35, 0.001), 1, "rate 2 halves resistance 0.7->0.35");
+
+var rc = assert_summary();
+syscall(60, rc);

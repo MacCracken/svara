@@ -1,0 +1,181 @@
+# trajectory.cyr -- formant trajectory planning across multi-phoneme windows.
+# Ports rust-old/src/trajectory.rs. Instead of per-phoneme synthesis + crossfade,
+# plan a continuous formant trajectory over an utterance: each phoneme's target
+# is a control point; neighbors influence transitions by coarticulation resistance.
+# Catmull-Rom (4-point) interpolation where neighbors exist, weighted by outer
+# resistance, else sigmoid (hisab ease_in_out_smooth). f32 -> f64 throughout.
+#
+# Requires: stdlib alloc/vec/math, hisab (ease_in_out_smooth), error.cyr (SV_EPSILON),
+# formant.cyr (VowelTarget), phoneme.cyr (phoneme_formants, coarticulation_resistance),
+# voice.cyr (apply_formant_scale). serde dropped (M-serde; roadmap.md).
+
+# FormantKeypoint -- target formants at a sample time, with coarticulation resistance.
+#derive(accessors)
+struct SvFormantKeypoint { time; target; resistance; }
+
+#must_use
+fn svara_keypoint_new(time, target, resistance) {
+    var k = alloc(sizeof(SvFormantKeypoint));
+    SvFormantKeypoint_set_time(k, time);
+    SvFormantKeypoint_set_target(k, target);
+    SvFormantKeypoint_set_resistance(k, resistance);
+    return k;
+}
+
+#derive(accessors)
+struct SvTrajectoryPlanner { keypoints; total_samples; }
+
+# plan -- build a trajectory from parallel phonemes (vec<int>) + durations (vec<f64>).
+#must_use
+fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
+    var self = alloc(sizeof(SvTrajectoryPlanner));
+    var kps = vec_new();
+    var np = vec_len(phonemes);
+    if (np == 0) {
+        SvTrajectoryPlanner_set_keypoints(self, kps);
+        SvTrajectoryPlanner_set_total_samples(self, 0);
+        return self;
+    }
+
+    # sample offset at each phoneme boundary
+    var boundaries = vec_new();
+    vec_push(boundaries, 0);
+    var offset = 0;
+    var i = 0;
+    while (i < np) {
+        offset = offset + f64_to(f64_mul(vec_get(durations, i), sample_rate));
+        vec_push(boundaries, offset);
+        i = i + 1;
+    }
+    var total = offset;
+
+    # leading keypoint at time 0
+    var p0 = vec_get(phonemes, 0);
+    vec_push(kps, svara_keypoint_new(0, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(p0)),
+        svara_phoneme_coarticulation_resistance(p0)));
+    # midpoint keypoint per phoneme
+    i = 0;
+    while (i < np) {
+        var ph = vec_get(phonemes, i);
+        var mid = (vec_get(boundaries, i) + vec_get(boundaries, i + 1)) / 2;
+        vec_push(kps, svara_keypoint_new(mid, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(ph)),
+            svara_phoneme_coarticulation_resistance(ph)));
+        i = i + 1;
+    }
+    # trailing keypoint at end
+    var pl = vec_get(phonemes, np - 1);
+    vec_push(kps, svara_keypoint_new(total, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(pl)),
+        svara_phoneme_coarticulation_resistance(pl)));
+
+    SvTrajectoryPlanner_set_keypoints(self, kps);
+    SvTrajectoryPlanner_set_total_samples(self, total);
+    return self;
+}
+
+#must_use
+fn svara_trajectory_total_samples(self) { return SvTrajectoryPlanner_total_samples(self); }
+#must_use
+fn svara_trajectory_num_keypoints(self) { return vec_len(SvTrajectoryPlanner_keypoints(self)); }
+#must_use
+fn svara_trajectory_keypoints(self) { return SvTrajectoryPlanner_keypoints(self); }
+
+# find_segment -- binary search for keypoint segment containing `sample`.
+#must_use
+fn svara_trajectory_find_segment(self, sample) {
+    var kps = SvTrajectoryPlanner_keypoints(self);
+    var n = vec_len(kps);
+    var lo = 0;
+    var hi = n - 1;
+    if (hi < 0) { hi = 0; }
+    while (lo < hi) {
+        var mid = (lo + hi + 1) / 2;   # div_ceil(2)
+        if (SvFormantKeypoint_time(vec_get(kps, mid)) <= sample) { lo = mid; }
+        else { hi = mid - 1; }
+    }
+    var cap = n - 2;
+    if (cap < 0) { cap = 0; }
+    if (lo > cap) { lo = cap; }
+    return lo;
+}
+
+# Catmull-Rom scalar: 0.5*(2b + (-a+c)t + (2a-5b+4c-d)t^2 + (-a+3b-3c+d)t^3).
+#must_use
+fn svara_traj_cr(a, b, c, d, t) {
+    var t2 = f64_mul(t, t);
+    var t3 = f64_mul(t2, t);
+    var term0 = f64_mul(F64_TWO, b);
+    var term1 = f64_mul(f64_add(f64_neg(a), c), t);
+    var c2 = f64_sub(f64_add(f64_sub(f64_mul(F64_TWO, a), f64_mul(f64_from(5), b)), f64_mul(f64_from(4), c)), d);
+    var term2 = f64_mul(c2, t2);
+    var c3 = f64_add(f64_sub(f64_add(f64_neg(a), f64_mul(f64_from(3), b)), f64_mul(f64_from(3), c)), d);
+    var term3 = f64_mul(c3, t3);
+    return f64_mul(F64_HALF, f64_add(f64_add(f64_add(term0, term1), term2), term3));
+}
+
+# catmull_rom_vowel -- 4-point Catmull-Rom over all 10 VowelTarget components.
+#must_use
+fn svara_catmull_rom_vowel(p0, p1, p2, p3, t) {
+    return svara_vowel_target_with_bandwidths(
+        svara_traj_cr(SvVowelTarget_f1(p0), SvVowelTarget_f1(p1), SvVowelTarget_f1(p2), SvVowelTarget_f1(p3), t),
+        svara_traj_cr(SvVowelTarget_f2(p0), SvVowelTarget_f2(p1), SvVowelTarget_f2(p2), SvVowelTarget_f2(p3), t),
+        svara_traj_cr(SvVowelTarget_f3(p0), SvVowelTarget_f3(p1), SvVowelTarget_f3(p2), SvVowelTarget_f3(p3), t),
+        svara_traj_cr(SvVowelTarget_f4(p0), SvVowelTarget_f4(p1), SvVowelTarget_f4(p2), SvVowelTarget_f4(p3), t),
+        svara_traj_cr(SvVowelTarget_f5(p0), SvVowelTarget_f5(p1), SvVowelTarget_f5(p2), SvVowelTarget_f5(p3), t),
+        svara_traj_cr(SvVowelTarget_b1(p0), SvVowelTarget_b1(p1), SvVowelTarget_b1(p2), SvVowelTarget_b1(p3), t),
+        svara_traj_cr(SvVowelTarget_b2(p0), SvVowelTarget_b2(p1), SvVowelTarget_b2(p2), SvVowelTarget_b2(p3), t),
+        svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1), SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t),
+        svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1), SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t),
+        svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1), SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
+}
+
+# formants_at -- interpolated VowelTarget at a sample position.
+#must_use
+fn svara_trajectory_formants_at(self, sample) {
+    var kps = SvTrajectoryPlanner_keypoints(self);
+    var n = vec_len(kps);
+    if (n == 0) {
+        return svara_vowel_target_new(f64_from(500), f64_from(1500), f64_from(2500), f64_from(3300), f64_from(3750));
+    }
+    if (n == 1) { return SvFormantKeypoint_target(vec_get(kps, 0)); }
+
+    var seg = svara_trajectory_find_segment(self, sample);
+    var k0 = vec_get(kps, seg);
+    var seg1 = seg + 1;
+    if (seg1 > n - 1) { seg1 = n - 1; }
+    var k1 = vec_get(kps, seg1);
+
+    var span = SvFormantKeypoint_time(k1) - SvFormantKeypoint_time(k0);
+    if (span < 1) { span = 1; }
+    var d = sample - SvFormantKeypoint_time(k0);
+    if (d < 0) { d = 0; }
+    var t = f64_clamp(f64_div(f64_from(d), f64_from(span)), 0, F64_ONE);
+
+    if ((seg > 0) & ((seg + 2) < n)) {
+        var km1 = vec_get(kps, seg - 1);
+        var k2 = vec_get(kps, seg + 2);
+        var outer = f64_mul(f64_add(SvFormantKeypoint_resistance(km1), SvFormantKeypoint_resistance(k2)), F64_HALF);
+        var catmull_weight = f64_sub(F64_ONE, outer);
+        if (f64_gt(catmull_weight, 0.05) == 1) {
+            var linear = svara_vowel_target_interpolate(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1), t);
+            var catmull = svara_catmull_rom_vowel(SvFormantKeypoint_target(km1), SvFormantKeypoint_target(k0),
+                SvFormantKeypoint_target(k1), SvFormantKeypoint_target(k2), t);
+            return svara_vowel_target_interpolate(linear, catmull, catmull_weight);
+        }
+    }
+    var t_smooth = ease_in_out_smooth(t);
+    return svara_vowel_target_interpolate(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1), t_smooth);
+}
+
+# apply_speaking_rate -- Lindblom undershoot: resistance *= 1/rate, clamped [0,1].
+fn svara_trajectory_apply_speaking_rate(self, rate) {
+    if (f64_lt(f64_abs(f64_sub(rate, F64_ONE)), SV_EPSILON) == 1) { return 0; }
+    var factor = f64_div(F64_ONE, rate);
+    var kps = SvTrajectoryPlanner_keypoints(self);
+    var i = 0;
+    while (i < vec_len(kps)) {
+        var kp = vec_get(kps, i);
+        SvFormantKeypoint_set_resistance(kp, f64_clamp(f64_mul(SvFormantKeypoint_resistance(kp), factor), 0, F64_ONE));
+        i = i + 1;
+    }
+    return 0;
+}

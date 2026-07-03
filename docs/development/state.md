@@ -49,19 +49,19 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
 | L3 | prosody.rs | src/prosody.cyr | ✅ ported | 17 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
-| L3 | sequence.rs | src/sequence.cyr | ⏳ next | — | PhonemeEvent/Sequence coarticulation; render + render_planned |
-| L3 | trajectory.rs | src/trajectory.cyr | ⏳ | — | Catmull-Rom formant planning; hisab HVec3/bspline |
+| L3 | trajectory.rs | src/trajectory.cyr | ✅ ported | 12 | TrajectoryPlanner + FormantKeypoint; Catmull-Rom + resistance blend; speaking-rate |
+| L3 | sequence.rs | src/sequence.cyr | ⏳ next | — | PhonemeEvent/Sequence coarticulation; render + render_planned (uses trajectory) |
 | L4 | pool/render/bridge | … | ⏳ | — | SynthesisPool / BatchRenderer / scalar glue |
 
-**Total ported: 11 modules, 500 tests passing.** Smoke binary (`build/svara`) green
+**Total ported: 12 modules, 512 tests passing.** Smoke binary (`build/svara`) green
 — synthesizes a full phoneme end-to-end (voice → glottal → tract → PCM), via both
-the free API and SynthesisContext, plus prosody contours.
+the free API and SynthesisContext, plus prosody contours + trajectory planning.
 
 ## Tests
 
-500 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
-glottal / tract / voice / phoneme / prosody — all passing (all 11 test files lint-clean).
-Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
+512 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract / voice / phoneme / prosody / trajectory — all passing (all 12 test
+files lint-clean). Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
 
@@ -89,7 +89,6 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 **`sequence.cyr`** (PhonemeEvent / PhonemeSequence — coarticulation crossfade
 `render` + continuous-trajectory `render_planned`; consonant-cluster compression;
-uses phoneme + voice + SynthesisContext + prosody + hisab easing). Then
-**`trajectory.cyr`** (Catmull-Rom formant planning; hisab HVec3/bspline), then
-**pool / render / bridge**. Then M-serde codecs + parity/bench gates + `dist/svara.cyr`.
-See [`roadmap.md`](roadmap.md).
+uses phoneme + voice + SynthesisContext + prosody + trajectory + hisab easing).
+Then **pool / render / bridge** (orchestration + glue). Then M-serde codecs +
+parity/bench gates + `dist/svara.cyr`. See [`roadmap.md`](roadmap.md).

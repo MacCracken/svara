@@ -20,6 +20,7 @@ include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
 include "src/prosody.cyr"
+include "src/trajectory.cyr"
 
 fn main() {
     alloc_init();
