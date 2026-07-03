@@ -85,6 +85,7 @@ fn svara_pool_peak_samples(p) { return SvSynthesisPool_peak_samples(p); }
 #must_use
 fn svara_pool_context(p) { return SvSynthesisPool_ctx(p); }
 
+# reset -- zero the pool's render-count and peak-sample counters (context kept).
 fn svara_pool_reset(p) {
     SvSynthesisPool_set_render_count(p, 0);
     SvSynthesisPool_set_peak_samples(p, 0);

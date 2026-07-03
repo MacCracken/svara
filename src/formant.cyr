@@ -82,7 +82,7 @@ fn svara_vowel_target_with_bandwidths(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
 #must_use
 fn svara_vowel_target_new(f1, f2, f3, f4, f5) {
     return svara_vowel_target_with_bandwidths(f1, f2, f3, f4, f5,
-        f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+    f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
 }
 
 # from_vowel -- Hillenbrand et al. (1995) male averages, per-vowel bandwidths.
@@ -90,53 +90,53 @@ fn svara_vowel_target_new(f1, f2, f3, f4, f5) {
 fn svara_vowel_target_from_vowel(vowel) {
     if (vowel == SVARA_VOWEL_A) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(768), f64_from(1333), f64_from(2522), f64_from(3300), f64_from(3750),
-            f64_from(90), f64_from(100), f64_from(120), f64_from(140), f64_from(160));
+        f64_from(768), f64_from(1333), f64_from(2522), f64_from(3300), f64_from(3750),
+        f64_from(90), f64_from(100), f64_from(120), f64_from(140), f64_from(160));
     }
     if (vowel == SVARA_VOWEL_E) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(476), f64_from(2089), f64_from(2691), f64_from(3300), f64_from(3750),
-            f64_from(55), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+        f64_from(476), f64_from(2089), f64_from(2691), f64_from(3300), f64_from(3750),
+        f64_from(55), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
     }
     if (vowel == SVARA_VOWEL_I) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(342), f64_from(2322), f64_from(3000), f64_from(3657), f64_from(3750),
-            f64_from(40), f64_from(70), f64_from(90), f64_from(120), f64_from(140));
+        f64_from(342), f64_from(2322), f64_from(3000), f64_from(3657), f64_from(3750),
+        f64_from(40), f64_from(70), f64_from(90), f64_from(120), f64_from(140));
     }
     if (vowel == SVARA_VOWEL_O) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(497), f64_from(910), f64_from(2459), f64_from(3300), f64_from(3750),
-            f64_from(65), f64_from(70), f64_from(100), f64_from(120), f64_from(140));
+        f64_from(497), f64_from(910), f64_from(2459), f64_from(3300), f64_from(3750),
+        f64_from(65), f64_from(70), f64_from(100), f64_from(120), f64_from(140));
     }
     if (vowel == SVARA_VOWEL_U) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(378), f64_from(997), f64_from(2343), f64_from(3300), f64_from(3750),
-            f64_from(45), f64_from(65), f64_from(90), f64_from(120), f64_from(140));
+        f64_from(378), f64_from(997), f64_from(2343), f64_from(3300), f64_from(3750),
+        f64_from(45), f64_from(65), f64_from(90), f64_from(120), f64_from(140));
     }
     if (vowel == SVARA_VOWEL_SCHWA) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(523), f64_from(1588), f64_from(2469), f64_from(3300), f64_from(3750),
-            f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+        f64_from(523), f64_from(1588), f64_from(2469), f64_from(3300), f64_from(3750),
+        f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
     }
     if (vowel == SVARA_VOWEL_OPENO) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(652), f64_from(997), f64_from(2538), f64_from(3300), f64_from(3750),
-            f64_from(80), f64_from(75), f64_from(110), f64_from(130), f64_from(150));
+        f64_from(652), f64_from(997), f64_from(2538), f64_from(3300), f64_from(3750),
+        f64_from(80), f64_from(75), f64_from(110), f64_from(130), f64_from(150));
     }
     if (vowel == SVARA_VOWEL_ASH) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(669), f64_from(1880), f64_from(2489), f64_from(3300), f64_from(3750),
-            f64_from(80), f64_from(90), f64_from(110), f64_from(130), f64_from(150));
+        f64_from(669), f64_from(1880), f64_from(2489), f64_from(3300), f64_from(3750),
+        f64_from(80), f64_from(90), f64_from(110), f64_from(130), f64_from(150));
     }
     if (vowel == SVARA_VOWEL_NEARI) {
         return svara_vowel_target_with_bandwidths(
-            f64_from(427), f64_from(2034), f64_from(2684), f64_from(3300), f64_from(3750),
-            f64_from(50), f64_from(75), f64_from(95), f64_from(120), f64_from(140));
+        f64_from(427), f64_from(2034), f64_from(2684), f64_from(3300), f64_from(3750),
+        f64_from(50), f64_from(75), f64_from(95), f64_from(120), f64_from(140));
     }
     # SVARA_VOWEL_NEARU (default arm)
     return svara_vowel_target_with_bandwidths(
-        f64_from(469), f64_from(1122), f64_from(2434), f64_from(3300), f64_from(3750),
-        f64_from(55), f64_from(70), f64_from(95), f64_from(120), f64_from(140));
+    f64_from(469), f64_from(1122), f64_from(2434), f64_from(3300), f64_from(3750),
+    f64_from(55), f64_from(70), f64_from(95), f64_from(120), f64_from(140));
 }
 
 # to_formants -- vec of 5 Formant pointers (F1..F5) with default amplitudes.
@@ -267,8 +267,8 @@ fn svara_formant_bank_process(self, input) {
         var x2i = load64(x2 + off); var y1i = load64(y1 + off); var y2i = load64(y2 + off);
         # y = b0*input + b2*x2 - a1*y1 - a2*y2
         var y = f64_sub(f64_sub(f64_add(f64_mul(load64(b0 + off), input), f64_mul(load64(b2 + off), x2i)),
-                                f64_mul(load64(a1 + off), y1i)),
-                        f64_mul(load64(a2 + off), y2i));
+        f64_mul(load64(a1 + off), y1i)),
+        f64_mul(load64(a2 + off), y2i));
         store64(x2 + off, load64(x1 + off));
         store64(x1 + off, input);
         store64(y2 + off, y1i);
@@ -308,12 +308,13 @@ fn svara_dc_blocker_new(sample_rate) {
 fn svara_dc_blocker_process(self, input) {
     # output = input - x_prev + alpha * y_prev
     var output = f64_add(f64_sub(input, SvDcBlocker_x_prev(self)),
-                         f64_mul(SvDcBlocker_alpha(self), SvDcBlocker_y_prev(self)));
+    f64_mul(SvDcBlocker_alpha(self), SvDcBlocker_y_prev(self)));
     SvDcBlocker_set_x_prev(self, input);
     SvDcBlocker_set_y_prev(self, output);
     return output;
 }
 
+# dc_blocker_reset -- clear the DC-blocker's one-sample history to silence.
 fn svara_dc_blocker_reset(self) {
     SvDcBlocker_set_x_prev(self, 0);
     SvDcBlocker_set_y_prev(self, 0);

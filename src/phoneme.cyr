@@ -176,13 +176,13 @@ fn svara_phoneme_coarticulation_resistance(p) {
     if ((p == SVARA_PH_VOWEL_I) | (p == SVARA_PH_VOWEL_LONG_I) | (p == SVARA_PH_VOWEL_NEAR_I)) { return SV_PH_R09; }
     if ((p == SVARA_PH_VOWEL_U) | (p == SVARA_PH_VOWEL_NEAR_U)) { return SV_PH_R085; }
     if ((p == SVARA_PH_FRIC_S) | (p == SVARA_PH_FRIC_Z)
-        | (p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH)) { return SV_PH_R085; }
+    | (p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH)) { return SV_PH_R085; }
     if ((p == SVARA_PH_AFFR_CH) | (p == SVARA_PH_AFFR_J)) { return SV_PH_R085; }
     if ((p == SVARA_PH_VOWEL_A) | (p == SVARA_PH_VOWEL_OPEN_A) | (p == SVARA_PH_VOWEL_ASH)) { return SV_PH_R07; }
     if ((p == SVARA_PH_VOWEL_E) | (p == SVARA_PH_VOWEL_O)
-        | (p == SVARA_PH_VOWEL_OPEN_O) | (p == SVARA_PH_VOWEL_OPEN_E)) { return SV_PH_R07; }
+    | (p == SVARA_PH_VOWEL_OPEN_O) | (p == SVARA_PH_VOWEL_OPEN_E)) { return SV_PH_R07; }
     if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D)
-        | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_LATERAL_L)) { return SV_PH_R075; }
+    | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_LATERAL_L)) { return SV_PH_R075; }
     if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)) { return SV_PH_R07; }
     if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_NASAL_M)) { return SV_PH_R065; }
     if ((p == SVARA_PH_FRIC_F) | (p == SVARA_PH_FRIC_V)) { return SV_PH_R06; }
@@ -243,8 +243,8 @@ fn svara_ph_vt(f1, f2, f3, f4, f5) {
 #must_use
 fn svara_ph_vtb(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
     return svara_vowel_target_with_bandwidths(
-        f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
-        f64_from(b1), f64_from(b2), f64_from(b3), f64_from(b4), f64_from(b5));
+    f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
+    f64_from(b1), f64_from(b2), f64_from(b3), f64_from(b4), f64_from(b5));
 }
 
 # ================================================================
@@ -258,7 +258,7 @@ fn svara_f2_locus_equation(p, out) {
         store64(out, f64_from(900)); store64(out + 8, SV_PH_R085); return 1;    # bilabial
     }
     if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D)
-        | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_TAP_FLAP)) {
+    | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_TAP_FLAP)) {
         store64(out, f64_from(1750)); store64(out + 8, SV_PH_R055); return 1;   # alveolar
     }
     if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)) {
@@ -323,22 +323,22 @@ fn svara_phoneme_formants(p) {
     # consonant locus targets (grouped by identical target)
     # bilabial locus (350, 900, 2400)
     if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_NASAL_M)
-        | (p == SVARA_PH_FRIC_BILABIAL_PH) | (p == SVARA_PH_FRIC_BILABIAL_B)
-        | (p == SVARA_PH_TRILL_BILABIAL) | (p == SVARA_PH_CLICK_BILABIAL)
-        | (p == SVARA_PH_EJECTIVE_P) | (p == SVARA_PH_IMPLOSIVE_B)) {
+    | (p == SVARA_PH_FRIC_BILABIAL_PH) | (p == SVARA_PH_FRIC_BILABIAL_B)
+    | (p == SVARA_PH_TRILL_BILABIAL) | (p == SVARA_PH_CLICK_BILABIAL)
+    | (p == SVARA_PH_EJECTIVE_P) | (p == SVARA_PH_IMPLOSIVE_B)) {
         return svara_ph_vt(350, 900, 2400, 3300, 3750);
     }
     # alveolar locus (400, 1750, 2600)
     if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D) | (p == SVARA_PH_NASAL_N)
-        | (p == SVARA_PH_LATERAL_L) | (p == SVARA_PH_FRIC_S) | (p == SVARA_PH_FRIC_Z)
-        | (p == SVARA_PH_TAP_FLAP) | (p == SVARA_PH_AFFR_TS) | (p == SVARA_PH_AFFR_DZ)
-        | (p == SVARA_PH_CLICK_ALVEOLAR) | (p == SVARA_PH_EJECTIVE_T) | (p == SVARA_PH_EJECTIVE_S)
-        | (p == SVARA_PH_IMPLOSIVE_D)) {
+    | (p == SVARA_PH_LATERAL_L) | (p == SVARA_PH_FRIC_S) | (p == SVARA_PH_FRIC_Z)
+    | (p == SVARA_PH_TAP_FLAP) | (p == SVARA_PH_AFFR_TS) | (p == SVARA_PH_AFFR_DZ)
+    | (p == SVARA_PH_CLICK_ALVEOLAR) | (p == SVARA_PH_EJECTIVE_T) | (p == SVARA_PH_EJECTIVE_S)
+    | (p == SVARA_PH_IMPLOSIVE_D)) {
         return svara_ph_vt(400, 1750, 2600, 3300, 3750);
     }
     # velar locus (350, 1800, 2500)
     if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)
-        | (p == SVARA_PH_EJECTIVE_K) | (p == SVARA_PH_IMPLOSIVE_G)) {
+    | (p == SVARA_PH_EJECTIVE_K) | (p == SVARA_PH_IMPLOSIVE_G)) {
         return svara_ph_vt(350, 1800, 2500, 3300, 3750);
     }
     # labiodental (350, 1050, 2400)
@@ -347,7 +347,7 @@ fn svara_phoneme_formants(p) {
     }
     # postalveolar (350, 1600, 2500)
     if ((p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH) | (p == SVARA_PH_AFFR_CH)
-        | (p == SVARA_PH_AFFR_J) | (p == SVARA_PH_EJECTIVE_CH)) {
+    | (p == SVARA_PH_AFFR_J) | (p == SVARA_PH_EJECTIVE_CH)) {
         return svara_ph_vt(350, 1600, 2500, 3300, 3750);
     }
     # dental (350, 1400, 2500)
@@ -358,15 +358,15 @@ fn svara_phoneme_formants(p) {
     if (p == SVARA_PH_APPROX_J) { return svara_ph_vt(280, 2200, 2900, 3300, 3750); }
     # uvular locus (350, 1100, 2300)
     if ((p == SVARA_PH_PLOSIVE_UVULAR_Q) | (p == SVARA_PH_PLOSIVE_UVULAR_G)
-        | (p == SVARA_PH_FRIC_UVULAR_CH) | (p == SVARA_PH_FRIC_UVULAR_R)
-        | (p == SVARA_PH_NASAL_UVULAR) | (p == SVARA_PH_TRILL_UVULAR) | (p == SVARA_PH_LATERAL_VELAR)) {
+    | (p == SVARA_PH_FRIC_UVULAR_CH) | (p == SVARA_PH_FRIC_UVULAR_R)
+    | (p == SVARA_PH_NASAL_UVULAR) | (p == SVARA_PH_TRILL_UVULAR) | (p == SVARA_PH_LATERAL_VELAR)) {
         return svara_ph_vt(350, 1100, 2300, 3300, 3750);
     }
     # retroflex locus (400, 1550, 2000)
     if ((p == SVARA_PH_PLOSIVE_RETRO_T) | (p == SVARA_PH_PLOSIVE_RETRO_D)
-        | (p == SVARA_PH_FRIC_RETRO_S) | (p == SVARA_PH_FRIC_RETRO_Z)
-        | (p == SVARA_PH_NASAL_RETRO) | (p == SVARA_PH_FLAP_RETRO)
-        | (p == SVARA_PH_AFFR_RETRO) | (p == SVARA_PH_AFFR_RETRO_VOICED)) {
+    | (p == SVARA_PH_FRIC_RETRO_S) | (p == SVARA_PH_FRIC_RETRO_Z)
+    | (p == SVARA_PH_NASAL_RETRO) | (p == SVARA_PH_FLAP_RETRO)
+    | (p == SVARA_PH_AFFR_RETRO) | (p == SVARA_PH_AFFR_RETRO_VOICED)) {
         return svara_ph_vt(400, 1550, 2000, 3300, 3750);
     }
     # palatal (300, 2200, 2900)
@@ -379,7 +379,7 @@ fn svara_phoneme_formants(p) {
     }
     # lateral fricative / affricate (400, 1600, 2500)
     if ((p == SVARA_PH_FRIC_LATERAL_S) | (p == SVARA_PH_FRIC_LATERAL_Z)
-        | (p == SVARA_PH_FLAP_LATERAL) | (p == SVARA_PH_AFFR_LATERAL)) {
+    | (p == SVARA_PH_FLAP_LATERAL) | (p == SVARA_PH_AFFR_LATERAL)) {
         return svara_ph_vt(400, 1600, 2500, 3300, 3750);
     }
     if (p == SVARA_PH_TRILL_ALVEOLAR) { return svara_ph_vt(400, 1500, 2500, 3300, 3750); }
@@ -596,13 +596,13 @@ fn svara_ph_diphthong_end_target(phoneme) {
 fn svara_ph_fricative_formants(phoneme) {
     var v = vec_new();
     if ((phoneme == SVARA_PH_FRIC_S) | (phoneme == SVARA_PH_FRIC_Z)
-        | (phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_AFFR_TS) | (phoneme == SVARA_PH_AFFR_DZ)) {
+    | (phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_AFFR_TS) | (phoneme == SVARA_PH_AFFR_DZ)) {
         vec_push(v, svara_formant_new(f64_from(4500), f64_from(500), F64_ONE));
         vec_push(v, svara_formant_new(f64_from(7000), f64_from(800), SV_PH_R07));
         return v;
     }
     if ((phoneme == SVARA_PH_FRIC_SH) | (phoneme == SVARA_PH_FRIC_ZH)
-        | (phoneme == SVARA_PH_AFFR_CH) | (phoneme == SVARA_PH_AFFR_J) | (phoneme == SVARA_PH_EJECTIVE_CH)) {
+    | (phoneme == SVARA_PH_AFFR_CH) | (phoneme == SVARA_PH_AFFR_J) | (phoneme == SVARA_PH_EJECTIVE_CH)) {
         vec_push(v, svara_formant_new(f64_from(2800), f64_from(600), F64_ONE));
         vec_push(v, svara_formant_new(f64_from(5000), f64_from(800), SV_PH_R06));
         return v;

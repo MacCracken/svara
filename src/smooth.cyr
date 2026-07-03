@@ -62,7 +62,7 @@ fn svara_smooth_next(self) {
         var alpha = SvSmoothedParam_alpha(self);
         # current = alpha*current + (1-alpha)*target
         SvSmoothedParam_set_current(self,
-            f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
+        f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
     }
     return SvSmoothedParam_current(self);
 }

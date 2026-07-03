@@ -51,12 +51,15 @@ fn svara_sequence_new() {
     return s;
 }
 
+# set_transition_window -- coarticulation crossfade seconds, floored at 0.001.
 fn svara_sequence_set_transition_window(s, window) {
     SvPhonemeSequence_set_transition_window(s, f64_max(window, 0.001));
 }
+# set_lookahead_onset -- anticipatory-coarticulation weight, clamped [0,1].
 fn svara_sequence_set_lookahead_onset(s, onset) {
     SvPhonemeSequence_set_lookahead_onset(s, f64_clamp(onset, 0, F64_ONE));
 }
+# set_speaking_rate -- global duration scale, clamped [0.5,3.0].
 fn svara_sequence_set_speaking_rate(s, rate) {
     SvPhonemeSequence_set_speaking_rate(s, f64_clamp(rate, 0.5, 3.0));
 }
@@ -64,6 +67,7 @@ fn svara_sequence_set_speaking_rate(s, rate) {
 fn svara_sequence_speaking_rate(s) { return SvPhonemeSequence_speaking_rate(s); }
 #must_use
 fn svara_sequence_transition_window(s) { return SvPhonemeSequence_transition_window(s); }
+# push -- append a phoneme event to the sequence.
 fn svara_sequence_push(s, event) { vec_push(SvPhonemeSequence_events(s), event); }
 #must_use
 fn svara_sequence_len(s) { return vec_len(SvPhonemeSequence_events(s)); }
@@ -268,7 +272,7 @@ fn svara_sequence_render(seq, voice, sample_rate) {
             SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
         }
         var seg = svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, sample_rate,
-            vec_get(durs, i), vec_get(nasals, i));
+        vec_get(durs, i), vec_get(nasals, i));
         if (svara_is_err(seg) == 1) { return seg; }
         vec_push(segments, seg);
         i = i + 1;
@@ -376,8 +380,8 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         var c = svara_phoneme_class(phoneme);
         var sample = 0;
         if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG) | (c == SVARA_CLASS_APPROXIMANT)
-            | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
-            | (c == SVARA_CLASS_TRILL)) {
+        | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
+        | (c == SVARA_CLASS_TRILL)) {
             sample = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
         } elif (c == SVARA_CLASS_FRICATIVE) {
             var nz = f64_mul(svara_rng_next_f32(noise), F64_HALF);
@@ -388,7 +392,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
                 sample = f64_mul(nz, SV_PH_R06);
             }
         } elif ((c == SVARA_CLASS_PLOSIVE) | (c == SVARA_CLASS_AFFRICATE)
-            | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
+        | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
             var span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
             if (span < 1) { span = 1; }
             var bf = f64_div(f64_from(s - vec_get(boundaries, idx)), f64_from(span));

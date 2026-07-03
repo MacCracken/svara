@@ -5,11 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Cyrius port (in progress)
+## [Unreleased]
 
-Rust → Cyrius port toward **3.0.0 = full parity** with the Rust 2.0.0 surface
-(213 tests / 15 benches). The Rust source is preserved at `rust-old/` as the
-parity oracle. Port plan and locked decisions: [`docs/development/state.md`](docs/development/state.md),
+Nothing yet.
+
+## [3.0.0] - 2026-07-03 — Cyrius port (full parity)
+
+Complete Rust → Cyrius port: **full behavioral parity** with the Rust 2.0.0
+surface. All 19 Rust modules ported (16 `.cyr` modules), **634 test assertions
+across 18 suites** (vs the Rust 213 tests), **11 hot-path benchmarks** (covering
+the intent of the 15 Rust criterion benches), fmt/lint/docs all clean. The Rust
+source is preserved at `rust-old/` as the parity oracle. Port plan and locked
+decisions: [`docs/development/state.md`](docs/development/state.md),
 sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
 
 ### Added (port scaffold + foundation layer)
@@ -122,11 +129,27 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   array-typed struct fields (v6.4.x). Toolchain pin → `6.3.40`.
 - **distlib** — `cyrius distlib` bundles all modules into `dist/svara.cyr` (+ `.deps`)
   for consumers (dhvani/vansh), which supply hisab/naad/goonj + stdlib.
+- **Benchmarks** — `benches/hotpath.bcyr` (11 benches, auto-discovered by
+  `cyrius bench`) reproduces the intent of `rust-old/benches/benchmarks.rs`. The
+  per-sample inner loops are batch-timed (one clock pair per 1000 calls) to remove
+  the ~240 ns per-call clock overhead. On x86_64 (single core): glottal
+  `next_sample` ≈ **82 ns**, formant filter `process_sample` ≈ **175 ns**, tract
+  `process_sample` (Full) ≈ **294 ns** — a full glottal→formant→tract chain ≈
+  0.55 µs/sample (~40× real-time at 44.1 kHz). Block/render paths: formant
+  `process_block` 1024 ≈ **186 µs**, tract `synthesize_into` 1024 ≈ **375 µs**,
+  phoneme synth /a/ ≈ **880 µs**, /s/ ≈ **467 µs**, /ai/ (per-sample formant
+  re-solve) ≈ **5.4 ms**, 3-phoneme sequence render ≈ **3.4 ms**.
+- **API docs** — doc comments added to all remaining public setters/mutators
+  (glottal ×8, tract ×6, sequence ×4, batch renderer ×3, DC blocker, pool reset):
+  `cyrdoc --check` now reports **0 undocumented public fns** (was 24).
+- **Tooling** — `scripts/bench-history.sh` and `scripts/version-bump.sh` rewritten
+  for the Cyrius toolchain (parse `cyrius bench` output → `benches/history.csv`;
+  version sourced from `VERSION` via `${file:VERSION}`, no `Cargo.toml`).
 
 ### Changed
 
-- `VERSION` set to `0.1.0` (climbs to `3.0.0` at parity); `math.rs` needs no
-  Cyrius module (its `libm`/std shims map directly to `ganita` / f64 builtins).
+- **`VERSION` → `3.0.0`** — full-parity release. `math.rs` needs no Cyrius module
+  (its `libm`/std shims map directly to `ganita` / f64 builtins).
 - Symbol convention: all svara symbols `svara_`/`SVARA_`/`SV_`/`Sv`-prefixed to
   coexist with naad's distlib bundle in one flat namespace.
 
@@ -135,6 +158,13 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
 - f32 → f64 throughout (hisab/naad are f64-only); tolerance parity, not bit-exact.
 - `next_f32` ports the Rust **code** ([0.0, 1.0), not the doc's [-1.0, 1.0]).
 - svara does not flush denormals (its Rust never did) — none added.
+- **Quality gate**: fmt (`cyrfmt`), lint (`cyrlint`, 0 warnings), docs (`cyrdoc`,
+  0 undocumented), tests (`cyrius tests tests` → 18/18 suites, 634 assertions), and
+  benchmarks (`cyrius bench`) are each green. The aggregate `cyrius audit` command's
+  test/bench legs currently report compile errors because that command skips
+  dependency resolution before compiling (so the stdlib prelude + hisab/naad/goonj
+  bundles are absent) — a toolchain issue reproducible identically in the sibling
+  `naad` 2.1.0 release, not a svara defect. Run the individual gate commands instead.
 
 ## [2.0.0] - 2026-04-01
 

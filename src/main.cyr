@@ -28,6 +28,7 @@ include "src/pool.cyr"
 include "src/render.cyr"
 include "src/bridge.cyr"
 
+# main -- smoke entry: exercise the full pipeline; 0 on success, nonzero on any failure.
 fn main() {
     alloc_init();
 
@@ -55,7 +56,7 @@ fn main() {
     }
     # Smoke: an /a/ formant filter builds and produces a finite impulse response.
     var ff = svara_formant_filter_new(
-        svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), f64_from(44100));
+    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), f64_from(44100));
     if (svara_is_err(ff) == 1) {
         println("svara: formant filter init failed");
         return 1;

@@ -61,7 +61,7 @@ fn svara_tract_new(sample_rate) {
     SvVocalTract_set_nasal_coupling(self, svara_smooth_new(0, sample_rate));
     var nasal_q = f64_div(f64_from(SV_T_NASAL_FREQ_NEUTRAL), f64_from(SV_T_NASAL_BW));   # 2.5
     SvVocalTract_set_nasal_antiformant(self,
-        filter_biquad_new(FILTER_NOTCH, sample_rate, f64_from(SV_T_NASAL_FREQ_NEUTRAL), nasal_q));
+    filter_biquad_new(FILTER_NOTCH, sample_rate, f64_from(SV_T_NASAL_FREQ_NEUTRAL), nasal_q));
     SvVocalTract_set_lip_prev(self, 0);
     SvVocalTract_set_lip_radiation(self, SV_T_LIP_DEFAULT);
     SvVocalTract_set_interaction_strength(self, SV_T_0_05);
@@ -95,10 +95,12 @@ fn svara_tract_set_vowel(self, vowel) {
     return svara_tract_set_formants_from_target(self, svara_vowel_target_from_vowel(vowel));
 }
 
+# set_nasal_coupling -- velopharyngeal opening (smoothed), clamped [0,1].
 fn svara_tract_set_nasal_coupling(self, coupling) {
     svara_smooth_set_target(SvVocalTract_nasal_coupling(self), f64_clamp(coupling, 0, F64_ONE));
 }
 
+# set_lip_radiation -- lip-radiation differentiator coefficient, clamped [0,1].
 fn svara_tract_set_lip_radiation(self, coefficient) {
     SvVocalTract_set_lip_radiation(self, f64_clamp(coefficient, 0, F64_ONE));
 }
@@ -110,18 +112,22 @@ fn svara_tract_set_nasal_place(self, place) {
     filter_biquad_set_params(SvVocalTract_nasal_antiformant(self), freq, q, 0);
 }
 
+# set_interaction_strength -- source-filter feedback amount, clamped [0,0.3].
 fn svara_tract_set_interaction_strength(self, strength) {
     SvVocalTract_set_interaction_strength(self, f64_clamp(strength, 0, SV_T_0_3));
 }
 
+# set_subglottal_coupling -- subglottal-resonance coupling, clamped [0,0.2].
 fn svara_tract_set_subglottal_coupling(self, strength) {
     SvVocalTract_set_subglottal_coupling(self, f64_clamp(strength, 0, SV_T_0_2));
 }
 
+# set_gain -- output gain (smoothed), floored at 0.
 fn svara_tract_set_gain(self, gain) {
     svara_smooth_set_target(SvVocalTract_gain(self), f64_max(gain, 0));
 }
 
+# set_quality -- level-of-detail tier (SVARA_QUALITY_*) gating optional stages.
 fn svara_tract_set_quality(self, quality) {
     SvVocalTract_set_quality(self, quality);
 }
@@ -141,7 +147,7 @@ fn svara_tract_process_sample(self, input) {
     var excitation = input;
     if (svara_quality_use_interaction(q) == 1) {
         excitation = f64_sub(input,
-            f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
+        f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
     }
 
     var formant_out = svara_formant_filter_process_sample(SvVocalTract_filter(self), excitation);

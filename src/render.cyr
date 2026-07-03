@@ -59,14 +59,17 @@ fn svara_batch_new(voice, sample_rate) {
     return r;
 }
 
+# push -- queue one phoneme event (phoneme, duration, stress) for batch render.
 fn svara_batch_push(r, phoneme, duration, stress) {
     vec_push(SvBatchRenderer_events(r), svara_phoneme_event_new(phoneme, duration, stress));
 }
+# extend -- append a vec of pre-built phoneme events to the batch queue.
 fn svara_batch_extend(r, events) {
     var dst = SvBatchRenderer_events(r);
     var i = 0;
     while (i < vec_len(events)) { vec_push(dst, vec_get(events, i)); i = i + 1; }
 }
+# clear -- drop all queued events (reuse the renderer for a fresh utterance).
 fn svara_batch_clear(r) { SvBatchRenderer_set_events(r, vec_new()); }
 #must_use
 fn svara_batch_len(r) { return vec_len(SvBatchRenderer_events(r)); }

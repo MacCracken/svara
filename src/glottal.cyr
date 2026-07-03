@@ -116,34 +116,42 @@ fn svara_glottal_set_f0(self, f0) {
     return SVARA_ERR_NONE;
 }
 
+# set_breathiness -- aspiration-noise mix, clamped [0,1].
 fn svara_glottal_set_breathiness(self, amount) {
     SvGlottalSource_set_breathiness(self, f64_clamp(amount, 0, F64_ONE));
 }
 
+# set_open_quotient -- glottal open fraction, clamped [0.4,0.7].
 fn svara_glottal_set_open_quotient(self, oq) {
     SvGlottalSource_set_open_quotient(self, f64_clamp(oq, SV_G_0_4, SV_G_0_7));
 }
 
+# set_speed_quotient -- opening/closing skew, clamped [0.5,5.0] (Rosenberg ignores it — v2.0 quirk).
 fn svara_glottal_set_speed_quotient(self, sq) {
     SvGlottalSource_set_speed_quotient(self, f64_clamp(sq, F64_HALF, SV_G_5_0));
 }
 
+# set_jitter -- cycle-to-cycle period perturbation, clamped [0,0.05].
 fn svara_glottal_set_jitter(self, j) {
     SvGlottalSource_set_jitter(self, f64_clamp(j, 0, SV_G_0_05));
 }
 
+# set_shimmer -- cycle-to-cycle amplitude perturbation, clamped [0,0.1].
 fn svara_glottal_set_shimmer(self, s) {
     SvGlottalSource_set_shimmer(self, f64_clamp(s, 0, SV_G_0_1));
 }
 
+# set_spectral_tilt -- source high-frequency roll-off in dB/octave (signed).
 fn svara_glottal_set_spectral_tilt(self, tilt) {
     SvGlottalSource_set_spectral_tilt(self, tilt);
 }
 
+# set_diplophonia -- alternating-pulse (period-doubling) amount, clamped [0,1].
 fn svara_glottal_set_diplophonia(self, amount) {
     SvGlottalSource_set_diplophonia(self, f64_clamp(amount, 0, F64_ONE));
 }
 
+# set_model -- select the excitation model (SVARA_GLOTTAL_*).
 fn svara_glottal_set_model(self, model) {
     SvGlottalSource_set_model(self, model);
 }
@@ -245,7 +253,7 @@ fn svara_glottal_whisper_sample(self) {
     var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, tilt)), SvGlottalSource_sample_rate(self)));
     # filtered = (1-alpha)*noise*0.15 + alpha*tilt_state
     var filtered = f64_add(f64_mul(f64_mul(f64_sub(F64_ONE, alpha), noise), SV_G_0_15),
-                           f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+    f64_mul(alpha, SvGlottalSource_tilt_state(self)));
     SvGlottalSource_set_tilt_state(self, filtered);
     return filtered;
 }
@@ -258,7 +266,7 @@ fn svara_glottal_new_period(self) {
         var lfo_val = modulation_lfo_next_value(SvGlottalSource_vibrato_lfo(self));
         # 1 + depth * (lfo_val*2 - 1)
         vibrato_mod = f64_add(F64_ONE,
-            f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
+        f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
     }
     var effective_f0 = f64_mul(SvGlottalSource_f0(self), vibrato_mod);
 
@@ -313,9 +321,9 @@ fn svara_glottal_next_sample(self) {
     # spectral tilt one-pole low-pass
     if (f64_gt(SvGlottalSource_spectral_tilt(self), 0) == 1) {
         var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, SvGlottalSource_spectral_tilt(self))),
-                                    SvGlottalSource_sample_rate(self)));
+        SvGlottalSource_sample_rate(self)));
         var filtered = f64_add(f64_mul(f64_sub(F64_ONE, alpha), pulse),
-                               f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+        f64_mul(alpha, SvGlottalSource_tilt_state(self)));
         SvGlottalSource_set_tilt_state(self, filtered);
         pulse = filtered;
     } else {
@@ -330,7 +338,7 @@ fn svara_glottal_next_sample(self) {
     var breath = SvGlottalSource_breathiness(self);
     # sample = pulse*(1-breath) + noise*breath*0.3*gate
     var sample = f64_add(f64_mul(pulse, f64_sub(F64_ONE, breath)),
-                         f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
+    f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
 
     var phase = f64_add(SvGlottalSource_phase(self), F64_ONE);
     if (f64_ge(phase, SvGlottalSource_current_period(self)) == 1) {

@@ -1,0 +1,126 @@
+# hotpath.bcyr -- hot-path benchmarks for svara. Run: cyrius bench (auto-discovers benches/)
+# Reproduces the intent of rust-old/benches/benchmarks.rs (15 criterion benches):
+# the per-sample inner loops (glottal / formant / tract) that carry the real-time
+# claims, plus block + full-phoneme + sequence renders. Per-sample fns are benched
+# at high N; full-render fns at modest N (each render allocs, bump alloc never frees).
+#
+# bayan/hashmap included so the deriving modules' codecs are defined (warning-free).
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+# Fixtures (built in main).
+var _glottal = 0;
+var _whisper = 0;
+var _creaky = 0;
+var _formant = 0;
+var _tract = 0;
+var _tract_g = 0;
+var _voice = 0;
+var _seq = 0;
+var _sr = 0;
+var _dur = 0;
+var _blk_in = 0;
+var _blk_out = 0;
+var _half = 0;
+
+# --- block / full-render paths (allocate) ---
+fn b_formant_block() { svara_formant_filter_process_block(_formant, _blk_in, _blk_out, 1024); return 0; }
+fn b_tract_into() { svara_tract_synthesize_into(_tract, _tract_g, _blk_out, 1024); return 0; }
+fn b_ph_vowel() { return svara_phoneme_synthesize(SVARA_PH_VOWEL_A, _voice, _sr, _dur); }
+fn b_ph_fric() { return svara_phoneme_synthesize(SVARA_PH_FRIC_S, _voice, _sr, _dur); }
+fn b_ph_diph() { return svara_phoneme_synthesize(SVARA_PH_DIPH_AI, _voice, _sr, _dur); }
+fn b_seq() { return svara_sequence_render(_seq, _voice, _sr); }
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Per-sample ops are sub-microsecond, so per-call clock overhead (~240ns) would
+# dominate bench_run. Batch measurement wraps one clock pair around `batch` calls,
+# then averages over `rounds` batches -> honest per-sample cost.
+fn bench1(name, fp, arg, batch, rounds) {
+    var b = bench_new(name);
+    bench_run_batch1(b, fp, arg, batch, rounds);
+    bench_report(b);
+    return 0;
+}
+
+fn bench2(name, fp, a1, a2, batch, rounds) {
+    var b = bench_new(name);
+    bench_run_batch2(b, fp, a1, a2, batch, rounds);
+    bench_report(b);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _sr = f64_from(44100);
+    _dur = 0.05;
+    _half = F64_HALF;
+    _voice = svara_voice_new_male();
+
+    _glottal = svara_glottal_new(f64_from(120), _sr);
+    _whisper = svara_glottal_new(f64_from(120), _sr);
+    svara_glottal_set_whisper(_whisper);
+    _creaky = svara_glottal_new(f64_from(120), _sr);
+    svara_glottal_set_creaky(_creaky, F64_HALF);
+
+    _formant = svara_formant_filter_new(
+    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), _sr);
+    _tract = svara_tract_new(_sr);
+    var e = svara_tract_set_vowel(_tract, SVARA_VOWEL_A);
+    if (svara_is_err(e) == 1) { return 1; }
+    _tract_g = svara_glottal_new(f64_from(120), _sr);
+
+    _blk_in = alloc(1024 * 8);
+    _blk_out = alloc(1024 * 8);
+    var i = 0;
+    while (i < 1024) { store64(_blk_in + i * 8, _half); i = i + 1; }
+
+    _seq = svara_sequence_new();
+    svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.06, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_PRIMARY));
+
+    # per-sample (batch-timed: 200 rounds x 1000 = 200000 ops each)
+    bench1("glottal next_sample (Rosenberg)", &svara_glottal_next_sample, _glottal, 1000, 200);
+    bench1("glottal next_sample (whisper)", &svara_glottal_next_sample, _whisper, 1000, 200);
+    bench1("glottal next_sample (creaky)", &svara_glottal_next_sample, _creaky, 1000, 200);
+    bench2("formant filter process_sample", &svara_formant_filter_process_sample, _formant, _half, 1000, 200);
+    bench2("tract process_sample (Full)", &svara_tract_process_sample, _tract, _half, 1000, 200);
+
+    # block (each call = 1024 samples)
+    bench("formant filter process_block 1024", &b_formant_block, 2000);
+    bench("tract synthesize_into 1024", &b_tract_into, 1000);
+
+    # full-phoneme render (each call allocs ~2205 samples for 0.05s)
+    bench("phoneme synth /a/ (vowel)", &b_ph_vowel, 200);
+    bench("phoneme synth /s/ (fricative)", &b_ph_fric, 200);
+    bench("phoneme synth /ai/ (diphthong)", &b_ph_diph, 200);
+
+    # sequence render (3 phonemes, crossfaded)
+    bench("sequence render 3 phonemes", &b_seq, 100);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);
