@@ -1,0 +1,422 @@
+# sequence.cyr -- phoneme sequencing with coarticulation + crossfading.
+# Ports rust-old/src/sequence.rs. Combines phonemes into continuous speech:
+# stress-based duration/f0 scaling, consonant-cluster compression, anticipatory
+# nasalization, and either resistance-weighted crossfade (render) or continuous
+# trajectory-planned synthesis (render_planned). f32 -> f64 throughout.
+#
+# Requires: stdlib alloc/vec/math, hisab (ease_in_out_smooth), error.cyr, rng.cyr,
+# formant.cyr, glottal.cyr, tract.cyr, voice.cyr, phoneme.cyr (synthesize_phoneme_
+# nasalized / detect_nasalization / coarticulation_resistance / class), prosody.cyr
+# (Stress / Tone / to_contour / f0_at), trajectory.cyr (plan / formants_at /
+# apply_speaking_rate). serde dropped (M-serde; roadmap.md).
+
+var SV_SEQ_MIN_CF   = 0.15;   # min crossfade fraction (high-resistance)
+var SV_SEQ_MAX_CF   = 0.45;   # max crossfade fraction (low-resistance)
+var SV_SEQ_CLUSTER  = 0.7;    # consonant-cluster duration compression
+var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
+
+# PhonemeEvent -- a timed phoneme. tone = SVARA_TONE_NONE or a SVARA_TONE_* value.
+#derive(accessors)
+struct SvPhonemeEvent { phoneme; duration; stress; tone; }
+
+#must_use
+fn svara_phoneme_event_new(phoneme, duration, stress) {
+    var e = alloc(sizeof(SvPhonemeEvent));
+    SvPhonemeEvent_set_phoneme(e, phoneme);
+    SvPhonemeEvent_set_duration(e, duration);
+    SvPhonemeEvent_set_stress(e, stress);
+    SvPhonemeEvent_set_tone(e, SVARA_TONE_NONE);
+    return e;
+}
+
+#must_use
+fn svara_phoneme_event_with_tone(phoneme, duration, stress, tone) {
+    var e = svara_phoneme_event_new(phoneme, duration, stress);
+    SvPhonemeEvent_set_tone(e, tone);
+    return e;
+}
+
+# PhonemeSequence -- ordered events + coarticulation params.
+#derive(accessors)
+struct SvPhonemeSequence { events; transition_window; lookahead_onset; speaking_rate; }
+
+#must_use
+fn svara_sequence_new() {
+    var s = alloc(sizeof(SvPhonemeSequence));
+    SvPhonemeSequence_set_events(s, vec_new());
+    SvPhonemeSequence_set_transition_window(s, 0.05);
+    SvPhonemeSequence_set_lookahead_onset(s, 0.6);
+    SvPhonemeSequence_set_speaking_rate(s, F64_ONE);
+    return s;
+}
+
+fn svara_sequence_set_transition_window(s, window) {
+    SvPhonemeSequence_set_transition_window(s, f64_max(window, 0.001));
+}
+fn svara_sequence_set_lookahead_onset(s, onset) {
+    SvPhonemeSequence_set_lookahead_onset(s, f64_clamp(onset, 0, F64_ONE));
+}
+fn svara_sequence_set_speaking_rate(s, rate) {
+    SvPhonemeSequence_set_speaking_rate(s, f64_clamp(rate, 0.5, 3.0));
+}
+#must_use
+fn svara_sequence_speaking_rate(s) { return SvPhonemeSequence_speaking_rate(s); }
+#must_use
+fn svara_sequence_transition_window(s) { return SvPhonemeSequence_transition_window(s); }
+fn svara_sequence_push(s, event) { vec_push(SvPhonemeSequence_events(s), event); }
+#must_use
+fn svara_sequence_len(s) { return vec_len(SvPhonemeSequence_events(s)); }
+#must_use
+fn svara_sequence_is_empty(s) {
+    if (vec_len(SvPhonemeSequence_events(s)) == 0) { return 1; }
+    return 0;
+}
+#must_use
+fn svara_sequence_events(s) { return SvPhonemeSequence_events(s); }
+#must_use
+fn svara_sequence_total_duration(s) {
+    var events = SvPhonemeSequence_events(s);
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(events)) {
+        total = f64_add(total, SvPhonemeEvent_duration(vec_get(events, i)));
+        i = i + 1;
+    }
+    return total;
+}
+
+# clone a VoiceProfile (for per-event f0 modification without mutating caller's).
+#must_use
+fn svara_seq_voice_clone(v) {
+    var c = alloc(sizeof(SvVoiceProfile));
+    SvVoiceProfile_set_base_f0(c, SvVoiceProfile_base_f0(v));
+    SvVoiceProfile_set_f0_range(c, SvVoiceProfile_f0_range(v));
+    SvVoiceProfile_set_formant_scale(c, SvVoiceProfile_formant_scale(v));
+    SvVoiceProfile_set_breathiness(c, SvVoiceProfile_breathiness(v));
+    SvVoiceProfile_set_vibrato_rate(c, SvVoiceProfile_vibrato_rate(v));
+    SvVoiceProfile_set_vibrato_depth(c, SvVoiceProfile_vibrato_depth(v));
+    SvVoiceProfile_set_jitter(c, SvVoiceProfile_jitter(v));
+    SvVoiceProfile_set_shimmer(c, SvVoiceProfile_shimmer(v));
+    SvVoiceProfile_set_bandwidth_widening(c, SvVoiceProfile_bandwidth_widening(v));
+    return c;
+}
+
+# detect_consonant_clusters -- vec<0/1>: 1 where the phoneme is in a run of 2+
+# adjacent consonants (non vowel/diphthong/silence).
+#must_use
+fn svara_seq_detect_clusters(events) {
+    var n = vec_len(events);
+    var flags = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(flags, 0); i = i + 1; }
+    var run_start = (0 - 1);
+    i = 0;
+    while (i <= n) {
+        var is_cons = 0;
+        if (i < n) {
+            var c = svara_phoneme_class(SvPhonemeEvent_phoneme(vec_get(events, i)));
+            if ((c != SVARA_CLASS_VOWEL) & (c != SVARA_CLASS_DIPHTHONG) & (c != SVARA_CLASS_SILENCE)) {
+                is_cons = 1;
+            }
+        }
+        if ((is_cons == 1) & (run_start < 0)) {
+            run_start = i;
+        } elif ((is_cons == 0) & (run_start >= 0)) {
+            if ((i - run_start) >= 2) {
+                var k = run_start;
+                while (k < i) { vec_set(flags, k, 1); k = k + 1; }
+            }
+            run_start = (0 - 1);
+        }
+        i = i + 1;
+    }
+    return flags;
+}
+
+# effective durations: duration * stress_scale * cluster_scale.
+#must_use
+fn svara_seq_durations(seq, in_cluster) {
+    var events = SvPhonemeSequence_events(seq);
+    var n = vec_len(events);
+    var durs = vec_new();
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        var ss = 0.9;
+        var st = SvPhonemeEvent_stress(e);
+        if (st == SVARA_STRESS_PRIMARY) { ss = 1.15; }
+        elif (st == SVARA_STRESS_SECONDARY) { ss = 1.05; }
+        var cs = F64_ONE;
+        if (vec_get(in_cluster, i) == 1) { cs = SV_SEQ_CLUSTER; }
+        vec_push(durs, f64_mul(f64_mul(SvPhonemeEvent_duration(e), ss), cs));
+        i = i + 1;
+    }
+    return durs;
+}
+
+#must_use
+fn svara_seq_phoneme_list(seq) {
+    var events = SvPhonemeSequence_events(seq);
+    var pl = vec_new();
+    var i = 0;
+    while (i < vec_len(events)) { vec_push(pl, SvPhonemeEvent_phoneme(vec_get(events, i))); i = i + 1; }
+    return pl;
+}
+
+# sigmoid crossfade easing (hisab smootherstep), clamped.
+#must_use
+fn svara_seq_sigmoid_fade(t) {
+    return ease_in_out_smooth(f64_clamp(t, 0, F64_ONE));
+}
+
+# crossfade_segments_variable -- blend adjacent sample vecs with per-boundary
+# crossfade lengths (sigmoid). Returns the concatenated/blended sample vec.
+#must_use
+fn svara_seq_crossfade(segments, cf_lengths) {
+    var ns = vec_len(segments);
+    if (ns == 0) { return vec_new(); }
+    if (ns == 1) { return vec_get(segments, 0); }
+    var output = vec_new();
+    var i = 0;
+    while (i < ns) {
+        var seg = vec_get(segments, i);
+        var seglen = vec_len(seg);
+        var cf_next = 0;
+        if (i < vec_len(cf_lengths)) { cf_next = vec_get(cf_lengths, i); }
+        var cf_prev = 0;
+        if (i > 0) { cf_prev = vec_get(cf_lengths, i - 1); }
+        var cfn1 = cf_next;
+        if (cfn1 < 1) { cfn1 = 1; }
+
+        if (i == 0) {
+            if (seglen > cf_next) {
+                var j = 0;
+                var stop = seglen - cf_next;
+                while (j < stop) { vec_push(output, vec_get(seg, j)); j = j + 1; }
+            }
+            var fs = seglen - cf_next;
+            if (fs < 0) { fs = 0; }
+            var k = fs;
+            var jj = 0;
+            while (k < seglen) {
+                var w = f64_sub(F64_ONE, svara_seq_sigmoid_fade(f64_div(f64_from(jj), f64_from(cfn1))));
+                vec_push(output, f64_mul(vec_get(seg, k), w));
+                jj = jj + 1;
+                k = k + 1;
+            }
+        } else {
+            var fade_len = cf_prev;
+            if (fade_len > seglen) { fade_len = seglen; }
+            var fl1 = fade_len;
+            if (fl1 < 1) { fl1 = 1; }
+            var output_len = vec_len(output);
+            var j = 0;
+            while (j < fade_len) {
+                var idx = output_len - (fade_len - j);
+                if ((idx >= 0) & (idx < output_len)) {
+                    var add = f64_mul(vec_get(seg, j), svara_seq_sigmoid_fade(f64_div(f64_from(j), f64_from(fl1))));
+                    vec_set(output, idx, f64_add(vec_get(output, idx), add));
+                }
+                j = j + 1;
+            }
+            if (seglen > fade_len) {
+                if ((i < ns - 1) & (seglen > fade_len + cf_next)) {
+                    var m = fade_len;
+                    var stop2 = seglen - cf_next;
+                    while (m < stop2) { vec_push(output, vec_get(seg, m)); m = m + 1; }
+                    var fs2 = seglen - cf_next;
+                    var kk = fs2;
+                    var j2 = 0;
+                    while (kk < seglen) {
+                        var w2 = f64_sub(F64_ONE, svara_seq_sigmoid_fade(f64_div(f64_from(j2), f64_from(cfn1))));
+                        vec_push(output, f64_mul(vec_get(seg, kk), w2));
+                        j2 = j2 + 1;
+                        kk = kk + 1;
+                    }
+                } else {
+                    var m2 = fade_len;
+                    while (m2 < seglen) { vec_push(output, vec_get(seg, m2)); m2 = m2 + 1; }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return output;
+}
+
+# render -- synthesize each phoneme (stress/cluster/nasalization) and crossfade.
+# Returns a vec<f64> of samples, or a negative SVARA_ERR_*.
+#must_use
+fn svara_sequence_render(seq, voice, sample_rate) {
+    var events = SvPhonemeSequence_events(seq);
+    var n = vec_len(events);
+    if (n == 0) { return vec_new(); }
+    var in_cluster = svara_seq_detect_clusters(events);
+    var durs = svara_seq_durations(seq, in_cluster);
+    var nasals = svara_detect_nasalization(svara_seq_phoneme_list(seq));
+
+    var segments = vec_new();
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        var ev = svara_seq_voice_clone(voice);
+        var st = SvPhonemeEvent_stress(e);
+        if (st == SVARA_STRESS_PRIMARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10));
+        } elif (st == SVARA_STRESS_SECONDARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
+        }
+        var seg = svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, sample_rate,
+            vec_get(durs, i), vec_get(nasals, i));
+        if (svara_is_err(seg) == 1) { return seg; }
+        vec_push(segments, seg);
+        i = i + 1;
+    }
+
+    var cfs = vec_new();
+    var min_cf = f64_to(f64_mul(SvPhonemeSequence_transition_window(seq), sample_rate));
+    i = 0;
+    while (i < n - 1) {
+        var rl = svara_phoneme_coarticulation_resistance(SvPhonemeEvent_phoneme(vec_get(events, i)));
+        var rr = svara_phoneme_coarticulation_resistance(SvPhonemeEvent_phoneme(vec_get(events, i + 1)));
+        var avg = f64_mul(f64_add(rl, rr), F64_HALF);
+        var frac = f64_sub(SV_SEQ_MAX_CF, f64_mul(avg, f64_sub(SV_SEQ_MAX_CF, SV_SEQ_MIN_CF)));
+        var sl = vec_len(vec_get(segments, i));
+        var sl2 = vec_len(vec_get(segments, i + 1));
+        if (sl2 < sl) { sl = sl2; }
+        var cf_len = f64_to(f64_mul(frac, f64_from(sl)));
+        if (cf_len < min_cf) { cf_len = min_cf; }
+        vec_push(cfs, cf_len);
+        i = i + 1;
+    }
+    return svara_seq_crossfade(segments, cfs);
+}
+
+# render_planned -- continuous trajectory-planned synthesis (per-sample formant
+# updates). Returns a vec<f64>, or a negative SVARA_ERR_*.
+#must_use
+fn svara_sequence_render_planned(seq, voice, sample_rate) {
+    var events = SvPhonemeSequence_events(seq);
+    var n = vec_len(events);
+    if (n == 0) { return vec_new(); }
+    var in_cluster = svara_seq_detect_clusters(events);
+    var durs = svara_seq_durations(seq, in_cluster);
+    var pl = svara_seq_phoneme_list(seq);
+    var nasals = svara_detect_nasalization(pl);
+
+    var plan = svara_trajectory_plan(pl, durs, voice, sample_rate);
+    svara_trajectory_apply_speaking_rate(plan, SvPhonemeSequence_speaking_rate(seq));
+    var total = svara_trajectory_total_samples(plan);
+    if (total == 0) { return vec_new(); }
+
+    # phoneme boundaries in samples
+    var boundaries = vec_new();
+    vec_push(boundaries, 0);
+    var offset = 0;
+    var bi = 0;
+    while (bi < n) {
+        offset = offset + f64_to(f64_mul(vec_get(durs, bi), sample_rate));
+        vec_push(boundaries, offset);
+        bi = bi + 1;
+    }
+
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tract = svara_tract_new(sample_rate);
+    var noise = svara_rng_new(17);
+    var out = alloc(total * 8);
+
+    var idx = 0;
+    var s = 0;
+    while (s < total) {
+        while (((idx + 1) < n) & (s >= vec_get(boundaries, idx + 1))) { idx = idx + 1; }
+        var phoneme = SvPhonemeEvent_phoneme(vec_get(events, idx));
+        var target = svara_trajectory_formants_at(plan, s);
+
+        var nasal = vec_get(nasals, idx);
+        if (nasal != 0) {
+            var seg_span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
+            var onset_off = f64_to(f64_mul(f64_from(seg_span), SvNasalization_onset(nasal)));
+            var nasal_onset = vec_get(boundaries, idx) + onset_off;
+            if (s >= nasal_onset) {
+                var nasal_len = vec_get(boundaries, idx + 1) - nasal_onset;
+                if (nasal_len < 1) { nasal_len = 1; }
+                var nt = f64_div(f64_from(s - nasal_onset), f64_from(nasal_len));
+                var nc = f64_mul(SvNasalization_peak_coupling(nasal), ease_in_out_smooth(nt));
+                svara_tract_set_nasal_coupling(tract, nc);
+                svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
+            } else {
+                svara_tract_set_nasal_coupling(tract, 0);
+            }
+        } else {
+            svara_tract_set_nasal_coupling(tract, 0);
+        }
+
+        var sfe = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(sfe) == 1) { sfe = 0; }   # ignored, like Rust `let _`
+
+        var ev = vec_get(events, idx);
+        var st = SvPhonemeEvent_stress(ev);
+        var base_f0 = SvVoiceProfile_base_f0(voice);
+        if (st == SVARA_STRESS_PRIMARY) { base_f0 = f64_mul(base_f0, 1.10); }
+        elif (st == SVARA_STRESS_SECONDARY) { base_f0 = f64_mul(base_f0, 1.05); }
+        var effective_f0 = base_f0;
+        if (SvPhonemeEvent_tone(ev) != SVARA_TONE_NONE) {
+            var contour = svara_tone_to_contour(SvPhonemeEvent_tone(ev));
+            var seg_start = vec_get(boundaries, idx);
+            var seg_len = vec_get(boundaries, idx + 1) - seg_start;
+            if (seg_len < 1) { seg_len = 1; }
+            var tt = f64_div(f64_from(s - seg_start), f64_from(seg_len));
+            effective_f0 = f64_mul(base_f0, svara_prosody_f0_at(contour, tt));
+        }
+        var f0e = svara_glottal_set_f0(glottal, effective_f0);
+        if (svara_is_err(f0e) == 1) { f0e = 0; }   # ignored, like Rust `let _`
+
+        var c = svara_phoneme_class(phoneme);
+        var sample = 0;
+        if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG) | (c == SVARA_CLASS_APPROXIMANT)
+            | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
+            | (c == SVARA_CLASS_TRILL)) {
+            sample = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
+        } elif (c == SVARA_CLASS_FRICATIVE) {
+            var nz = f64_mul(svara_rng_next_f32(noise), F64_HALF);
+            if (svara_phoneme_is_voiced(phoneme) == 1) {
+                var voicing = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), SV_PH_R04);
+                sample = f64_add(f64_mul(nz, SV_PH_R06), voicing);
+            } else {
+                sample = f64_mul(nz, SV_PH_R06);
+            }
+        } elif ((c == SVARA_CLASS_PLOSIVE) | (c == SVARA_CLASS_AFFRICATE)
+            | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
+            var span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
+            if (span < 1) { span = 1; }
+            var bf = f64_div(f64_from(s - vec_get(boundaries, idx)), f64_from(span));
+            if (f64_lt(bf, SV_PH_R04) == 1) {
+                sample = 0;
+            } else {
+                sample = f64_mul(f64_mul(svara_rng_next_f32(noise), f64_sub(F64_ONE, bf)), F64_HALF);
+            }
+        }
+        store64(out + s * 8, sample);
+        s = s + 1;
+    }
+
+    # global attack/release envelope: ramp = clamp(total/20, 1, 256)
+    var ramp = total / 20;
+    if (ramp < 1) { ramp = 1; }
+    if (ramp > 256) { ramp = 256; }
+    var a = 0;
+    while (a < ramp) {
+        var e1 = ease_in_out_smooth(f64_div(f64_from(a), f64_from(ramp)));
+        store64(out + a * 8, f64_mul(load64(out + a * 8), e1));
+        a = a + 1;
+    }
+    var b = 0;
+    while (b < ramp) {
+        var ridx = total - 1 - b;
+        var e2 = ease_in_out_smooth(f64_div(f64_from(b), f64_from(ramp)));
+        store64(out + ridx * 8, f64_mul(load64(out + ridx * 8), e2));
+        b = b + 1;
+    }
+    return svara_ph_buf_to_vec(out, total);
+}

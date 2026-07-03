@@ -30,6 +30,7 @@ modules = [
     "src/phoneme.cyr",
     "src/prosody.cyr",
     "src/trajectory.cyr",
+    "src/sequence.cyr",
 ]
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives

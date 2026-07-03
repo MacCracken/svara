@@ -50,18 +50,21 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
 | L3 | prosody.rs | src/prosody.cyr | ✅ ported | 17 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
 | L3 | trajectory.rs | src/trajectory.cyr | ✅ ported | 12 | TrajectoryPlanner + FormantKeypoint; Catmull-Rom + resistance blend; speaking-rate |
-| L3 | sequence.rs | src/sequence.cyr | ⏳ next | — | PhonemeEvent/Sequence coarticulation; render + render_planned (uses trajectory) |
-| L4 | pool/render/bridge | … | ⏳ | — | SynthesisPool / BatchRenderer / scalar glue |
+| L3 | sequence.rs | src/sequence.cyr | ✅ ported | 29 | PhonemeEvent/Sequence; coarticulation crossfade render + trajectory-planned render_planned; cluster compression |
+| L4 | pool.rs | src/pool.cyr | ⏳ next | — | SynthesisPool (pre-allocated SynthesisContext wrapper) |
+| L4 | render.rs | src/render.cyr | ⏳ | — | BatchRenderer / RenderOutput / RenderProgress |
+| L4 | bridge.rs | src/bridge.cyr | ⏳ | — | 18 scalar clamp/lerp glue fns for sibling AGNOS crates |
 
-**Total ported: 12 modules, 512 tests passing.** Smoke binary (`build/svara`) green
-— synthesizes a full phoneme end-to-end (voice → glottal → tract → PCM), via both
-the free API and SynthesisContext, plus prosody contours + trajectory planning.
+**Total ported: 13 modules, 541 tests passing.** The entire speech-science layer
+(L3) is done. Smoke binary (`build/svara`) green — **renders a full 2-phoneme
+utterance** (/a/-/i/) via `sequence.render`, plus the phoneme/context/prosody/
+trajectory paths.
 
 ## Tests
 
-512 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
-glottal / tract / voice / phoneme / prosody / trajectory — all passing (all 12 test
-files lint-clean). Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
+541 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract / voice / phoneme / prosody / trajectory / sequence — all passing
+(all 13 test files lint-clean). Run one suite: `cyrius test tests/<mod>.tcyr`.
 
 ## Dependencies
 
@@ -87,8 +90,9 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-**`sequence.cyr`** (PhonemeEvent / PhonemeSequence — coarticulation crossfade
-`render` + continuous-trajectory `render_planned`; consonant-cluster compression;
-uses phoneme + voice + SynthesisContext + prosody + trajectory + hisab easing).
-Then **pool / render / bridge** (orchestration + glue). Then M-serde codecs +
-parity/bench gates + `dist/svara.cyr`. See [`roadmap.md`](roadmap.md).
+The L4 orchestration/glue layer: **`pool.cyr`** (SynthesisPool — pooled
+SynthesisContext with render/render_batch + diagnostics), **`render.cyr`**
+(BatchRenderer / RenderOutput / RenderProgress), **`bridge.cyr`** (scalar
+clamp/lerp glue for sibling AGNOS crates). Then M-serde codecs + the
+213-test/15-bench parity gate + `cyrius distlib` → `dist/svara.cyr`.
+See [`roadmap.md`](roadmap.md).

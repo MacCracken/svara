@@ -96,6 +96,12 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   events; `formants_at` interpolates with 4-point Catmull-Rom (resistance-weighted
   blend with linear) or sigmoid fallback; `apply_speaking_rate` (Lindblom
   undershoot). Endpoint/boundary/finite behavior verified. **12 tests.**
+- **`src/sequence.cyr`** (L3) — ports `sequence.rs`: `PhonemeEvent` / `PhonemeSequence`.
+  `render` (per-phoneme synthesis with stress/cluster duration scaling + anticipatory
+  nasalization, then resistance-weighted variable crossfade), `render_planned`
+  (trajectory-driven continuous synthesis with per-sample formant updates + tone f0),
+  `detect_consonant_clusters`, and the variable crossfade blender. **29 tests.**
+  Completes the L3 speech-science layer — svara renders whole utterances.
 
 ### Changed
 

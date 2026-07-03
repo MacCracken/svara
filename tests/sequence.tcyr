@@ -1,0 +1,162 @@
+# sequence.tcyr -- tests for src/sequence.cyr. Ports rust-old/src/sequence.rs
+# #[test] blocks (serde dropped). Pulls the whole stack + prosody + trajectory.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+
+#must_use
+fn sq_all_finite(v) {
+    var f = 1;
+    var i = 0;
+    while (i < vec_len(v)) { if (svara_is_finite(vec_get(v, i)) == 0) { f = 0; } i = i + 1; }
+    return f;
+}
+#must_use
+fn sq_any_nonsilent(v) {
+    var a = 0;
+    var i = 0;
+    while (i < vec_len(v)) { if (f64_gt(f64_abs(vec_get(v, i)), TOL_1EM6) == 1) { a = 1; } i = i + 1; }
+    return a;
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var male = svara_voice_new_male();
+
+# ================================================================
+test_group("empty + single + multi render");
+var empty = svara_sequence_new();
+assert_eq(svara_sequence_is_empty(empty), 1, "new sequence empty");
+assert_eq(svara_sequence_len(empty), 0, "len 0");
+assert_eq(vec_len(svara_sequence_render(empty, male, SR)), 0, "empty renders to no samples");
+
+var one = svara_sequence_new();
+svara_sequence_push(one, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+assert_eq(svara_sequence_len(one), 1, "len 1");
+var out1 = svara_sequence_render(one, male, SR);
+assert_eq(svara_is_err(out1), 0, "single render ok");
+assert_eq(f64_gt(f64_from(vec_len(out1)), 0), 1, "single render non-empty");
+assert_eq(sq_all_finite(out1), 1, "single render finite");
+
+var multi = svara_sequence_new();
+svara_sequence_push(multi, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+svara_sequence_push(multi, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(multi, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_SECONDARY));
+var outm = svara_sequence_render(multi, male, SR);
+assert_eq(f64_gt(f64_from(vec_len(outm)), 0), 1, "multi render non-empty");
+assert_eq(sq_all_finite(outm), 1, "multi render finite");
+
+# ================================================================
+test_group("total_duration");
+var dseq = svara_sequence_new();
+svara_sequence_push(dseq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(dseq, svara_phoneme_event_new(SVARA_PH_VOWEL_E, 0.2, SVARA_STRESS_UNSTRESSED));
+assert_eq(f64_lt(f64_abs(f64_sub(svara_sequence_total_duration(dseq), 0.3)), TOL_1EM6), 1, "total dur 0.3");
+
+# ================================================================
+test_group("consonant cluster detection");
+# no cluster: single consonant between vowels
+var ev_nc = vec_new();
+vec_push(ev_nc, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+vec_push(ev_nc, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_nc, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+var cl_nc = svara_seq_detect_clusters(ev_nc);
+assert_eq(vec_get(cl_nc, 1), 0, "single consonant is not a cluster");
+# pair /st/
+var ev_p = vec_new();
+vec_push(ev_p, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+vec_push(ev_p, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_p, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_p, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+var cl_p = svara_seq_detect_clusters(ev_p);
+assert_eq(vec_get(cl_p, 0), 0, "vowel not clustered");
+assert_eq(vec_get(cl_p, 1), 1, "/s/ in /st/ clustered");
+assert_eq(vec_get(cl_p, 2), 1, "/t/ in /st/ clustered");
+assert_eq(vec_get(cl_p, 3), 0, "vowel not clustered");
+# triple /str/
+var ev_t = vec_new();
+vec_push(ev_t, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_t, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_t, svara_phoneme_event_new(SVARA_PH_APPROX_R, 0.06, SVARA_STRESS_UNSTRESSED));
+vec_push(ev_t, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+var cl_t = svara_seq_detect_clusters(ev_t);
+assert_eq(vec_get(cl_t, 0), 1, "/s/ clustered");
+assert_eq(vec_get(cl_t, 1), 1, "/t/ clustered");
+assert_eq(vec_get(cl_t, 2), 1, "/r/ clustered");
+assert_eq(vec_get(cl_t, 3), 0, "vowel not clustered");
+
+# ================================================================
+test_group("crossfade no clicks (/a/-/i/)");
+var cf = svara_sequence_new();
+svara_sequence_push(cf, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+svara_sequence_push(cf, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+var cfo = svara_sequence_render(cf, male, SR);
+var max_jump = 0;
+var i = 1;
+while (i < vec_len(cfo)) {
+    var jmp = f64_abs(f64_sub(vec_get(cfo, i), vec_get(cfo, i - 1)));
+    if (f64_gt(jmp, max_jump) == 1) { max_jump = jmp; }
+    i = i + 1;
+}
+var max_amp = 0;
+i = 0;
+while (i < vec_len(cfo)) {
+    var amp = f64_abs(vec_get(cfo, i));
+    if (f64_gt(amp, max_amp) == 1) { max_amp = amp; }
+    i = i + 1;
+}
+if (f64_gt(max_amp, 0.001) == 1) {
+    assert_eq(f64_lt(max_jump, f64_mul(max_amp, F64_TWO)), 1, "no click: jump < 2*amp");
+}
+
+# ================================================================
+test_group("render_planned");
+assert_eq(vec_len(svara_sequence_render_planned(svara_sequence_new(), male, SR)), 0, "planned empty -> no samples");
+var p1 = svara_sequence_new();
+svara_sequence_push(p1, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+var po1 = svara_sequence_render_planned(p1, male, SR);
+assert_eq(svara_is_err(po1), 0, "planned single ok");
+assert_eq(f64_gt(f64_from(vec_len(po1)), 0), 1, "planned single non-empty");
+assert_eq(sq_all_finite(po1), 1, "planned single finite");
+
+var pm = svara_sequence_new();
+svara_sequence_push(pm, svara_phoneme_event_new(SVARA_PH_PLOSIVE_P, 0.06, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(pm, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+svara_sequence_push(pm, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.08, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(pm, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+var pmo = svara_sequence_render_planned(pm, male, SR);
+assert_eq(sq_all_finite(pmo), 1, "planned w/ consonants finite");
+
+var pns = svara_sequence_new();
+svara_sequence_push(pns, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+svara_sequence_push(pns, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY));
+assert_eq(sq_any_nonsilent(svara_sequence_render_planned(pns, male, SR)), 1, "planned non-silent");
+
+# with tones (falling + rising)
+var pt = svara_sequence_new();
+var ev_fall = svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0.15, SVARA_STRESS_UNSTRESSED, SVARA_TONE_FALLING);
+svara_sequence_push(pt, ev_fall);
+var ev_rise = svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, 0.15, SVARA_STRESS_UNSTRESSED, SVARA_TONE_RISING);
+svara_sequence_push(pt, ev_rise);
+var pto = svara_sequence_render_planned(pt, male, SR);
+assert_eq(f64_gt(f64_from(vec_len(pto)), 0), 1, "planned w/ tone non-empty");
+assert_eq(sq_all_finite(pto), 1, "planned w/ tone finite");
+assert_eq(sq_any_nonsilent(pto), 1, "planned w/ tone non-silent");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -21,6 +21,7 @@ include "src/voice.cyr"
 include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
+include "src/sequence.cyr"
 
 fn main() {
     alloc_init();
@@ -128,6 +129,19 @@ fn main() {
     var tc = svara_tone_to_contour(SVARA_TONE_RISING);
     if (f64_gt(svara_prosody_f0_at(tc, F64_ONE), svara_prosody_f0_at(tc, 0)) == 0) {
         println("svara: prosody tone broken");
+        return 1;
+    }
+    # Smoke: render a 2-phoneme utterance /a/-/i/ to samples.
+    var seq = svara_sequence_new();
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, F64_HALF, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, F64_HALF, SVARA_STRESS_PRIMARY));
+    var utt = svara_sequence_render(seq, vp, f64_from(44100));
+    if (svara_is_err(utt) == 1) {
+        println("svara: sequence render failed");
+        return 1;
+    }
+    if (vec_len(utt) == 0) {
+        println("svara: sequence render produced no samples");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");
