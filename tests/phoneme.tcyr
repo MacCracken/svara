@@ -13,13 +13,39 @@ include "src/lod.cyr"
 include "src/formant.cyr"
 include "src/glottal.cyr"
 include "src/tract.cyr"
+include "src/voice.cyr"
 include "src/phoneme.cyr"
 
 var TOL_1EM9 = 0x3E112E0BE826D695;   # 1e-9
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
 #must_use
 fn ph_approx(a, b, eps) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+# out[0] = any |s| > 1e-6, out[1] = all finite, over a sample vec.
+fn ph_vec_scan(v, out) {
+    var any = 0;
+    var fin = 1;
+    var i = 0;
+    var n = vec_len(v);
+    while (i < n) {
+        var s = vec_get(v, i);
+        if (f64_gt(f64_abs(s), TOL_1EM6) == 1) { any = 1; }
+        if (svara_is_finite(s) == 0) { fin = 0; }
+        i = i + 1;
+    }
+    store64(out, any);
+    store64(out + 8, fin);
+}
+# sum of |samples| (rough energy proxy for "differs" checks).
+#must_use
+fn ph_vec_absum(v) {
+    var e = 0;
+    var i = 0;
+    var n = vec_len(v);
+    while (i < n) { e = f64_add(e, f64_abs(vec_get(v, i))); i = i + 1; }
+    return e;
 }
 
 alloc_init();
@@ -342,6 +368,93 @@ assert_neq(vec_get(det, 0), 0, "vowel before nasal -> nasalized");
 assert_eq(SvNasalization_place(vec_get(det, 0)), SVARA_NASAL_BILABIAL, "nasalization place matches /m/");
 assert_eq(vec_get(det, 1), 0, "the nasal itself is not nasalized");
 assert_eq(vec_get(det, 2), 0, "final vowel (no following nasal) not nasalized");
+
+# ================================================================
+test_group("synthesize_phoneme (per class: finite + non-silent)");
+var male = svara_voice_new_male();
+var SR = f64_from(44100);
+var DUR = 0x3FB999999999999A;   # 0.1 s
+var sc = alloc(16);
+
+# vowel: len ~ 0.1*44100 = 4410, finite, non-silent
+var av = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, DUR);
+assert_eq(svara_is_err(av), 0, "vowel synth ok");
+assert_eq(vec_len(av), 4410, "vowel len = 4410 samples");
+ph_vec_scan(av, sc);
+assert_eq(load64(sc + 8), 1, "vowel all finite");
+assert_eq(load64(sc), 1, "vowel non-silent");
+
+# one representative per remaining class
+var classes = vec_new();
+vec_push(classes, SVARA_PH_DIPH_AI);
+vec_push(classes, SVARA_PH_PLOSIVE_P);
+vec_push(classes, SVARA_PH_FRIC_S);
+vec_push(classes, SVARA_PH_NASAL_M);
+vec_push(classes, SVARA_PH_AFFR_CH);
+vec_push(classes, SVARA_PH_APPROX_R);
+vec_push(classes, SVARA_PH_LATERAL_L);
+vec_push(classes, SVARA_PH_TRILL_ALVEOLAR);
+vec_push(classes, SVARA_PH_CLICK_BILABIAL);
+vec_push(classes, SVARA_PH_EJECTIVE_P);
+vec_push(classes, SVARA_PH_IMPLOSIVE_B);
+var ci = 0;
+var all_ok = 1;
+while (ci < vec_len(classes)) {
+    var buf = svara_phoneme_synthesize(vec_get(classes, ci), male, SR, DUR);
+    if (svara_is_err(buf) == 1) { all_ok = 0; }
+    ph_vec_scan(buf, sc);
+    if (load64(sc + 8) == 0) { all_ok = 0; }   # non-finite
+    if (load64(sc) == 0) { all_ok = 0; }        # silent
+    ci = ci + 1;
+}
+assert_eq(all_ok, 1, "all consonant classes: finite + non-silent");
+
+# ================================================================
+test_group("synthesize_phoneme (silence + validation)");
+var sil = svara_phoneme_synthesize(SVARA_PH_SILENCE, male, SR, DUR);
+ph_vec_scan(sil, sc);
+assert_eq(load64(sc), 0, "silence is all zero");
+assert_eq(load64(sc + 8), 1, "silence is finite");
+assert_eq(vec_len(sil), 4410, "silence len = 4410");
+assert_eq(svara_is_err(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, 0)), 1, "zero duration rejected");
+var neg_dur = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, f64_neg(F64_ONE));
+assert_eq(svara_is_err(neg_dur), 1, "negative duration rejected");
+
+# ================================================================
+test_group("IPA extension phonemes synthesize (finite)");
+var ipa = vec_new();
+vec_push(ipa, SVARA_PH_VOWEL_Y);
+vec_push(ipa, SVARA_PH_FRIC_PALATAL_C);
+vec_push(ipa, SVARA_PH_PLOSIVE_UVULAR_Q);
+vec_push(ipa, SVARA_PH_TRILL_UVULAR);
+vec_push(ipa, SVARA_PH_EJECTIVE_S);
+var ii = 0;
+var ipa_ok = 1;
+while (ii < vec_len(ipa)) {
+    var b = svara_phoneme_synthesize(vec_get(ipa, ii), male, SR, DUR);
+    if (svara_is_err(b) == 1) { ipa_ok = 0; }
+    ph_vec_scan(b, sc);
+    if (load64(sc + 8) == 0) { ipa_ok = 0; }
+    ii = ii + 1;
+}
+assert_eq(ipa_ok, 1, "IPA-extension phonemes all finite");
+
+# ================================================================
+test_group("nasalized vowel");
+var nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+var nv = svara_phoneme_synthesize_nasalized(SVARA_PH_VOWEL_A, male, SR, DUR, nas);
+assert_eq(svara_is_err(nv), 0, "nasalized vowel synth ok");
+ph_vec_scan(nv, sc);
+assert_eq(load64(sc + 8), 1, "nasalized all finite");
+assert_eq(load64(sc), 1, "nasalized non-silent");
+# nasalized differs from oral
+var oral = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, DUR);
+assert_eq(f64_gt(f64_abs(f64_sub(ph_vec_absum(nv), ph_vec_absum(oral))), TOL_1EM6), 1, "nasalized differs from oral");
+# non-vowel + nasalization falls through to plain synthesis (finite)
+var fall = svara_phoneme_synthesize_nasalized(SVARA_PH_FRIC_S, male, SR, DUR, nas);
+assert_eq(svara_is_err(fall), 0, "non-vowel nasalized falls through");
+ph_vec_scan(fall, sc);
+assert_eq(load64(sc + 8), 1, "fallthrough all finite");
 
 var rc = assert_summary();
 syscall(60, rc);

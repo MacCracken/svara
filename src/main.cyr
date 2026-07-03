@@ -102,6 +102,16 @@ fn main() {
         println("svara: voice glottal source failed");
         return 1;
     }
+    # Smoke: synthesize a full /a/ phoneme (voice → glottal → tract → samples).
+    var pcm = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, vp, f64_from(44100), F64_HALF);
+    if (svara_is_err(pcm) == 1) {
+        println("svara: phoneme synthesis failed");
+        return 1;
+    }
+    if (vec_len(pcm) == 0) {
+        println("svara: phoneme synthesis produced no samples");
+        return 1;
+    }
     println("svara (Cyrius port) — smoke OK");
     return 0;
 }

@@ -71,6 +71,14 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   Formant-scaling goldens + effort energy ordering verified. **33 tests.**
 - Cleanup: all 10 `.tcyr` suites brought under the 120-col lint (test files are
   audit-gated too).
+- **`src/phoneme.cyr` (part 3a/3)** (L3) — the free synthesis path:
+  `synthesize_phoneme` + `synthesize_phoneme_nasalized` dispatching to per-class
+  synthesizers (vowel, diphthong, plosive, fricative, nasal, approximant,
+  affricate, trill, click, ejective, implosive), plus `fricative_formants`,
+  `diphthong_end_target`, and the attack/release envelope (hisab
+  `ease_in_out_smooth`). Ties voice + glottal + tract + `FormantFilter` into
+  audio (returns a vec of f64 samples). **+17 tests (290 total).** svara can now
+  synthesize a phoneme end-to-end. `SynthesisContext` (part 3b) follows.
 
 ### Changed
 
