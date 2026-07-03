@@ -47,6 +47,20 @@ fn ph_vec_absum(v) {
     while (i < n) { e = f64_add(e, f64_abs(vec_get(v, i))); i = i + 1; }
     return e;
 }
+# out[0] = any |s| > 1e-6, out[1] = all finite, over a raw f64 buffer of n slots.
+fn ph_raw_scan(buf, n, out) {
+    var any = 0;
+    var fin = 1;
+    var i = 0;
+    while (i < n) {
+        var s = load64(buf + i * 8);
+        if (f64_gt(f64_abs(s), TOL_1EM6) == 1) { any = 1; }
+        if (svara_is_finite(s) == 0) { fin = 0; }
+        i = i + 1;
+    }
+    store64(out, any);
+    store64(out + 8, fin);
+}
 
 alloc_init();
 
@@ -455,6 +469,46 @@ var fall = svara_phoneme_synthesize_nasalized(SVARA_PH_FRIC_S, male, SR, DUR, na
 assert_eq(svara_is_err(fall), 0, "non-vowel nasalized falls through");
 ph_vec_scan(fall, sc);
 assert_eq(load64(sc + 8), 1, "fallthrough all finite");
+
+# ================================================================
+test_group("SynthesisContext");
+var ctx = svara_synthctx_new(male, SR);
+assert_eq(svara_is_err(ctx), 0, "ctx creation ok");
+assert_eq(svara_synthctx_sample_rate(ctx), SR, "ctx sample_rate 44100");
+# synthesize a vowel into the reused buffer
+var cn = svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_A, male, DUR, 0);
+assert_eq(cn, 4410, "ctx vowel -> 4410 samples");
+ph_raw_scan(svara_synthctx_buffer(ctx), cn, sc);
+assert_eq(load64(sc + 8), 1, "ctx vowel all finite");
+assert_eq(load64(sc), 1, "ctx vowel non-silent");
+# reuse across different classes sequentially (no re-alloc, correct output each time)
+var seq2 = vec_new();
+vec_push(seq2, SVARA_PH_FRIC_S);
+vec_push(seq2, SVARA_PH_NASAL_M);
+vec_push(seq2, SVARA_PH_PLOSIVE_T);
+vec_push(seq2, SVARA_PH_TRILL_ALVEOLAR);
+vec_push(seq2, SVARA_PH_CLICK_BILABIAL);
+vec_push(seq2, SVARA_PH_EJECTIVE_S);
+vec_push(seq2, SVARA_PH_IMPLOSIVE_B);
+var qi = 0;
+var ctx_ok = 1;
+while (qi < vec_len(seq2)) {
+    var cnn = svara_synthctx_synthesize(ctx, vec_get(seq2, qi), male, DUR, 0);
+    if (svara_is_err(cnn) == 1) { ctx_ok = 0; }
+    ph_raw_scan(svara_synthctx_buffer(ctx), cnn, sc);
+    if (load64(sc + 8) == 0) { ctx_ok = 0; }
+    qi = qi + 1;
+}
+assert_eq(ctx_ok, 1, "ctx reuse across classes: all finite");
+# ctx nasalized vowel
+var cnas = svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_A, male, DUR, svara_nasalization_for_nasal(SVARA_PH_NASAL_N));
+assert_eq(svara_is_err(cnas), 0, "ctx nasalized ok");
+ph_raw_scan(svara_synthctx_buffer(ctx), cnas, sc);
+assert_eq(load64(sc + 8), 1, "ctx nasalized all finite");
+# ctx silence
+var csil = svara_synthctx_synthesize(ctx, SVARA_PH_SILENCE, male, DUR, 0);
+ph_raw_scan(svara_synthctx_buffer(ctx), csil, sc);
+assert_eq(load64(sc), 0, "ctx silence all zero");
 
 var rc = assert_summary();
 syscall(60, rc);

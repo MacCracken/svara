@@ -79,6 +79,13 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   `ease_in_out_smooth`). Ties voice + glottal + tract + `FormantFilter` into
   audio (returns a vec of f64 samples). **+17 tests (290 total).** svara can now
   synthesize a phoneme end-to-end. `SynthesisContext` (part 3b) follows.
+- **`src/phoneme.cyr` (part 3b/3)** (L3) — `SynthesisContext`: the allocation-reuse
+  wrapper owning a `VocalTract` + `GlottalSource` + shared PRNG + growable scratch
+  buffer, resetting state between phonemes (the path multi-phoneme rendering drives).
+  Ports `synthesize` + the per-class `synthesize_*_ctx` methods (which use fixed
+  n/3,n/6,n/4,n/8 timing, not VOT, and route Trill through the approximant path,
+  faithful to the Rust). **+9 tests (299 total).** **phoneme is now fully ported**
+  (the crate's largest module, 2,636 LOC).
 
 ### Changed
 

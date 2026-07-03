@@ -112,6 +112,16 @@ fn main() {
         println("svara: phoneme synthesis produced no samples");
         return 1;
     }
+    # Smoke: reusable SynthesisContext renders a phoneme into its buffer.
+    var ctx = svara_synthctx_new(vp, f64_from(44100));
+    if (svara_is_err(ctx) == 1) {
+        println("svara: synthesis context init failed");
+        return 1;
+    }
+    if (svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_I, vp, F64_HALF, 0) <= 0) {
+        println("svara: context synthesis produced no samples");
+        return 1;
+    }
     println("svara (Cyrius port) — smoke OK");
     return 0;
 }

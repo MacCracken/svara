@@ -46,18 +46,20 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L2 | glottal.rs | src/glottal.cyr | ✅ ported | 35 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
 | L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
-| L3 | phoneme.rs | src/phoneme.cyr | 🔨 part 3a/3 | 290 | inventory + classification + data tables + free synthesis (synthesize_phoneme[_nasalized], all per-class synth). Part 3b = SynthesisContext (allocation-reuse wrapper) |
+| L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
-| L3 | prosody/sequence/trajectory | … | ⏳ | — | speech-science layer |
-| L4 | pool/render/bridge | … | ⏳ | — | orchestration + glue |
+| L3 | prosody.rs | src/prosody.cyr | ⏳ next | — | f0 contours / 9 tones / stress; hisab monotone_cubic |
+| L3 | sequence.rs | src/sequence.cyr | ⏳ | — | PhonemeEvent/Sequence coarticulation; render + render_planned |
+| L3 | trajectory.rs | src/trajectory.cyr | ⏳ | — | Catmull-Rom formant planning; hisab HVec3/bspline |
+| L4 | pool/render/bridge | … | ⏳ | — | SynthesisPool / BatchRenderer / scalar glue |
 
-**Total ported: 9¾ modules, 474 tests passing.** (phoneme part 3a/3 done.) Smoke
-binary (`build/svara`) green — now **synthesizes a full /a/ phoneme end-to-end**
-(voice → glottal → tract → PCM).
+**Total ported: 10 modules, 483 tests passing.** (phoneme fully done — its 3 sub-parts
+are complete.) Smoke binary (`build/svara`) green — synthesizes a full phoneme
+end-to-end (voice → glottal → tract → PCM), via both the free API and SynthesisContext.
 
 ## Tests
 
-474 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+483 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
 glottal / tract / voice / phoneme — all passing (all 10 test files lint-clean).
 Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
@@ -85,8 +87,9 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-**phoneme part 3b/3** — `SynthesisContext` (+ `synthesize` / the per-class
-`synthesize_*_ctx` methods): the allocation-reuse wrapper that owns a VocalTract
-+ GlottalSource + scratch buffer and resets between phonemes. Finishes phoneme.
-Then prosody / sequence / trajectory, then pool / render / bridge.
+The remaining speech-science layer + orchestration: **`prosody.cyr`** (f0 contours,
+9 lexical tones, stress; hisab `monotone_cubic`) → **`sequence.cyr`** (PhonemeEvent /
+PhonemeSequence coarticulation, `render` + `render_planned`) → **`trajectory.cyr`**
+(Catmull-Rom formant planning; hisab HVec3/bspline) → **pool / render / bridge**
+(orchestration + glue). Then the M-serde codecs + parity/bench gates + `dist/svara.cyr`.
 See [`roadmap.md`](roadmap.md).
