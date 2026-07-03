@@ -1,0 +1,287 @@
+# prosody.cyr -- pitch contours, intonation patterns, lexical tones, stress.
+# Ports rust-old/src/prosody.rs. Suprasegmental control: f0 trajectory, duration,
+# and amplitude. f0 contour = a vec of (time, value) pairs (time in [0,1], value
+# an f0 multiplier), interpolated with hisab monotone-cubic (Fritsch-Carlson, no
+# overshoot). f32 -> f64 throughout. Non-integer contour values use Cyrius f64
+# float literals directly. serde dropped (M-serde; roadmap.md).
+#
+# Requires: stdlib alloc/vec/math, hisab (calc_monotone_cubic). No project deps.
+
+# IntonationPattern (enum -> ints).
+var SVARA_INTONATION_DECLARATIVE  = 0;
+var SVARA_INTONATION_INTERROGATIVE = 1;
+var SVARA_INTONATION_CONTINUATION = 2;
+var SVARA_INTONATION_EXCLAMATORY  = 3;
+
+# Tone (enum -> ints). 9 lexical tones.
+var SVARA_TONE_HIGH        = 0;
+var SVARA_TONE_RISING      = 1;
+var SVARA_TONE_DIPPING     = 2;
+var SVARA_TONE_FALLING     = 3;
+var SVARA_TONE_NEUTRAL     = 4;
+var SVARA_TONE_LOW         = 5;
+var SVARA_TONE_MID         = 6;
+var SVARA_TONE_LOW_RISING  = 7;
+var SVARA_TONE_HIGH_FALLING = 8;
+
+# Stress (enum -> ints).
+var SVARA_STRESS_PRIMARY    = 0;
+var SVARA_STRESS_SECONDARY  = 1;
+var SVARA_STRESS_UNSTRESSED = 2;
+
+# f0 point = 16-byte pair {time@0, value@8}.
+#must_use
+fn svara_pt_new(t, v) { var p = alloc(16); store64(p, t); store64(p + 8, v); return p; }
+#must_use
+fn svara_pt_time(p) { return load64(p); }
+#must_use
+fn svara_pt_value(p) { return load64(p + 8); }
+
+#derive(accessors)
+struct SvProsodyContour { f0_points; duration_scale; amplitude_scale; }
+
+# selection sort a vec of point pointers by ascending time.
+fn svara_prosody_sort_points(v) {
+    var n = vec_len(v);
+    var a = 0;
+    while (a < n) {
+        var lo = a;
+        var b = a + 1;
+        while (b < n) {
+            if (f64_lt(svara_pt_time(vec_get(v, b)), svara_pt_time(vec_get(v, lo))) == 1) { lo = b; }
+            b = b + 1;
+        }
+        if (lo != a) {
+            var tmp = vec_get(v, a);
+            vec_set(v, a, vec_get(v, lo));
+            vec_set(v, lo, tmp);
+        }
+        a = a + 1;
+    }
+}
+
+# f0_at_internal -- monotone-cubic interpolation of the f0 multiplier at t.
+# calc_monotone_cubic returns 0 on error; mirror Rust's unwrap_or(1.0).
+#must_use
+fn svara_prosody_f0_at_internal(self, t) {
+    var pts = SvProsodyContour_f0_points(self);
+    var n = vec_len(pts);
+    if (n == 0) { return F64_ONE; }
+    if (n == 1) { return svara_pt_value(vec_get(pts, 0)); }
+    var tc = f64_clamp(t, 0, F64_ONE);
+    var xs = alloc(n * 8);
+    var ys = alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        var p = vec_get(pts, i);
+        store64(xs + i * 8, svara_pt_time(p));
+        store64(ys + i * 8, svara_pt_value(p));
+        i = i + 1;
+    }
+    var r = calc_monotone_cubic(xs, ys, n, tc);
+    if (r == 0) { return F64_ONE; }
+    return r;
+}
+
+#must_use
+fn svara_prosody_f0_at(self, t) { return svara_prosody_f0_at_internal(self, t); }
+
+# insert_f0_boost -- boost f0 around `position` (width), adding peak + boundary points.
+fn svara_prosody_insert_f0_boost(self, position, boost, width) {
+    var pts = SvProsodyContour_f0_points(self);
+    var start = f64_max(f64_sub(position, width), 0);
+    var end = f64_min(f64_add(position, width), F64_ONE);
+
+    # scale existing points within `width` of `position`
+    var i = 0;
+    while (i < vec_len(pts)) {
+        var p = vec_get(pts, i);
+        var dist = f64_abs(f64_sub(svara_pt_time(p), position));
+        if (f64_lt(dist, width) == 1) {
+            var influence = f64_sub(F64_ONE, f64_div(dist, width));
+            var factor = f64_add(F64_ONE, f64_mul(f64_sub(boost, F64_ONE), influence));
+            store64(p + 8, f64_mul(svara_pt_value(p), factor));
+        }
+        i = i + 1;
+    }
+
+    # add a peak point unless one already sits within 0.02
+    var has_nearby = 0;
+    var j = 0;
+    while (j < vec_len(pts)) {
+        if (f64_lt(f64_abs(f64_sub(svara_pt_time(vec_get(pts, j)), position)), 0.02) == 1) { has_nearby = 1; }
+        j = j + 1;
+    }
+    if (has_nearby == 0) {
+        var base = svara_prosody_f0_at_internal(self, position);
+        vec_push(pts, svara_pt_new(position, f64_mul(base, boost)));
+        svara_prosody_sort_points(pts);
+    }
+
+    # ensure a boundary point at `start` (prepend by rebuilding)
+    if (vec_len(pts) > 0) {
+        if (f64_gt(svara_pt_time(vec_get(pts, 0)), start) == 1) {
+            var nv = vec_new();
+            vec_push(nv, svara_pt_new(start, svara_prosody_f0_at_internal(self, start)));
+            var k = 0;
+            while (k < vec_len(pts)) { vec_push(nv, vec_get(pts, k)); k = k + 1; }
+            SvProsodyContour_set_f0_points(self, nv);
+            pts = nv;
+        }
+    }
+    # ensure a boundary point at `end`
+    var last = vec_len(pts) - 1;
+    if (last >= 0) {
+        if (f64_lt(svara_pt_time(vec_get(pts, last)), end) == 1) {
+            vec_push(pts, svara_pt_new(end, svara_prosody_f0_at_internal(self, end)));
+        }
+    }
+}
+
+# apply_stress -- primary/secondary boost f0+dur+amp; unstressed slightly reduces.
+fn svara_prosody_apply_stress(self, stress, position) {
+    var pos = f64_clamp(position, 0, F64_ONE);
+    if (stress == SVARA_STRESS_PRIMARY) {
+        svara_prosody_insert_f0_boost(self, pos, 1.10, 0.15);
+        SvProsodyContour_set_duration_scale(self, f64_mul(SvProsodyContour_duration_scale(self), 1.15));
+        SvProsodyContour_set_amplitude_scale(self, f64_mul(SvProsodyContour_amplitude_scale(self), 1.1));
+    } elif (stress == SVARA_STRESS_SECONDARY) {
+        svara_prosody_insert_f0_boost(self, pos, 1.05, 0.10);
+        SvProsodyContour_set_duration_scale(self, f64_mul(SvProsodyContour_duration_scale(self), 1.05));
+        SvProsodyContour_set_amplitude_scale(self, f64_mul(SvProsodyContour_amplitude_scale(self), 1.05));
+    } else {
+        SvProsodyContour_set_duration_scale(self, f64_mul(SvProsodyContour_duration_scale(self), 0.9));
+        SvProsodyContour_set_amplitude_scale(self, f64_mul(SvProsodyContour_amplitude_scale(self), 0.95));
+    }
+}
+
+# build a contour from a points vec + scales.
+#must_use
+fn svara_prosody_make(pts, dur, amp) {
+    var c = alloc(sizeof(SvProsodyContour));
+    SvProsodyContour_set_f0_points(c, pts);
+    SvProsodyContour_set_duration_scale(c, dur);
+    SvProsodyContour_set_amplitude_scale(c, amp);
+    return c;
+}
+
+# flat -- constant f0, no scaling.
+#must_use
+fn svara_prosody_flat() {
+    var p = vec_new();
+    vec_push(p, svara_pt_new(0, F64_ONE));
+    vec_push(p, svara_pt_new(F64_ONE, F64_ONE));
+    return svara_prosody_make(p, F64_ONE, F64_ONE);
+}
+
+# from_pattern -- intonation contour (base_f0 unused, values are multipliers).
+#must_use
+fn svara_prosody_from_pattern(pattern, base_f0) {
+    if (pattern == SVARA_INTONATION_DECLARATIVE) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.05));
+        vec_push(p, svara_pt_new(0.3, 1.02));
+        vec_push(p, svara_pt_new(0.6, 0.95));
+        vec_push(p, svara_pt_new(0.8, 0.88));
+        vec_push(p, svara_pt_new(1.0, 0.80));
+        return svara_prosody_make(p, 1.0, 1.0);
+    }
+    if (pattern == SVARA_INTONATION_INTERROGATIVE) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.0));
+        vec_push(p, svara_pt_new(0.4, 0.98));
+        vec_push(p, svara_pt_new(0.6, 1.05));
+        vec_push(p, svara_pt_new(0.8, 1.15));
+        vec_push(p, svara_pt_new(1.0, 1.30));
+        return svara_prosody_make(p, 1.1, 1.0);
+    }
+    if (pattern == SVARA_INTONATION_CONTINUATION) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.0));
+        vec_push(p, svara_pt_new(0.3, 1.08));
+        vec_push(p, svara_pt_new(0.5, 1.12));
+        vec_push(p, svara_pt_new(0.7, 1.06));
+        vec_push(p, svara_pt_new(1.0, 1.0));
+        return svara_prosody_make(p, 1.05, 1.0);
+    }
+    # EXCLAMATORY
+    var p = vec_new();
+    vec_push(p, svara_pt_new(0.0, 1.3));
+    vec_push(p, svara_pt_new(0.2, 1.25));
+    vec_push(p, svara_pt_new(0.5, 1.1));
+    vec_push(p, svara_pt_new(0.8, 0.9));
+    vec_push(p, svara_pt_new(1.0, 0.75));
+    return svara_prosody_make(p, 0.9, 1.2);
+}
+
+# to_contour -- f0 contour for a lexical tone (values are f0 multipliers).
+#must_use
+fn svara_tone_to_contour(tone) {
+    if (tone == SVARA_TONE_HIGH) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.2));
+        vec_push(p, svara_pt_new(0.5, 1.2));
+        vec_push(p, svara_pt_new(1.0, 1.2));
+        return svara_prosody_make(p, 1.0, 1.0);
+    }
+    if (tone == SVARA_TONE_RISING) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 0.85));
+        vec_push(p, svara_pt_new(0.3, 0.85));
+        vec_push(p, svara_pt_new(0.7, 1.1));
+        vec_push(p, svara_pt_new(1.0, 1.25));
+        return svara_prosody_make(p, 1.0, 1.0);
+    }
+    if (tone == SVARA_TONE_DIPPING) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.0));
+        vec_push(p, svara_pt_new(0.2, 0.85));
+        vec_push(p, svara_pt_new(0.5, 0.75));
+        vec_push(p, svara_pt_new(0.8, 0.9));
+        vec_push(p, svara_pt_new(1.0, 1.05));
+        return svara_prosody_make(p, 1.15, 0.9);
+    }
+    if (tone == SVARA_TONE_FALLING) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.3));
+        vec_push(p, svara_pt_new(0.3, 1.15));
+        vec_push(p, svara_pt_new(0.7, 0.9));
+        vec_push(p, svara_pt_new(1.0, 0.75));
+        return svara_prosody_make(p, 0.9, 1.1);
+    }
+    if (tone == SVARA_TONE_NEUTRAL) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.0));
+        vec_push(p, svara_pt_new(1.0, 0.95));
+        return svara_prosody_make(p, 0.7, 0.85);
+    }
+    if (tone == SVARA_TONE_LOW) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 0.75));
+        vec_push(p, svara_pt_new(0.5, 0.75));
+        vec_push(p, svara_pt_new(1.0, 0.75));
+        return svara_prosody_make(p, 1.0, 0.95);
+    }
+    if (tone == SVARA_TONE_MID) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 1.0));
+        vec_push(p, svara_pt_new(0.5, 1.0));
+        vec_push(p, svara_pt_new(1.0, 1.0));
+        return svara_prosody_make(p, 1.0, 1.0);
+    }
+    if (tone == SVARA_TONE_LOW_RISING) {
+        var p = vec_new();
+        vec_push(p, svara_pt_new(0.0, 0.7));
+        vec_push(p, svara_pt_new(0.4, 0.75));
+        vec_push(p, svara_pt_new(0.7, 0.95));
+        vec_push(p, svara_pt_new(1.0, 1.1));
+        return svara_prosody_make(p, 1.0, 1.0);
+    }
+    # HIGH_FALLING
+    var p = vec_new();
+    vec_push(p, svara_pt_new(0.0, 1.35));
+    vec_push(p, svara_pt_new(0.2, 1.3));
+    vec_push(p, svara_pt_new(0.6, 1.0));
+    vec_push(p, svara_pt_new(1.0, 0.7));
+    return svara_prosody_make(p, 0.95, 1.05);
+}

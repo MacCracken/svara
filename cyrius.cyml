@@ -5,7 +5,7 @@ description = "svara — formant and vocal synthesis (glottal source, vocal trac
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/svara"
 language = "cyrius"
-cyrius = "6.3.38"
+cyrius = "6.3.39"
 
 [build]
 entry = "src/main.cyr"
@@ -28,6 +28,7 @@ modules = [
     "src/tract.cyr",
     "src/voice.cyr",
     "src/phoneme.cyr",
+    "src/prosody.cyr",
 ]
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives

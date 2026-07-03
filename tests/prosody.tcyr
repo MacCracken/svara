@@ -1,0 +1,106 @@
+# prosody.tcyr -- tests for src/prosody.cyr. Ports rust-old/src/prosody.rs
+# #[test] blocks (serde dropped). Include: hisab (calc_monotone_cubic) + prosody.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/prosody.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+
+#must_use
+fn pr_approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("flat contour");
+var flat = svara_prosody_flat();
+assert_eq(pr_approx(svara_prosody_f0_at(flat, 0), F64_ONE, TOL_1EM6), 1, "flat @0 = 1.0");
+assert_eq(pr_approx(svara_prosody_f0_at(flat, F64_HALF), F64_ONE, TOL_1EM6), 1, "flat @0.5 = 1.0");
+assert_eq(pr_approx(svara_prosody_f0_at(flat, F64_ONE), F64_ONE, TOL_1EM6), 1, "flat @1.0 = 1.0");
+
+# ================================================================
+test_group("intonation direction");
+var decl = svara_prosody_from_pattern(SVARA_INTONATION_DECLARATIVE, f64_from(120));
+assert_eq(f64_gt(svara_prosody_f0_at(decl, 0), svara_prosody_f0_at(decl, F64_ONE)), 1, "declarative falls");
+var inter = svara_prosody_from_pattern(SVARA_INTONATION_INTERROGATIVE, f64_from(120));
+assert_eq(f64_gt(svara_prosody_f0_at(inter, F64_ONE), svara_prosody_f0_at(inter, 0)), 1, "interrogative rises");
+
+# ================================================================
+test_group("stress application");
+var sc = svara_prosody_flat();
+var before_dur = SvProsodyContour_duration_scale(sc);
+svara_prosody_apply_stress(sc, SVARA_STRESS_PRIMARY, F64_HALF);
+assert_eq(f64_gt(SvProsodyContour_duration_scale(sc), before_dur), 1, "primary stress lengthens");
+assert_eq(f64_gt(SvProsodyContour_amplitude_scale(sc), F64_ONE), 1, "primary stress boosts amplitude");
+# f0 still finite + positive after stress (exercises insert_f0_boost path)
+var stress_ok = 1;
+var si = 0;
+while (si < 20) {
+    var v = svara_prosody_f0_at(sc, f64_div(f64_from(si), f64_from(20)));
+    if (svara_is_finite(v) == 0) { stress_ok = 0; }
+    if (f64_le(v, 0) == 1) { stress_ok = 0; }
+    si = si + 1;
+}
+assert_eq(stress_ok, 1, "stressed contour stays finite + positive");
+
+# ================================================================
+test_group("interpolation finite + positive (100 pts)");
+var mono_ok = 1;
+var mi = 0;
+while (mi < 100) {
+    var v = svara_prosody_f0_at(decl, f64_div(f64_from(mi), f64_from(100)));
+    if (svara_is_finite(v) == 0) { mono_ok = 0; }
+    if (f64_le(v, 0) == 1) { mono_ok = 0; }
+    mi = mi + 1;
+}
+assert_eq(mono_ok, 1, "declarative f0 finite + positive throughout");
+
+# ================================================================
+test_group("tones");
+var hi = svara_tone_to_contour(SVARA_TONE_HIGH);
+var hi_span = f64_abs(f64_sub(svara_prosody_f0_at(hi, 0), svara_prosody_f0_at(hi, F64_ONE)));
+assert_eq(f64_lt(hi_span, 0.05), 1, "high tone flat");
+assert_eq(f64_gt(svara_prosody_f0_at(hi, 0), 1.1), 1, "high tone above base");
+var ri = svara_tone_to_contour(SVARA_TONE_RISING);
+assert_eq(f64_gt(svara_prosody_f0_at(ri, F64_ONE), svara_prosody_f0_at(ri, 0)), 1, "rising tone rises");
+var fa = svara_tone_to_contour(SVARA_TONE_FALLING);
+assert_eq(f64_gt(svara_prosody_f0_at(fa, 0), svara_prosody_f0_at(fa, F64_ONE)), 1, "falling tone falls");
+var di = svara_tone_to_contour(SVARA_TONE_DIPPING);
+var di_mid = svara_prosody_f0_at(di, F64_HALF);
+assert_eq(f64_lt(di_mid, svara_prosody_f0_at(di, 0)), 1, "dipping dips below start");
+assert_eq(f64_gt(svara_prosody_f0_at(di, F64_ONE), di_mid), 1, "dipping rises back");
+var ne = svara_tone_to_contour(SVARA_TONE_NEUTRAL);
+assert_eq(f64_lt(SvProsodyContour_duration_scale(ne), 0.8), 1, "neutral tone short");
+
+# ================================================================
+test_group("all 9 tones valid (finite + positive)");
+var tones = vec_new();
+vec_push(tones, SVARA_TONE_HIGH);
+vec_push(tones, SVARA_TONE_RISING);
+vec_push(tones, SVARA_TONE_DIPPING);
+vec_push(tones, SVARA_TONE_FALLING);
+vec_push(tones, SVARA_TONE_NEUTRAL);
+vec_push(tones, SVARA_TONE_LOW);
+vec_push(tones, SVARA_TONE_MID);
+vec_push(tones, SVARA_TONE_LOW_RISING);
+vec_push(tones, SVARA_TONE_HIGH_FALLING);
+var ti = 0;
+var tones_ok = 1;
+while (ti < vec_len(tones)) {
+    var c = svara_tone_to_contour(vec_get(tones, ti));
+    var k = 0;
+    while (k < 11) {
+        var v = svara_prosody_f0_at(c, f64_div(f64_from(k), f64_from(10)));
+        if (svara_is_finite(v) == 0) { tones_ok = 0; }
+        if (f64_le(v, 0) == 1) { tones_ok = 0; }
+        k = k + 1;
+    }
+    ti = ti + 1;
+}
+assert_eq(tones_ok, 1, "all 9 tones finite + positive across [0,1]");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -19,6 +19,7 @@ include "src/glottal.cyr"
 include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
+include "src/prosody.cyr"
 
 fn main() {
     alloc_init();
@@ -120,6 +121,12 @@ fn main() {
     }
     if (svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_I, vp, F64_HALF, 0) <= 0) {
         println("svara: context synthesis produced no samples");
+        return 1;
+    }
+    # Smoke: a rising tone contour actually rises.
+    var tc = svara_tone_to_contour(SVARA_TONE_RISING);
+    if (f64_gt(svara_prosody_f0_at(tc, F64_ONE), svara_prosody_f0_at(tc, 0)) == 0) {
+        println("svara: prosody tone broken");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

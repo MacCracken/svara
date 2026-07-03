@@ -86,6 +86,11 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   n/3,n/6,n/4,n/8 timing, not VOT, and route Trill through the approximant path,
   faithful to the Rust). **+9 tests (299 total).** **phoneme is now fully ported**
   (the crate's largest module, 2,636 LOC).
+- **`src/prosody.cyr`** (L3) — ports `prosody.rs`: `ProsodyContour` (f0 point list
+  interpolated with hisab monotone-cubic; `apply_stress` with dynamic f0-boost
+  insertion + sort), the 4 `IntonationPattern`s, 9 lexical `Tone`s (`to_contour`),
+  and `Stress`. Contour constants use Cyrius decimal float literals. **17 tests.**
+- Toolchain pin → `6.3.39`.
 
 ### Changed
 
