@@ -1,0 +1,105 @@
+# formant.tcyr -- tests for src/formant.cyr.
+# Ports the #[test] blocks from rust-old/src/formant.rs (serde-roundtrip dropped)
+# plus golden coefficient + end-to-end filter-output checks generated from an
+# f64 replica of the algorithm. f64 tolerances: transcendental-derived values
+# (coeffs, filter output) use loose tolerances since Cyrius f64_cos/sin may
+# differ from the reference libm by a few ULP; integer-valued targets are exact.
+
+include "src/error.cyr"
+include "src/formant.cyr"
+
+alloc_init();
+
+var TOL_1EM9 = 0x3E112E0BE826D695;   # 1e-9  (coefficients)
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6  (filter output, high-Q accumulation)
+
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+# ================================================================
+test_group("vowel targets (Hillenbrand /a/)");
+var ta = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+assert_eq(approx(SvVowelTarget_f1(ta), f64_from(768), SV_EPSILON), 1, "A f1 = 768");
+assert_eq(approx(SvVowelTarget_f2(ta), f64_from(1333), SV_EPSILON), 1, "A f2 = 1333");
+assert_eq(approx(SvVowelTarget_b1(ta), f64_from(90), SV_EPSILON), 1, "A b1 = 90 (per-vowel bw)");
+
+# ================================================================
+test_group("interpolation endpoints");
+var vfrom = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+var vto   = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+var at0 = svara_vowel_target_interpolate(vfrom, vto, 0);
+assert_eq(approx(SvVowelTarget_f1(at0), SvVowelTarget_f1(vfrom), SV_EPSILON), 1, "t=0 -> from.f1");
+assert_eq(approx(SvVowelTarget_f2(at0), SvVowelTarget_f2(vfrom), SV_EPSILON), 1, "t=0 -> from.f2");
+var at1 = svara_vowel_target_interpolate(vfrom, vto, F64_ONE);
+assert_eq(approx(SvVowelTarget_f1(at1), SvVowelTarget_f1(vto), SV_EPSILON), 1, "t=1 -> to.f1");
+assert_eq(approx(SvVowelTarget_f2(at1), SvVowelTarget_f2(vto), SV_EPSILON), 1, "t=1 -> to.f2");
+# midpoint is strictly between
+var mid = svara_vowel_target_interpolate(vfrom, vto, F64_HALF);
+assert_eq(f64_lt(SvVowelTarget_f1(mid), SvVowelTarget_f1(vfrom)), 1, "mid f1 below A (I f1 lower)");
+assert_eq(f64_gt(SvVowelTarget_f1(mid), SvVowelTarget_f1(vto)), 1, "mid f1 above I");
+
+# ================================================================
+test_group("biquad coefficients golden (768 Hz, 90 Hz bw, 44100)");
+var coeff = alloc(32);
+svara_formant_biquad_coeffs(f64_from(768), f64_from(90), f64_from(44100), coeff);
+assert_eq(approx(load64(coeff),      0x3F46ED30CE2B6AC0, TOL_1EM9), 1, "b0");
+assert_eq(approx(load64(coeff + 8),  0xBF46ED30CE2B6AC0, TOL_1EM9), 1, "b2 = -b0");
+assert_eq(approx(load64(coeff + 16), 0xBFFFC94F5721C256, TOL_1EM9), 1, "a1");
+assert_eq(approx(load64(coeff + 24), 0x3FEFF4896798EA4B, TOL_1EM9), 1, "a2");
+
+# ================================================================
+test_group("filter creation + validation");
+var fa = svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+var ff = svara_formant_filter_new(fa, f64_from(44100));
+assert_eq(svara_is_err(ff), 0, "valid /a/ filter builds");
+assert_eq(svara_formant_filter_num_formants(ff), 5, "5 formants active");
+var empty = vec_new();
+assert_eq(svara_is_err(svara_formant_filter_new(empty, f64_from(44100))), 1, "empty formant list rejected");
+assert_eq(svara_is_err(svara_formant_filter_new(fa, 0)), 1, "zero sample rate rejected");
+
+# ================================================================
+test_group("filter output golden + finite (/a/ impulse then zeros)");
+var ff2 = svara_formant_filter_new(
+    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), f64_from(44100));
+assert_eq(approx(svara_formant_filter_process_sample(ff2, F64_ONE), 0x3F77A8C7BC46D43A, TOL_1EM6), 1, "out[0]");
+assert_eq(approx(svara_formant_filter_process_sample(ff2, 0),       0x3F85CEDCB883A3AF, TOL_1EM6), 1, "out[1]");
+assert_eq(approx(svara_formant_filter_process_sample(ff2, 0),       0x3F80C44C2482C1E2, TOL_1EM6), 1, "out[2]");
+assert_eq(approx(svara_formant_filter_process_sample(ff2, 0),       0x3F736D68F5682E1B, TOL_1EM6), 1, "out[3]");
+assert_eq(approx(svara_formant_filter_process_sample(ff2, 0),       0x3F50B95439906F20, TOL_1EM6), 1, "out[4]");
+# 100 further zeros stay finite (decaying resonators)
+var k = 0;
+var all_finite = 1;
+while (k < 100) {
+    if (svara_is_finite(svara_formant_filter_process_sample(ff2, 0)) == 0) { all_finite = 0; }
+    k = k + 1;
+}
+assert_eq(all_finite, 1, "100 samples all finite");
+
+# ================================================================
+test_group("different vowels produce different output");
+var ffa = svara_formant_filter_new(
+    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), f64_from(44100));
+var ffi = svara_formant_filter_new(
+    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_I)), f64_from(44100));
+# accumulate a small energy difference over an impulse response
+svara_formant_filter_process_sample(ffa, F64_ONE);
+svara_formant_filter_process_sample(ffi, F64_ONE);
+var diff = 0;
+var m = 0;
+while (m < 64) {
+    var da = svara_formant_filter_process_sample(ffa, 0);
+    var di = svara_formant_filter_process_sample(ffi, 0);
+    diff = f64_add(diff, f64_abs(f64_sub(da, di)));
+    m = m + 1;
+}
+assert_eq(f64_gt(diff, TOL_1EM6), 1, "/a/ and /i/ diverge over impulse response");
+
+# ================================================================
+test_group("reset clears state");
+svara_formant_filter_reset(ff2);
+assert_eq(approx(svara_formant_filter_process_sample(ff2, F64_ONE), 0x3F77A8C7BC46D43A, TOL_1EM6), 1, "post-reset impulse == out[0]");
+
+var rc = assert_summary();
+syscall(60, rc);

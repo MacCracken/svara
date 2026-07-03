@@ -36,28 +36,28 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L0 | rng.rs | src/rng.cyr | ✅ ported | 17 | PCG32, golden-value verified |
 | L0 | smooth.rs | src/smooth.cyr | ✅ ported | 6 | one-pole; exp via ganita builtin |
 | L0 | math.rs | — | ✅ n/a | — | libm/std shim → maps to ganita/f64 builtins; no module needed |
-| L1 | formant.rs | src/formant.cyr | ⏳ next | — | SOA biquad bank; reuse naad BiquadFilter |
-| L1 | spectral.rs | src/spectral.cyr | ⏳ | — | hisab num_fft interleaved-buffer idiom |
-| L2 | glottal.rs | src/glottal.cyr | ⏳ | — | hottest path; pulse models + PCG noise |
-| L2 | tract.rs | src/tract.cyr | ⏳ | — | biquad chain + feedback; collapse CFG |
+| L1 | formant.rs | src/formant.cyr | ✅ ported | 25 | svara's own SOA 8× bandpass bank (NOT naad); golden coeffs+output verified |
+| L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
+| L2 | glottal.rs | src/glottal.cyr | ⏳ next | — | hottest path; pulse models + PCG noise; needs naad noise/LFO |
+| L2 | tract.rs | src/tract.cyr | ⏳ | — | biquad chain + feedback; collapse CFG; needs naad biquad |
 | L3 | phoneme.rs | src/phoneme.cyr | ⏳ | — | 2,636 LOC; `.cyml` data tables |
 | L3 | prosody/voice/sequence/trajectory | … | ⏳ | — | speech-science layer |
 | L4 | lod/pool/render/bridge | … | ⏳ | — | orchestration + glue |
 
-**Total ported: 3 modules, 48 tests passing.** Smoke binary (`build/svara`) green.
+**Total ported: 5 modules, 87 tests passing.** Smoke binary (`build/svara`) green.
 
 ## Tests
 
-48 `.tcyr` assertions across error / rng / smooth — all passing. Run one suite:
-`cyrius test tests/<mod>.tcyr` (no auto-discovery).
+87 `.tcyr` assertions across error / rng / smooth / formant / spectral — all passing.
+Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — syscalls, string, alloc, str, fmt, vec, io, args, assert, math, ganita, tagged, bench
-- **hisab** (git, pinned) — added when formant/spectral land (FFT / HComplex / compensated sum / easing / interp)
-- **naad** (git, pinned) — added when formant/tract/glottal land (biquad / noise / LFO backends)
+- **hisab** (git, pinned `2.6.7`) — FFT / HComplex / compensated sum. **Added** (spectral.cyr).
+- **naad** (git, pinned) — biquad / noise / LFO backends. Added when tract/glottal land.
 
 ## Deferred work (tracked)
 
@@ -70,5 +70,8 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-DSP-primitive layer: `formant.cyr` (SOA biquad, first big benchmark target), then
-`spectral.cyr` (hisab FFT). Add hisab + naad git deps at that point. See [`roadmap.md`](roadmap.md).
+Excitation/tract layer (L2, highest float risk): `glottal.cyr` (pulse models +
+PCG-driven aspiration noise; the hottest path) then `tract.cyr` (biquad chain +
+source-filter feedback). Both add the **naad** git dep (noise/LFO for glottal;
+biquad for tract's nasal notch + subglottal) and require collapsing the
+naad-backend-vs-fallback CFG split to the naad-backend path. See [`roadmap.md`](roadmap.md).

@@ -1,0 +1,398 @@
+# formant.cyr -- formant filtering + vowel target definitions.
+# Ports rust-old/src/formant.rs. Formants are vocal-tract resonances; this is
+# a parallel bank of bandpass biquad resonators (Peterson&Barney / Hillenbrand
+# 1995 vowel data). f32 -> f64 throughout (Rust computed coeffs in f64 then
+# truncated to f32; the port keeps f64 end-to-end -- strictly more precise,
+# within tolerance parity). Self-contained: NO naad dependency (the SOA bank is
+# svara's own topology, not naad's BiquadFilter). Requires stdlib math/ganita
+# (F64_*, f64_cos/sin builtins, f64_sinh, f64_clamp/lerp) + error.cyr.
+#
+# Cyrius structs have no array fields, so BiquadBankSoa's nine [f32; 8] arrays
+# become nine raw f64 buffers (SVARA_MAX_FORMANTS slots each) held as struct
+# fields; the hot loop indexes them with load64/store64. serde on Formant /
+# VowelTarget / FormantFilter is dropped (tracked in docs/development/roadmap.md).
+
+var SVARA_MAX_FORMANTS = 8;   # fixed bank width (unused slots zeroed)
+
+# Default formant amplitudes F1..F5 (linear) for the parallel bank.
+var SVARA_AMP_0 = 0x3FF0000000000000;   # 1.0
+var SVARA_AMP_1 = 0x3FE999999999999A;   # 0.8
+var SVARA_AMP_2 = 0x3FE0000000000000;   # 0.5
+var SVARA_AMP_3 = 0x3FD3333333333333;   # 0.3
+var SVARA_AMP_4 = 0x3FC999999999999A;   # 0.2
+
+# ================================================================
+# Formant -- a single resonance spec (frequency, bandwidth, amplitude in Hz/Hz/linear).
+# ================================================================
+#derive(accessors)
+struct SvFormant { frequency; bandwidth; amplitude; }
+
+#must_use
+fn svara_formant_new(frequency, bandwidth, amplitude) {
+    var self = alloc(sizeof(SvFormant));
+    SvFormant_set_frequency(self, frequency);
+    SvFormant_set_bandwidth(self, bandwidth);
+    SvFormant_set_amplitude(self, amplitude);
+    return self;
+}
+
+# ================================================================
+# Vowel categories (was `enum Vowel`) -> integer constants.
+# ================================================================
+var SVARA_VOWEL_A     = 0;   # /a/ open front unrounded
+var SVARA_VOWEL_E     = 1;   # /e/ close-mid front unrounded
+var SVARA_VOWEL_I     = 2;   # /i/ close front unrounded
+var SVARA_VOWEL_O     = 3;   # /o/ close-mid back rounded
+var SVARA_VOWEL_U     = 4;   # /u/ close back rounded
+var SVARA_VOWEL_SCHWA = 5;   # schwa mid central
+var SVARA_VOWEL_OPENO = 6;   # open-O open-mid back rounded
+var SVARA_VOWEL_ASH   = 7;   # near-open front
+var SVARA_VOWEL_NEARI = 8;   # near-close near-front
+var SVARA_VOWEL_NEARU = 9;   # near-close near-back
+
+# ================================================================
+# VowelTarget -- F1..F5 frequencies + B1..B5 bandwidths (Hz).
+# ================================================================
+#derive(accessors)
+struct SvVowelTarget { f1; f2; f3; f4; f5; b1; b2; b3; b4; b5; }
+
+# with_bandwidths -- explicit frequencies and bandwidths.
+#must_use
+fn svara_vowel_target_with_bandwidths(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
+    var self = alloc(sizeof(SvVowelTarget));
+    SvVowelTarget_set_f1(self, f1);
+    SvVowelTarget_set_f2(self, f2);
+    SvVowelTarget_set_f3(self, f3);
+    SvVowelTarget_set_f4(self, f4);
+    SvVowelTarget_set_f5(self, f5);
+    SvVowelTarget_set_b1(self, b1);
+    SvVowelTarget_set_b2(self, b2);
+    SvVowelTarget_set_b3(self, b3);
+    SvVowelTarget_set_b4(self, b4);
+    SvVowelTarget_set_b5(self, b5);
+    return self;
+}
+
+# new -- frequencies with default bandwidths [60, 80, 100, 120, 140] Hz.
+#must_use
+fn svara_vowel_target_new(f1, f2, f3, f4, f5) {
+    return svara_vowel_target_with_bandwidths(f1, f2, f3, f4, f5,
+        f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+}
+
+# from_vowel -- Hillenbrand et al. (1995) male averages, per-vowel bandwidths.
+#must_use
+fn svara_vowel_target_from_vowel(vowel) {
+    if (vowel == SVARA_VOWEL_A) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(768), f64_from(1333), f64_from(2522), f64_from(3300), f64_from(3750),
+            f64_from(90), f64_from(100), f64_from(120), f64_from(140), f64_from(160));
+    }
+    if (vowel == SVARA_VOWEL_E) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(476), f64_from(2089), f64_from(2691), f64_from(3300), f64_from(3750),
+            f64_from(55), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+    }
+    if (vowel == SVARA_VOWEL_I) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(342), f64_from(2322), f64_from(3000), f64_from(3657), f64_from(3750),
+            f64_from(40), f64_from(70), f64_from(90), f64_from(120), f64_from(140));
+    }
+    if (vowel == SVARA_VOWEL_O) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(497), f64_from(910), f64_from(2459), f64_from(3300), f64_from(3750),
+            f64_from(65), f64_from(70), f64_from(100), f64_from(120), f64_from(140));
+    }
+    if (vowel == SVARA_VOWEL_U) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(378), f64_from(997), f64_from(2343), f64_from(3300), f64_from(3750),
+            f64_from(45), f64_from(65), f64_from(90), f64_from(120), f64_from(140));
+    }
+    if (vowel == SVARA_VOWEL_SCHWA) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(523), f64_from(1588), f64_from(2469), f64_from(3300), f64_from(3750),
+            f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+    }
+    if (vowel == SVARA_VOWEL_OPENO) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(652), f64_from(997), f64_from(2538), f64_from(3300), f64_from(3750),
+            f64_from(80), f64_from(75), f64_from(110), f64_from(130), f64_from(150));
+    }
+    if (vowel == SVARA_VOWEL_ASH) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(669), f64_from(1880), f64_from(2489), f64_from(3300), f64_from(3750),
+            f64_from(80), f64_from(90), f64_from(110), f64_from(130), f64_from(150));
+    }
+    if (vowel == SVARA_VOWEL_NEARI) {
+        return svara_vowel_target_with_bandwidths(
+            f64_from(427), f64_from(2034), f64_from(2684), f64_from(3300), f64_from(3750),
+            f64_from(50), f64_from(75), f64_from(95), f64_from(120), f64_from(140));
+    }
+    # SVARA_VOWEL_NEARU (default arm)
+    return svara_vowel_target_with_bandwidths(
+        f64_from(469), f64_from(1122), f64_from(2434), f64_from(3300), f64_from(3750),
+        f64_from(55), f64_from(70), f64_from(95), f64_from(120), f64_from(140));
+}
+
+# to_formants -- vec of 5 Formant pointers (F1..F5) with default amplitudes.
+#must_use
+fn svara_vowel_target_to_formants(self) {
+    var out = vec_new();
+    vec_push(out, svara_formant_new(SvVowelTarget_f1(self), SvVowelTarget_b1(self), SVARA_AMP_0));
+    vec_push(out, svara_formant_new(SvVowelTarget_f2(self), SvVowelTarget_b2(self), SVARA_AMP_1));
+    vec_push(out, svara_formant_new(SvVowelTarget_f3(self), SvVowelTarget_b3(self), SVARA_AMP_2));
+    vec_push(out, svara_formant_new(SvVowelTarget_f4(self), SvVowelTarget_b4(self), SVARA_AMP_3));
+    vec_push(out, svara_formant_new(SvVowelTarget_f5(self), SvVowelTarget_b5(self), SVARA_AMP_4));
+    return out;
+}
+
+# interpolate -- linear blend of two targets; t clamped to [0, 1].
+#must_use
+fn svara_vowel_target_interpolate(from, to, t) {
+    var tc = f64_clamp(t, 0, F64_ONE);
+    var r = alloc(sizeof(SvVowelTarget));
+    SvVowelTarget_set_f1(r, f64_lerp(SvVowelTarget_f1(from), SvVowelTarget_f1(to), tc));
+    SvVowelTarget_set_f2(r, f64_lerp(SvVowelTarget_f2(from), SvVowelTarget_f2(to), tc));
+    SvVowelTarget_set_f3(r, f64_lerp(SvVowelTarget_f3(from), SvVowelTarget_f3(to), tc));
+    SvVowelTarget_set_f4(r, f64_lerp(SvVowelTarget_f4(from), SvVowelTarget_f4(to), tc));
+    SvVowelTarget_set_f5(r, f64_lerp(SvVowelTarget_f5(from), SvVowelTarget_f5(to), tc));
+    SvVowelTarget_set_b1(r, f64_lerp(SvVowelTarget_b1(from), SvVowelTarget_b1(to), tc));
+    SvVowelTarget_set_b2(r, f64_lerp(SvVowelTarget_b2(from), SvVowelTarget_b2(to), tc));
+    SvVowelTarget_set_b3(r, f64_lerp(SvVowelTarget_b3(from), SvVowelTarget_b3(to), tc));
+    SvVowelTarget_set_b4(r, f64_lerp(SvVowelTarget_b4(from), SvVowelTarget_b4(to), tc));
+    SvVowelTarget_set_b5(r, f64_lerp(SvVowelTarget_b5(from), SvVowelTarget_b5(to), tc));
+    return r;
+}
+
+# ================================================================
+# biquad_coefficients -- bandpass biquad, computed in f64. Writes b0,b2,a1,a2
+# into `out` (4 f64 slots). b1 == 0 for bandpass, b2 == -b0.
+# ================================================================
+#inline
+fn svara_formant_biquad_coeffs(frequency, bandwidth, sample_rate, out) {
+    var omega = f64_div(f64_mul(F64_TAU, frequency), sample_rate);
+    var cos_omega = f64_cos(omega);
+    var sin_omega = f64_sin(omega);
+    var bw_omega = f64_div(f64_mul(F64_TAU, bandwidth), sample_rate);
+    var alpha = f64_mul(sin_omega, f64_sinh(f64_mul(bw_omega, F64_HALF)));
+    var a0 = f64_add(F64_ONE, alpha);
+    store64(out,      f64_div(alpha, a0));                                    # b0
+    store64(out + 8,  f64_div(f64_neg(alpha), a0));                           # b2
+    store64(out + 16, f64_div(f64_mul(f64_neg(F64_TWO), cos_omega), a0));     # a1
+    store64(out + 24, f64_div(f64_sub(F64_ONE, alpha), a0));                  # a2
+}
+
+# ================================================================
+# BiquadBankSoa -- SOA bank of MAX_FORMANTS bandpass biquads. Nine f64 buffers
+# (b0/b2/a1/a2/amp = coeffs+weight, x1/x2/y1/y2 = delay lines) + active count.
+# ================================================================
+#derive(accessors)
+struct SvFormantBank { b0; b2; a1; a2; amp; x1; x2; y1; y2; count; }
+
+# zero a buffer of `n` f64 slots (bump alloc is not zeroed).
+fn svara_formant_zero_buf(buf, n) {
+    var i = 0;
+    while (i < n) { store64(buf + i * 8, 0); i = i + 1; }
+}
+
+# bank_new -- build from a vec of Formant pointers.
+#must_use
+fn svara_formant_bank_new(formants, sample_rate) {
+    var self = alloc(sizeof(SvFormantBank));
+    var nbytes = SVARA_MAX_FORMANTS * 8;
+    var b0 = alloc(nbytes); var b2 = alloc(nbytes); var a1 = alloc(nbytes);
+    var a2 = alloc(nbytes); var amp = alloc(nbytes);
+    var x1 = alloc(nbytes); var x2 = alloc(nbytes);
+    var y1 = alloc(nbytes); var y2 = alloc(nbytes);
+    svara_formant_zero_buf(b0, SVARA_MAX_FORMANTS); svara_formant_zero_buf(b2, SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(a1, SVARA_MAX_FORMANTS); svara_formant_zero_buf(a2, SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(amp, SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(x1, SVARA_MAX_FORMANTS); svara_formant_zero_buf(x2, SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(y1, SVARA_MAX_FORMANTS); svara_formant_zero_buf(y2, SVARA_MAX_FORMANTS);
+    SvFormantBank_set_b0(self, b0); SvFormantBank_set_b2(self, b2);
+    SvFormantBank_set_a1(self, a1); SvFormantBank_set_a2(self, a2);
+    SvFormantBank_set_amp(self, amp);
+    SvFormantBank_set_x1(self, x1); SvFormantBank_set_x2(self, x2);
+    SvFormantBank_set_y1(self, y1); SvFormantBank_set_y2(self, y2);
+
+    var n = vec_len(formants);
+    if (n > SVARA_MAX_FORMANTS) { n = SVARA_MAX_FORMANTS; }
+    SvFormantBank_set_count(self, n);
+
+    var coeff = alloc(32);
+    var i = 0;
+    while (i < n) {
+        var f = vec_get(formants, i);
+        svara_formant_biquad_coeffs(SvFormant_frequency(f), SvFormant_bandwidth(f), sample_rate, coeff);
+        store64(b0 + i * 8, load64(coeff));
+        store64(b2 + i * 8, load64(coeff + 8));
+        store64(a1 + i * 8, load64(coeff + 16));
+        store64(a2 + i * 8, load64(coeff + 24));
+        store64(amp + i * 8, SvFormant_amplitude(f));
+        i = i + 1;
+    }
+    return self;
+}
+
+# bank_update -- recompute coefficients for slot `i` without resetting state.
+fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_rate) {
+    var coeff = alloc(32);
+    svara_formant_biquad_coeffs(frequency, bandwidth, sample_rate, coeff);
+    var off = i * 8;
+    store64(SvFormantBank_b0(self) + off, load64(coeff));
+    store64(SvFormantBank_b2(self) + off, load64(coeff + 8));
+    store64(SvFormantBank_a1(self) + off, load64(coeff + 16));
+    store64(SvFormantBank_a2(self) + off, load64(coeff + 24));
+    store64(SvFormantBank_amp(self) + off, amplitude);
+}
+
+# bank_process -- one input sample through all MAX_FORMANTS slots -> weighted sum.
+# Unused slots (count..MAX) have zeroed coeffs -> contribute nothing.
+#inline
+fn svara_formant_bank_process(self, input) {
+    var b0 = SvFormantBank_b0(self); var b2 = SvFormantBank_b2(self);
+    var a1 = SvFormantBank_a1(self); var a2 = SvFormantBank_a2(self);
+    var amp = SvFormantBank_amp(self);
+    var x1 = SvFormantBank_x1(self); var x2 = SvFormantBank_x2(self);
+    var y1 = SvFormantBank_y1(self); var y2 = SvFormantBank_y2(self);
+    var sum = 0;
+    var i = 0;
+    while (i < SVARA_MAX_FORMANTS) {
+        var off = i * 8;
+        var x2i = load64(x2 + off); var y1i = load64(y1 + off); var y2i = load64(y2 + off);
+        # y = b0*input + b2*x2 - a1*y1 - a2*y2
+        var y = f64_sub(f64_sub(f64_add(f64_mul(load64(b0 + off), input), f64_mul(load64(b2 + off), x2i)),
+                                f64_mul(load64(a1 + off), y1i)),
+                        f64_mul(load64(a2 + off), y2i));
+        store64(x2 + off, load64(x1 + off));
+        store64(x1 + off, input);
+        store64(y2 + off, y1i);
+        store64(y1 + off, y);
+        sum = f64_add(sum, f64_mul(y, load64(amp + off)));
+        i = i + 1;
+    }
+    return sum;
+}
+
+# bank_reset -- clear the delay lines (keep coefficients).
+fn svara_formant_bank_reset(self) {
+    svara_formant_zero_buf(SvFormantBank_x1(self), SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(SvFormantBank_x2(self), SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(SvFormantBank_y1(self), SVARA_MAX_FORMANTS);
+    svara_formant_zero_buf(SvFormantBank_y2(self), SVARA_MAX_FORMANTS);
+}
+
+# ================================================================
+# DcBlocker -- one-pole DC-blocking high-pass: y = x - x_prev + alpha*y_prev,
+# alpha for ~20 Hz cutoff. Removes DC drift from the parallel biquads.
+# ================================================================
+#derive(accessors)
+struct SvDcBlocker { alpha; x_prev; y_prev; }
+
+#must_use
+fn svara_dc_blocker_new(sample_rate) {
+    var self = alloc(sizeof(SvDcBlocker));
+    # alpha = 1 - (TAU * 20 / sample_rate)
+    SvDcBlocker_set_alpha(self, f64_sub(F64_ONE, f64_div(f64_mul(F64_TAU, f64_from(20)), sample_rate)));
+    SvDcBlocker_set_x_prev(self, 0);
+    SvDcBlocker_set_y_prev(self, 0);
+    return self;
+}
+
+#inline
+fn svara_dc_blocker_process(self, input) {
+    # output = input - x_prev + alpha * y_prev
+    var output = f64_add(f64_sub(input, SvDcBlocker_x_prev(self)),
+                         f64_mul(SvDcBlocker_alpha(self), SvDcBlocker_y_prev(self)));
+    SvDcBlocker_set_x_prev(self, input);
+    SvDcBlocker_set_y_prev(self, output);
+    return output;
+}
+
+fn svara_dc_blocker_reset(self) {
+    SvDcBlocker_set_x_prev(self, 0);
+    SvDcBlocker_set_y_prev(self, 0);
+}
+
+# ================================================================
+# FormantFilter -- parallel biquad bank + DC blocker. new() returns a pointer
+# on success or a negative SVARA_ERR_* code (Result -> code/sentinel).
+# ================================================================
+#derive(accessors)
+struct SvFormantFilter { bank; dc; sample_rate; }
+
+# new -- validate then build. Errors: SVARA_ERR_INVALID_FORMANT.
+#must_use
+fn svara_formant_filter_new(formants, sample_rate) {
+    if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+    if (svara_is_finite(sample_rate) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+    var n = vec_len(formants);
+    if (n == 0) { return SVARA_ERR_INVALID_FORMANT; }
+    if (n > SVARA_MAX_FORMANTS) { return SVARA_ERR_INVALID_FORMANT; }
+    var nyquist = f64_mul(sample_rate, F64_HALF);
+    var i = 0;
+    while (i < n) {
+        var f = vec_get(formants, i);
+        var freq = SvFormant_frequency(f);
+        if (f64_le(freq, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+        if (f64_ge(freq, nyquist) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+        if (f64_le(SvFormant_bandwidth(f), 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+        i = i + 1;
+    }
+    var self = alloc(sizeof(SvFormantFilter));
+    SvFormantFilter_set_bank(self, svara_formant_bank_new(formants, sample_rate));
+    SvFormantFilter_set_dc(self, svara_dc_blocker_new(sample_rate));
+    SvFormantFilter_set_sample_rate(self, sample_rate);
+    return self;
+}
+
+# update_formants -- new targets for smooth transitions; count must match.
+#must_use
+fn svara_formant_filter_update(self, formants) {
+    var bank = SvFormantFilter_bank(self);
+    var n = vec_len(formants);
+    if (n != SvFormantBank_count(bank)) { return SVARA_ERR_INVALID_FORMANT; }
+    var sr = SvFormantFilter_sample_rate(self);
+    var i = 0;
+    while (i < n) {
+        var f = vec_get(formants, i);
+        svara_formant_bank_update(bank, i, SvFormant_frequency(f), SvFormant_bandwidth(f), SvFormant_amplitude(f), sr);
+        i = i + 1;
+    }
+    return SVARA_ERR_NONE;
+}
+
+# process_sample -- bank sum through the DC blocker.
+#inline
+fn svara_formant_filter_process_sample(self, input) {
+    var raw = svara_formant_bank_process(SvFormantFilter_bank(self), input);
+    return svara_dc_blocker_process(SvFormantFilter_dc(self), raw);
+}
+
+# process_block -- n samples from input buffer into output buffer (f64 slots).
+fn svara_formant_filter_process_block(self, input, output, n) {
+    var bank = SvFormantFilter_bank(self);
+    var i = 0;
+    while (i < n) {
+        store64(output + i * 8, svara_formant_bank_process(bank, load64(input + i * 8)));
+        i = i + 1;
+    }
+    var dc = SvFormantFilter_dc(self);
+    var j = 0;
+    while (j < n) {
+        store64(output + j * 8, svara_dc_blocker_process(dc, load64(output + j * 8)));
+        j = j + 1;
+    }
+}
+
+# reset -- clear bank delay lines + DC blocker.
+fn svara_formant_filter_reset(self) {
+    svara_formant_bank_reset(SvFormantFilter_bank(self));
+    svara_dc_blocker_reset(SvFormantFilter_dc(self));
+}
+
+# num_formants -- active resonator count.
+#must_use
+fn svara_formant_filter_num_formants(self) {
+    return SvFormantBank_count(SvFormantFilter_bank(self));
+}

@@ -21,6 +21,8 @@ modules = [
     "src/error.cyr",
     "src/rng.cyr",
     "src/smooth.cyr",
+    "src/formant.cyr",
+    "src/spectral.cyr",
 ]
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives
@@ -43,6 +45,12 @@ stdlib = [
     "bench",
 ]
 
-# hisab (FFT / HComplex / compensated sum / easing / interp) and naad (biquad /
-# noise / LFO backends for formant/tract/glottal) are added as pinned git
-# distlib deps when the first consuming module (formant/spectral) is ported.
+# hisab (FFT / HComplex / compensated sum / easing / interp) — consumed by
+# spectral.cyr (num_fft, num_neumaier_sum). Pinned to the tag naad uses, for a
+# coherent bundle in downstream consumers (dhvani / vansh) that pull both.
+[deps.hisab]
+git = "https://github.com/MacCracken/hisab.git"
+tag = "2.6.7"
+modules = ["dist/hisab.cyr"]
+
+# naad (biquad / noise / LFO backends) is added when tract/glottal are ported.

@@ -1,0 +1,249 @@
+# spectral.cyr -- FFT-based spectral analysis for vocal synthesis.
+# Ports rust-old/src/spectral.rs. Uses hisab: num_fft (in-place radix-2 FFT
+# over a buffer of HComplex, 16 bytes each: re@+0, im@+8) and num_neumaier_sum
+# (compensated sum of a contiguous f64 buffer). f32 -> f64 throughout (Rust
+# stored f32 magnitudes; the port keeps f64 -- within tolerance parity).
+#
+# Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita,
+# error.cyr, and hisab (lib/hisab.cyr). serde is not on Spectrum in Rust; none added.
+#
+# Sample/magnitude buffers are stdlib vecs holding one f64 bit pattern per slot.
+
+var SV_TENTH = 0x3FB999999999999A;   # 0.1 (estimate_formants peak threshold factor)
+
+# ================================================================
+# Spectrum -- magnitude spectrum of one audio frame.
+#   magnitudes      : vec<f64>, length fft_size/2 + 1
+#   freq_resolution : Hz per bin
+#   sample_rate     : Hz
+# ================================================================
+#derive(accessors)
+struct SvSpectrum { magnitudes; freq_resolution; sample_rate; }
+
+# smallest power of two >= n (n >= 1). Matches Rust next_power_of_two.
+#must_use
+fn svara_next_pow2(n) {
+    var p = 1;
+    while (p < n) { p = p * 2; }
+    return p;
+}
+
+# bin_frequency -- Hz at bin index.
+#inline
+#must_use
+fn svara_spectrum_bin_frequency(self, bin) {
+    return f64_mul(f64_from(bin), SvSpectrum_freq_resolution(self));
+}
+
+# frequency_bin -- nearest bin index to a frequency: ((freq/res)+0.5) truncated.
+#inline
+#must_use
+fn svara_spectrum_frequency_bin(self, freq) {
+    return f64_to(f64_add(f64_div(freq, SvSpectrum_freq_resolution(self)), F64_HALF));
+}
+
+# magnitude_at -- magnitude at the bin nearest `freq` (0.0 if out of range).
+#must_use
+fn svara_spectrum_magnitude_at(self, freq) {
+    var mags = SvSpectrum_magnitudes(self);
+    var bin = svara_spectrum_frequency_bin(self, freq);
+    if (bin < vec_len(mags)) { return vec_get(mags, bin); }
+    return 0;
+}
+
+# peak_in_range -- writes (freq, mag) of the strongest bin in [lo_hz, hi_hz)
+# into out (2 f64 slots); returns 1 if a peak was found, 0 otherwise.
+#must_use
+fn svara_spectrum_peak_in_range(self, lo_hz, hi_hz, out) {
+    var mags = SvSpectrum_magnitudes(self);
+    var len = vec_len(mags);
+    var lo_bin = svara_spectrum_frequency_bin(self, lo_hz);
+    var hi_bin = svara_spectrum_frequency_bin(self, hi_hz);
+    if (hi_bin > len) { hi_bin = len; }
+    if (lo_bin >= hi_bin) { return 0; }
+    var max_mag = 0;
+    var max_bin = lo_bin;
+    var bin = lo_bin;
+    while (bin < hi_bin) {
+        var m = vec_get(mags, bin);
+        if (f64_gt(m, max_mag) == 1) { max_mag = m; max_bin = bin; }
+        bin = bin + 1;
+    }
+    store64(out, svara_spectrum_bin_frequency(self, max_bin));
+    store64(out + 8, max_mag);
+    return 1;
+}
+
+# sum of squared magnitudes over [lo, hi) via Neumaier compensated summation.
+#must_use
+fn svara_spectral_sum_squares(mags, lo, hi) {
+    var n = hi - lo;
+    if (n <= 0) { return 0; }
+    var buf = alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        var m = vec_get(mags, lo + i);
+        store64(buf + i * 8, f64_mul(m, m));
+        i = i + 1;
+    }
+    return num_neumaier_sum(buf, n);
+}
+
+# total_energy -- sum of squared magnitudes (Neumaier).
+#must_use
+fn svara_spectrum_total_energy(self) {
+    var mags = SvSpectrum_magnitudes(self);
+    return svara_spectral_sum_squares(mags, 0, vec_len(mags));
+}
+
+# band_energy -- sum of squared magnitudes in [lo_hz, hi_hz).
+#must_use
+fn svara_spectrum_band_energy(self, lo_hz, hi_hz) {
+    var mags = SvSpectrum_magnitudes(self);
+    var len = vec_len(mags);
+    var lo_bin = svara_spectrum_frequency_bin(self, lo_hz);
+    var hi_bin = svara_spectrum_frequency_bin(self, hi_hz);
+    if (hi_bin > len) { hi_bin = len; }
+    if (lo_bin >= hi_bin) { return 0; }
+    return svara_spectral_sum_squares(mags, lo_bin, hi_bin);
+}
+
+# estimate_formants -- up to max_formants peak frequencies, ascending.
+# Local maxima above 10% of the peak magnitude; keep the strongest N, sort by freq.
+#must_use
+fn svara_spectrum_estimate_formants(self, max_formants) {
+    var mags = SvSpectrum_magnitudes(self);
+    var len = vec_len(mags);
+    var result = vec_new();
+    if (len < 3) { return result; }
+
+    # peak magnitude across the spectrum
+    var max_mag = 0;
+    var g = 0;
+    while (g < len) {
+        var mg = vec_get(mags, g);
+        if (f64_gt(mg, max_mag) == 1) { max_mag = mg; }
+        g = g + 1;
+    }
+    var threshold = f64_mul(max_mag, SV_TENTH);
+
+    # collect local maxima into parallel freq/mag buffers
+    var pf = alloc(len * 8);
+    var pm = alloc(len * 8);
+    var pc = 0;
+    var i = 1;
+    while (i < len - 1) {
+        var m = vec_get(mags, i);
+        var lft = vec_get(mags, i - 1);
+        var rgt = vec_get(mags, i + 1);
+        if ((f64_gt(m, lft) == 1) & (f64_gt(m, rgt) == 1) & (f64_gt(m, threshold) == 1)) {
+            store64(pf + pc * 8, svara_spectrum_bin_frequency(self, i));
+            store64(pm + pc * 8, m);
+            pc = pc + 1;
+        }
+        i = i + 1;
+    }
+    if (pc == 0) { return result; }
+
+    # selection sort by magnitude descending (swap freq + mag together)
+    var a = 0;
+    while (a < pc) {
+        var best = a;
+        var b = a + 1;
+        while (b < pc) {
+            if (f64_gt(load64(pm + b * 8), load64(pm + best * 8)) == 1) { best = b; }
+            b = b + 1;
+        }
+        if (best != a) {
+            var tf = load64(pf + a * 8); var tm = load64(pm + a * 8);
+            store64(pf + a * 8, load64(pf + best * 8)); store64(pm + a * 8, load64(pm + best * 8));
+            store64(pf + best * 8, tf); store64(pm + best * 8, tm);
+        }
+        a = a + 1;
+    }
+
+    # keep top N
+    var keep = pc;
+    if (keep > max_formants) { keep = max_formants; }
+
+    # selection sort the kept prefix by frequency ascending
+    var c = 0;
+    while (c < keep) {
+        var lo = c;
+        var d = c + 1;
+        while (d < keep) {
+            if (f64_lt(load64(pf + d * 8), load64(pf + lo * 8)) == 1) { lo = d; }
+            d = d + 1;
+        }
+        if (lo != c) {
+            var tf2 = load64(pf + c * 8); var tm2 = load64(pm + c * 8);
+            store64(pf + c * 8, load64(pf + lo * 8)); store64(pm + c * 8, load64(pm + lo * 8));
+            store64(pf + lo * 8, tf2); store64(pm + lo * 8, tm2);
+        }
+        c = c + 1;
+    }
+
+    var k = 0;
+    while (k < keep) {
+        vec_push(result, load64(pf + k * 8));
+        k = k + 1;
+    }
+    return result;
+}
+
+# ================================================================
+# analyze -- magnitude spectrum of an audio frame (vec<f64>). Zero-pads to the
+# next power of two, applies a Hann window, FFTs, keeps positive-frequency bins.
+# Returns an SvSpectrum pointer, or SVARA_ERR_COMPUTATION on empty input / FFT failure.
+# ================================================================
+#must_use
+fn svara_spectral_analyze(samples, sample_rate) {
+    var len = vec_len(samples);
+    if (len == 0) { return SVARA_ERR_COMPUTATION; }
+
+    var fft_size = svara_next_pow2(len);
+    var data = alloc(fft_size * 16);
+
+    # window the first `len` samples into re; zero the imaginary parts + padding.
+    var n = f64_from(len);
+    var i = 0;
+    while (i < fft_size) {
+        var re = 0;
+        if (i < len) {
+            var window = f64_mul(F64_HALF,
+                f64_sub(F64_ONE, f64_cos(f64_div(f64_mul(F64_TAU, f64_from(i)), n))));
+            re = f64_mul(vec_get(samples, i), window);
+        }
+        store64(data + i * 16, re);
+        store64(data + i * 16 + 8, 0);
+        i = i + 1;
+    }
+
+    if (num_fft(data, fft_size) != 0) { return SVARA_ERR_COMPUTATION; }
+
+    # magnitude of the positive-frequency bins (0 .. fft_size/2)
+    var num_bins = fft_size / 2 + 1;
+    var mags = vec_new();
+    var k = 0;
+    while (k < num_bins) {
+        var re = load64(data + k * 16);
+        var im = load64(data + k * 16 + 8);
+        vec_push(mags, f64_sqrt(f64_add(f64_mul(re, re), f64_mul(im, im))));
+        k = k + 1;
+    }
+
+    var self = alloc(sizeof(SvSpectrum));
+    SvSpectrum_set_magnitudes(self, mags);
+    SvSpectrum_set_freq_resolution(self, f64_div(sample_rate, f64_from(fft_size)));
+    SvSpectrum_set_sample_rate(self, sample_rate);
+    return self;
+}
+
+# rms_level -- root-mean-square level of a sample buffer (vec<f64>), Neumaier sum.
+#must_use
+fn svara_spectral_rms_level(samples) {
+    var len = vec_len(samples);
+    if (len == 0) { return 0; }
+    var mean = f64_div(svara_spectral_sum_squares(samples, 0, len), f64_from(len));
+    return f64_sqrt(mean);
+}

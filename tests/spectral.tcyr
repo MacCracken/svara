@@ -1,0 +1,99 @@
+# spectral.tcyr -- tests for src/spectral.cyr (FFT analysis via hisab).
+# Ports the #[test] blocks from rust-old/src/spectral.rs. Include order:
+# hisab (num_fft / num_neumaier_sum) -> error -> spectral.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/spectral.cyr"
+
+var TOL_001 = 0x3F847AE147AE147B;         # 0.01 (RMS tolerance)
+var FRAC_1_SQRT_2 = 0x3FE6A09E667F3BCC;   # 1/sqrt(2) ~ 0.70710678 (unit-sine RMS)
+
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+# n samples of sin(TAU * freq * i/sr)
+#must_use
+fn make_sine(n, freq, sr) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        var t = f64_div(f64_from(i), sr);
+        vec_push(v, f64_sin(f64_mul(f64_mul(F64_TAU, freq), t)));
+        i = i + 1;
+    }
+    return v;
+}
+
+# n samples of sin(TAU*500*t) + 0.5*sin(TAU*1500*t)
+#must_use
+fn make_two_tone(n, sr) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        var t = f64_div(f64_from(i), sr);
+        var a = f64_sin(f64_mul(f64_mul(F64_TAU, f64_from(500)), t));
+        var b = f64_mul(F64_HALF, f64_sin(f64_mul(f64_mul(F64_TAU, f64_from(1500)), t)));
+        vec_push(v, f64_add(a, b));
+        i = i + 1;
+    }
+    return v;
+}
+
+alloc_init();
+var SR = f64_from(44100);
+
+# ================================================================
+test_group("analyze sine -> peak near 440 Hz");
+var spec = svara_spectral_analyze(make_sine(1024, f64_from(440), SR), SR);
+assert_eq(svara_is_err(spec), 0, "analyze succeeds");
+var out = alloc(16);
+assert_eq(svara_spectrum_peak_in_range(spec, f64_from(200), f64_from(800), out), 1, "peak found in 200-800 Hz");
+var peak_freq = load64(out);
+var peak_mag = load64(out + 8);
+var tol_bins = f64_mul(SvSpectrum_freq_resolution(spec), F64_TWO);
+assert_eq(f64_lt(f64_abs(f64_sub(peak_freq, f64_from(440))), tol_bins), 1, "peak within 2 bins of 440 Hz");
+assert_eq(f64_gt(peak_mag, 0), 1, "peak magnitude > 0");
+
+# ================================================================
+test_group("estimate_formants (500 + 1500 Hz)");
+var spec2 = svara_spectral_analyze(make_two_tone(2048, SR), SR);
+var formants = svara_spectrum_estimate_formants(spec2, 3);
+assert_gte(vec_len(formants), 2, "at least 2 peaks found");
+assert_eq(f64_lt(f64_abs(f64_sub(vec_get(formants, 0), f64_from(500))), f64_from(50)), 1, "F1 within 50 Hz of 500");
+
+# ================================================================
+test_group("analyze empty -> error");
+assert_eq(svara_is_err(svara_spectral_analyze(vec_new(), SR)), 1, "empty signal rejected");
+
+# ================================================================
+test_group("bin_frequency / frequency_bin round-trip");
+var man = alloc(sizeof(SvSpectrum));
+var zmags = vec_new();
+var z = 0;
+while (z < 513) { vec_push(zmags, 0); z = z + 1; }
+SvSpectrum_set_magnitudes(man, zmags);
+SvSpectrum_set_freq_resolution(man, f64_div(f64_from(44100), f64_from(1024)));   # ~43.066 Hz/bin
+SvSpectrum_set_sample_rate(man, SR);
+assert_eq(approx(svara_spectrum_bin_frequency(man, 10), f64_from(430), F64_ONE), 1, "bin 10 ~ 430.66 Hz");
+assert_eq(svara_spectrum_frequency_bin(man, svara_spectrum_bin_frequency(man, 10)), 10, "freq->bin round-trips to 10");
+assert_eq(svara_spectrum_magnitude_at(man, f64_from(99999)), 0, "out-of-range magnitude is 0");
+
+# ================================================================
+test_group("total_energy / band_energy");
+var spec3 = svara_spectral_analyze(make_sine(1024, f64_from(440), SR), SR);
+assert_eq(f64_gt(svara_spectrum_total_energy(spec3), 0), 1, "spectrum has positive energy");
+var near_440 = svara_spectrum_band_energy(spec3, f64_from(400), f64_from(500));
+var far_away = svara_spectrum_band_energy(spec3, f64_from(2000), f64_from(3000));
+assert_eq(f64_gt(near_440, far_away), 1, "energy near 440 Hz exceeds 2-3 kHz");
+
+# ================================================================
+test_group("rms_level");
+var rms = svara_spectral_rms_level(make_sine(44100, f64_from(440), SR));
+assert_eq(approx(rms, FRAC_1_SQRT_2, TOL_001), 1, "unit sine RMS ~ 0.7071");
+assert_eq(svara_spectral_rms_level(vec_new()), 0, "empty buffer RMS is 0");
+
+var rc = assert_summary();
+syscall(60, rc);

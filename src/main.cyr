@@ -6,9 +6,12 @@
 # tests/*.tcyr; this entry is not what those suites include. Consumers pull the
 # `dist/svara.cyr` bundle instead (see cyrius.cyml [lib]).
 
+include "lib/hisab.cyr"
 include "src/error.cyr"
 include "src/rng.cyr"
 include "src/smooth.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
 
 fn main() {
     alloc_init();
@@ -33,6 +36,27 @@ fn main() {
     svara_smooth_set_target(sm, F64_ONE);
     if (f64_lt(f64_abs(f64_sub(svara_smooth_next(sm), F64_ONE)), SV_EPSILON) == 0) {
         println("svara: smoother broken");
+        return 1;
+    }
+    # Smoke: an /a/ formant filter builds and produces a finite impulse response.
+    var ff = svara_formant_filter_new(
+        svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), f64_from(44100));
+    if (svara_is_err(ff) == 1) {
+        println("svara: formant filter init failed");
+        return 1;
+    }
+    if (svara_is_finite(svara_formant_filter_process_sample(ff, F64_ONE)) == 0) {
+        println("svara: formant filter output not finite");
+        return 1;
+    }
+    # Smoke: FFT-analyze a short buffer (proves the hisab dep links).
+    var buf = vec_new();
+    var bi = 0;
+    while (bi < 64) { vec_push(buf, 0); bi = bi + 1; }
+    vec_set(buf, 0, F64_ONE);   # unit impulse
+    var spec = svara_spectral_analyze(buf, f64_from(44100));
+    if (svara_is_err(spec) == 1) {
+        println("svara: spectral analyze failed");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

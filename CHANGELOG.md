@@ -25,6 +25,17 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   golden values from a faithful algorithm replica. **17 tests.**
 - **`src/smooth.cyr`** (L0) — ports `smooth.rs` one-pole `SvSmoothedParam`
   (`exp(-1/(τ·sr))` via ganita builtin). **6 tests.**
+- **`src/formant.cyr`** (L1) — ports `formant.rs`: `Formant`, `Vowel`,
+  `VowelTarget` (Hillenbrand 1995 table, interpolation) + the structure-of-arrays
+  parallel bandpass biquad bank (`MAX_FORMANTS=8`), `DcBlocker`, and
+  `FormantFilter`. svara's own SOA topology (not naad's `BiquadFilter`); nine
+  `[f32;8]` arrays become raw f64 buffers held as struct fields. Golden biquad
+  coefficients + full impulse-response output verified against an f64 oracle.
+  **25 tests.** No external dep.
+- **`src/spectral.cyr`** (L1) — ports `spectral.rs`: `Spectrum` + FFT `analyze`
+  (Hann window, hisab `num_fft` over an interleaved HComplex buffer), `rms_level`,
+  `total_energy`/`band_energy` (hisab `num_neumaier_sum`), peak picking and
+  `estimate_formants`. **14 tests.** Adds the **hisab** git dep (pinned `2.6.7`).
 
 ### Changed
 
