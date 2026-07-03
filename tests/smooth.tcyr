@@ -1,0 +1,49 @@
+# smooth.tcyr -- tests for src/smooth.cyr (SmoothedParam).
+# Ports the behavioural #[test] blocks from rust-old/src/smooth.rs. The
+# serde-roundtrip test is dropped (integer state, no serde). f32 EPSILON
+# tolerances promoted to f64 (SV_EPSILON).
+
+include "src/error.cyr"
+include "src/smooth.cyr"
+
+alloc_init();
+
+var TOL_001 = 0x3F50624DD2F1A9FC;   # 0.001 (test_smooth_approach tolerance)
+
+# helper: |a-b| < eps
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+# ================================================================
+test_group("immediate convergence");
+var p = svara_smooth_new(0, f64_from(44100));
+svara_smooth_set_immediate(p, F64_ONE);
+assert_eq(approx(svara_smooth_next(p), F64_ONE, SV_EPSILON), 1, "set_immediate then next == 1.0");
+
+# ================================================================
+test_group("smooth approach");
+var q = svara_smooth_new(0, f64_from(44100));
+svara_smooth_set_target(q, F64_ONE);
+# after ~5x the 5 ms time constant, must be within 0.001 of target
+var i = 0;
+while (i < 2000) { svara_smooth_next(q); i = i + 1; }
+assert_eq(approx(svara_smooth_next(q), F64_ONE, TOL_001), 1, "converges to within 0.001 after 2000 samples");
+# monotone, bounded: value never overshoots above target
+assert_eq(f64_le(svara_smooth_value(q), F64_ONE), 1, "no overshoot above target");
+
+# ================================================================
+test_group("zero time is instant");
+var z = svara_smooth_with_time(0, 0, f64_from(44100));
+svara_smooth_set_target(z, F64_ONE);
+assert_eq(approx(svara_smooth_next(z), F64_ONE, SV_EPSILON), 1, "alpha=0 -> jumps to target immediately");
+
+# ================================================================
+test_group("value does not advance");
+var v = svara_smooth_new(F64_HALF, f64_from(44100));
+assert_eq(svara_smooth_value(v), F64_HALF, "value() returns current");
+assert_eq(svara_smooth_value(v), F64_HALF, "value() does not advance state");
+
+var rc = assert_summary();
+syscall(60, rc);

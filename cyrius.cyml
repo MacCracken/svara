@@ -1,0 +1,48 @@
+[package]
+name = "svara"
+version = "${file:VERSION}"
+description = "svara — formant and vocal synthesis (glottal source, vocal tract, phonemes, prosody). Cyrius port of an 8,785-line Rust library."
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/svara"
+language = "cyrius"
+cyrius = "6.3.38"
+
+[build]
+entry = "src/main.cyr"
+output = "build/svara"
+
+# `[lib]` declares the distlib bundle `cyrius distlib` writes into
+# `dist/svara.cyr` — modules concatenated in dependency order (deps before
+# dependents), each self-contained (no `include` lines). The bundle resolves
+# stdlib + hisab + naad from the CONSUMER's manifest (dhvani / vansh), same
+# pattern naad uses. Grows one entry per ported module.
+[lib]
+modules = [
+    "src/error.cyr",
+    "src/rng.cyr",
+    "src/smooth.cyr",
+]
+
+# stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives
+# the transcendentals svara's DSP leans on (sin/cos/exp/ln/pow/sqrt/tanh/…);
+# tagged for the few Option-shaped returns; bench for .bcyr harnesses.
+[deps]
+stdlib = [
+    "syscalls",
+    "string",
+    "alloc",
+    "str",
+    "fmt",
+    "vec",
+    "io",
+    "args",
+    "assert",
+    "math",
+    "ganita",
+    "tagged",
+    "bench",
+]
+
+# hisab (FFT / HComplex / compensated sum / easing / interp) and naad (biquad /
+# noise / LFO backends for formant/tract/glottal) are added as pinned git
+# distlib deps when the first consuming module (formant/spectral) is ported.

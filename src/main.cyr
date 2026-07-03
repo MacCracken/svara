@@ -1,0 +1,43 @@
+# svara — Cyrius port smoke entry.
+#
+# Builds the ported library modules (in dependency order) into one binary and
+# runs a tiny smoke, proving they compile and link as an executable. Grows one
+# include per ported module. Library modules are validated per-module via
+# tests/*.tcyr; this entry is not what those suites include. Consumers pull the
+# `dist/svara.cyr` bundle instead (see cyrius.cyml [lib]).
+
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+
+fn main() {
+    alloc_init();
+
+    # Smoke: a valid sample rate passes, a bad one is rejected.
+    if (svara_validate_sample_rate(f64_from(44100)) != SVARA_ERR_NONE) {
+        println("svara: sample-rate validator broken");
+        return 1;
+    }
+    if (svara_is_err(svara_validate_duration(0)) == 0) {
+        println("svara: duration validator broken");
+        return 1;
+    }
+    # Smoke: PCG32 first draw is deterministic.
+    var rng = svara_rng_new(SVARA_RNG_DEFAULT_SEED);
+    if (svara_rng_next_u32(rng) != 1085446021) {
+        println("svara: PCG32 golden value broken");
+        return 1;
+    }
+    # Smoke: a zero-time smoother jumps straight to its target.
+    var sm = svara_smooth_with_time(0, 0, f64_from(44100));
+    svara_smooth_set_target(sm, F64_ONE);
+    if (f64_lt(f64_abs(f64_sub(svara_smooth_next(sm), F64_ONE)), SV_EPSILON) == 0) {
+        println("svara: smoother broken");
+        return 1;
+    }
+    println("svara (Cyrius port) — smoke OK");
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

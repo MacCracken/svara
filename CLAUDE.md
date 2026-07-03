@@ -1,91 +1,69 @@
 # svara — Claude Code Instructions
 
+> **Core rule**: this file is **preferences, process, and procedures** —
+> durable rules that change rarely. Volatile state (current version,
+> module line counts, port progress, test counts, consumers) lives in
+> [`docs/development/state.md`](docs/development/state.md).
+> Do not inline state here.
+
 ## Project Identity
 
-**svara** (Sanskrit: voice/tone/musical note) — Formant and vocal synthesis crate for AGNOS
+**svara** — Cyrius port of a Rust project (8785 lines preserved at `rust-old/`).
 
-- **Type**: Flat library crate
-- **License**: GPL-3.0
-- **MSRV**: 1.89
-- **Version**: SemVer 1.0.0
+- **Type**: Port (Rust → Cyrius)
+- **License**: GPL-3.0-only
+- **Language**: Cyrius (toolchain pinned in `cyrius.cyml [package].cyrius`)
+- **Version**: `VERSION` at the project root is the source of truth — do not inline the number here
+- **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md) · [First-Party Documentation](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-documentation.md)
 
-## Consumers
+## Goal
 
-dhvani (voice AI shell), vansh (voice shell TTS/STT), and any AGNOS component needing speech synthesis.
+_TODO: one-or-two-sentence mission statement. What does svara OWN in the stack? Durable — doesn't change per release._
 
-## Development Process
+## Current State
 
-### P(-1): Scaffold Hardening (before any new features)
+> Volatile state lives in [`docs/development/state.md`](docs/development/state.md) —
+> port progress, surface parity, in-flight work. Refreshed every release.
 
-0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
-1. Test + benchmark sweep of existing code
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
-3. Get baseline benchmarks (`./scripts/bench-history.sh`)
-4. Internal deep review — gaps, optimizations, security, logging/errors, docs
-5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
-6. Cleanliness check — must be clean after review
-7. Additional tests/benchmarks from findings
-8. Post-review benchmarks — prove the wins
-9. Repeat if heavy
+This file (`CLAUDE.md`) is durable rules.
 
-### Work Loop / Working Loop (continuous)
+## Scaffolding
 
-1. Work phase — new features, roadmap items, bug fixes
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
-3. Test + benchmark additions for new code
-4. Run benchmarks (`./scripts/bench-history.sh`)
-5. Internal review — performance, memory, security, throughput, correctness
-6. Cleanliness check — must be clean after review
-7. Deeper tests/benchmarks from review observations
-8. Run benchmarks again — prove the wins
-9. If review heavy -> return to step 5
-10. Documentation — update CHANGELOG, roadmap, docs
-11. Version check — VERSION, Cargo.toml, recipe all in sync
-12. Return to step 1
+Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the reference oracle — do not modify it; cross-check the port against it.
 
-### Task Sizing
+## Quick Start
 
-- **Low/Medium effort**: Batch freely — multiple items per work loop cycle
-- **Large effort**: Small bites only — break into sub-tasks, verify each before moving to the next. Never batch large items together
-- **If unsure**: Treat it as large. Smaller bites are always safer than overcommitting
+```sh
+cyrius deps                              # resolve dependencies
+cyrius build src/main.cyr build/svara    # compile
+cyrius test                              # run tests/*.tcyr
+```
 
-### Refactoring
+## Key Principles
 
-- Refactor when the code tells you to — duplication, unclear boundaries, performance bottlenecks
-- Never refactor speculatively. Wait for the third instance before extracting an abstraction
-- Refactoring is part of the work loop, not a separate phase. If a review (step 5) reveals structural issues, refactor before moving to step 6
-- Every refactor must pass the same cleanliness + benchmark gates as new code
+- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR.
+- **Correctness over cleverness** — if the Cyrius behavior diverges silently from Rust, the bugs win
+- Test after every change, not after the feature is "done"
+- ONE change at a time — never bundle unrelated changes
+- Build with `cyrius build`, not raw `cat file | cc5` — the manifest auto-resolves deps
+- Source files only need project includes — stdlib auto-resolves from `cyrius.cyml`
+- `var buf[N]` = N **bytes**, not N entries
 
-### Key Principles
-
-- Never skip benchmarks
-- `#[non_exhaustive]` on ALL public enums (forward compatibility)
-- `#[must_use]` on all pure functions
-- `#[inline]` on hot-path sample processing functions
-- Every type must be Serialize + Deserialize (serde)
-- Feature-gate optional modules — consumers pull only what they need
-- Zero unwrap/panic in library code
-- All types must have serde roundtrip tests
-
-## DO NOT
+## Rules (Hard Constraints)
 
 - **Do not commit or push** — the user handles all git operations
-- **NEVER use `gh` CLI** — use `curl` to GitHub API only
-- Do not add unnecessary dependencies
-- Do not break backward compatibility without a major version bump
-- Do not skip benchmarks before claiming performance improvements
+- **Never use `gh` CLI** — use `curl` to the GitHub API if needed
+- Do not modify `rust-old/` — it's the parity oracle
+- Do not skip tests before claiming changes work
+- Do not modify `lib/` files (vendored stdlib / dep symlinks)
+- Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth
 
-## Documentation Structure
+## Documentation
 
-```
-Root files (required):
-  README.md, CHANGELOG.md, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records (*why X over Y?*)
+- [`docs/architecture/`](docs/architecture/) — Non-obvious constraints
+- [`docs/guides/`](docs/guides/) — Task-oriented how-tos
+- [`docs/examples/`](docs/examples/) — Runnable examples
+- [`docs/development/state.md`](docs/development/state.md) — Live state
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones through v1.0
 
-docs/ (required):
-  architecture/overview.md — module map, data flow, consumers
-  development/roadmap.md — completed, backlog, future, v1.0 criteria
-```
-
-## CHANGELOG Format
-
-Follow [Keep a Changelog](https://keepachangelog.com/). Performance claims MUST include benchmark numbers. Breaking changes get a **Breaking** section with migration guide.

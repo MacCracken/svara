@@ -1,0 +1,100 @@
+# error.cyr -- svara error codes + shared DSP tolerances and base helpers.
+# L0 base module: included FIRST by every build/test entry. Modules never
+# `include` each other -- the entry file orders them.
+#
+# Ports rust-old/src/error.rs (the `SvaraError` enum) AND the two validators
+# from rust-old/src/dsp.rs (validate_sample_rate / validate_duration), which
+# the whole crate leans on. Rust carried a String payload per variant; the
+# Cyrius port uses integer codes -- validators return SVARA_ERR_NONE (0) on
+# success or a negative code on failure; diagnostic text via svara_err_name().
+#
+# NAMING: every svara top-level symbol is `svara_`/`SVARA_`/`SV_`-prefixed so
+# the svara distlib coexists with naad's bundle in one flat namespace (naad
+# already exports validate_sample_rate / flush_denormal / ERR_NONE / etc.).
+#
+# FLOATS: svara's Rust was f32; the Cyrius port is f64 throughout (hisab/naad
+# are f64-only). SV_EPSILON preserves the f32::EPSILON (2^-23) tolerance the
+# Rust tests used, promoted to f64. svara does NOT flush denormals (its Rust
+# never did) -- adding a flush would diverge near-zero output from the oracle.
+
+# ================================================================
+# Error codes (was `enum SvaraError`). One per Rust variant, in order.
+# ================================================================
+var SVARA_ERR_NONE             = 0;
+var SVARA_ERR_INVALID_FORMANT  = (0 - 1);   # formant frequency/bandwidth out of range
+var SVARA_ERR_INVALID_PHONEME  = (0 - 2);   # unrecognized / unsupported phoneme
+var SVARA_ERR_INVALID_PITCH    = (0 - 3);   # f0 out of range
+var SVARA_ERR_INVALID_DURATION = (0 - 4);   # duration out of range
+var SVARA_ERR_ARTICULATION     = (0 - 5);   # articulation step failed during synthesis
+var SVARA_ERR_COMPUTATION      = (0 - 6);   # numeric computation produced invalid result
+
+# ================================================================
+# Shared f64 tolerances / sentinels (IEEE-754 bit patterns). Exported for
+# consumers (filters, tests). SV_EPSILON = f32::EPSILON promoted to f64.
+# ================================================================
+var SV_EPSILON = 0x3E80000000000000;   # f32::EPSILON = 2^-23 ~ 1.192e-7
+var SV_POS_INF = 0x7FF0000000000000;   # +inf
+var SV_NEG_INF = 0xFFF0000000000000;   # -inf
+
+# 1 if `code` is an error (negative), 0 otherwise.
+#must_use
+fn svara_is_err(code) {
+    if (code < 0) { return 1; }
+    return 0;
+}
+
+# Static name for an error code (diagnostics / logging).
+#must_use
+fn svara_err_name(code) {
+    if (code == SVARA_ERR_NONE) { return "none"; }
+    if (code == SVARA_ERR_INVALID_FORMANT) { return "invalid formant"; }
+    if (code == SVARA_ERR_INVALID_PHONEME) { return "invalid phoneme"; }
+    if (code == SVARA_ERR_INVALID_PITCH) { return "invalid pitch"; }
+    if (code == SVARA_ERR_INVALID_DURATION) { return "invalid duration"; }
+    if (code == SVARA_ERR_ARTICULATION) { return "articulation failed"; }
+    if (code == SVARA_ERR_COMPUTATION) { return "computation error"; }
+    return "unknown error";
+}
+
+# Finite test: 1 iff x is neither +/-inf nor NaN. abs(x) < +inf holds for
+# finite x, fails for infinities (inf < inf is false) and NaN (any NaN
+# compare is false). Mirrors Rust `f32::is_finite`. `0` reads as +0.0 bits.
+#must_use
+fn svara_is_finite(x) {
+    return f64_lt(f64_abs(x), SV_POS_INF);
+}
+
+# ================================================================
+# validate_sample_rate -- SVARA_ERR_NONE if positive and finite, else
+# SVARA_ERR_INVALID_FORMANT. Ports rust-old/src/dsp.rs::validate_sample_rate.
+# NOTE (parity): the Rust source returns SvaraError::InvalidFormant for a bad
+# sample rate (not a dedicated variant) -- preserved exactly. `0` == +0.0.
+# ================================================================
+#must_use
+fn svara_validate_sample_rate(sample_rate) {
+    if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+    if (svara_is_finite(sample_rate) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+    return SVARA_ERR_NONE;
+}
+
+# ================================================================
+# validate_duration -- SVARA_ERR_NONE if positive and finite, else
+# SVARA_ERR_INVALID_DURATION. Ports rust-old/src/dsp.rs::validate_duration.
+# ================================================================
+#must_use
+fn svara_validate_duration(duration) {
+    if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
+    if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
+    return SVARA_ERR_NONE;
+}
+
+# ================================================================
+# svara_map_naad_error -- fold a naad backend error code into a SvaraError.
+# Ports rust-old/src/dsp.rs::map_naad_error (naad-backend only): the Rust
+# helper wrapped any NaadError as SvaraError::ComputationError with a context
+# string; the string/logging is dropped, the classification preserved.
+# ================================================================
+#must_use
+fn svara_map_naad_error(naad_code) {
+    return SVARA_ERR_COMPUTATION;
+}

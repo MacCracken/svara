@@ -1,0 +1,73 @@
+# rng.cyr -- deterministic PCG32 PRNG for synthesis noise generation.
+# Ports rust-old/src/rng.rs (Rng struct + PCG32). Shared by glottal source
+# (aspiration) and phoneme synthesis (plosive/fricative bursts); seedable for
+# reproducible jitter/shimmer/breathiness. There is no seedable float RNG in
+# the Cyrius stdlib, so this is hand-ported (naad's raw-cell PRNG pattern).
+#
+# u64 semantics on i64: wrapping_mul/wrapping_add == plain `*`/`+` (i64 wraps
+# two's-complement, bit-identical to u64). `>>` is LOGICAL (zero-fill) == u64
+# shift. u32 truncation == `& 0xFFFFFFFF`.
+#
+# NOTE (parity): next_f32's doc comment claims [-1.0, 1.0] but the Rust CODE
+# yields [0.0, 1.0) -- `(next_u32() >> 1) as i32` is always non-negative. The
+# code (the oracle) is ported, not the comment. f32->f64 promotion: Rust used
+# `1.0 / i32::MAX as f32` which rounds i32::MAX to 2^31, so the scale is exactly
+# 2^-31 (and 2^-32 for the unsigned variant).
+#
+# serde: Rng was Serialize/Deserialize for state persistence; its JSON codec
+# lands with svara's serde surface, tracked in docs/development/roadmap.md
+# (state = two u64 slots).
+
+var SVARA_RNG_DEFAULT_SEED = 42;                 # default deterministic seed
+
+var SVARA_PCG_MULT   = 6_364_136_223_846_793_005; # PCG32 LCG multiplier
+var SVARA_U32_MASK   = 0xFFFFFFFF;                 # low 32 bits
+var SVARA_INV_I32MAX = 0x3E00000000000000;        # 2^-31 = 1.0 / (i32::MAX as f32)
+var SVARA_INV_U32MAX = 0x3DF0000000000000;        # 2^-32 = 1.0 / (u32::MAX as f32)
+
+#derive(accessors)
+struct SvRng { state; inc; }
+
+# next_u32 -- PCG32 output function. Defined before its callers (single-pass).
+# NOT #must_use: it advances internal state, and svara_rng_new intentionally
+# discards two warm-up draws during seeding.
+#inline
+fn svara_rng_next_u32(self) {
+    var old_state = SvRng_state(self);
+    # state = old * MULT + inc  (u64 wrapping via i64 wrap)
+    SvRng_set_state(self, old_state * SVARA_PCG_MULT + SvRng_inc(self));
+    # xor_shifted = (((old >> 18) ^ old) >> 27) as u32
+    var xor_shifted = (((old_state >> 18) ^ old_state) >> 27) & SVARA_U32_MASK;
+    # rot = (old >> 59) as u32   (top 5 bits -> 0..31)
+    var rot = (old_state >> 59) & 31;
+    # rotate-right by rot: (x >> rot) | (x << ((-rot) & 31)), masked to u32
+    var neg = (0 - rot) & 31;
+    return ((xor_shifted >> rot) | (xor_shifted << neg)) & SVARA_U32_MASK;
+}
+
+# new(seed) -- PCG32 seeding (svara's exact sequence). Calls next_u32 twice.
+#must_use
+fn svara_rng_new(seed) {
+    var self = alloc(sizeof(SvRng));
+    SvRng_set_state(self, 0);
+    SvRng_set_inc(self, (seed << 1) | 1);
+    svara_rng_next_u32(self);
+    SvRng_set_state(self, SvRng_state(self) + seed);   # wrapping_add(seed)
+    svara_rng_next_u32(self);
+    return self;
+}
+
+# next_f32 -- value in [0.0, 1.0). bits = (next_u32() >> 1) in [0, 2^31-1].
+#inline
+#must_use
+fn svara_rng_next_f32(self) {
+    var bits = svara_rng_next_u32(self) >> 1;
+    return f64_mul(f64_from(bits), SVARA_INV_I32MAX);
+}
+
+# next_f32_unsigned -- value in [0.0, 1.0). next_u32() * 2^-32.
+#inline
+#must_use
+fn svara_rng_next_f32_unsigned(self) {
+    return f64_mul(f64_from(svara_rng_next_u32(self)), SVARA_INV_U32MAX);
+}

@@ -1,0 +1,53 @@
+# error.tcyr -- tests for src/error.cyr
+# rust-old/src/error.rs and dsp.rs carried no #[test] blocks (the enum was
+# exercised indirectly). These are the parity-meaningful behavioural tests for
+# the validators + folded-in helpers (svara_is_finite, error-code mapping).
+
+include "src/error.cyr"
+
+alloc_init();
+
+var NAN_BITS = 0x7FF8000000000000;   # canonical quiet NaN
+
+# ================================================================
+test_group("svara_validate_sample_rate");
+assert_eq(svara_validate_sample_rate(f64_from(44100)), SVARA_ERR_NONE, "44100 valid");
+assert_eq(svara_validate_sample_rate(f64_from(8000)), SVARA_ERR_NONE, "8000 valid");
+assert_eq(svara_validate_sample_rate(0), SVARA_ERR_INVALID_FORMANT, "0 invalid (maps to InvalidFormant)");
+assert_eq(svara_validate_sample_rate(f64_neg(F64_ONE)), SVARA_ERR_INVALID_FORMANT, "-1 invalid");
+assert_eq(svara_validate_sample_rate(NAN_BITS), SVARA_ERR_INVALID_FORMANT, "NaN invalid");
+assert_eq(svara_validate_sample_rate(SV_POS_INF), SVARA_ERR_INVALID_FORMANT, "+inf invalid");
+
+# ================================================================
+test_group("svara_validate_duration");
+assert_eq(svara_validate_duration(F64_HALF), SVARA_ERR_NONE, "0.5 s valid");
+assert_eq(svara_validate_duration(f64_from(2)), SVARA_ERR_NONE, "2 s valid");
+assert_eq(svara_validate_duration(0), SVARA_ERR_INVALID_DURATION, "0 invalid");
+assert_eq(svara_validate_duration(f64_neg(F64_ONE)), SVARA_ERR_INVALID_DURATION, "-1 invalid");
+assert_eq(svara_validate_duration(NAN_BITS), SVARA_ERR_INVALID_DURATION, "NaN invalid");
+assert_eq(svara_validate_duration(SV_POS_INF), SVARA_ERR_INVALID_DURATION, "+inf invalid");
+
+# ================================================================
+test_group("svara_is_finite");
+assert_eq(svara_is_finite(f64_from(440)), 1, "440 is finite");
+assert_eq(svara_is_finite(0), 1, "0 is finite");
+assert_eq(svara_is_finite(F64_HALF), 1, "0.5 is finite");
+assert_eq(svara_is_finite(NAN_BITS), 0, "NaN not finite");
+assert_eq(svara_is_finite(SV_POS_INF), 0, "+inf not finite");
+assert_eq(svara_is_finite(SV_NEG_INF), 0, "-inf not finite");
+
+# ================================================================
+test_group("error codes");
+assert_eq(svara_is_err(SVARA_ERR_NONE), 0, "SVARA_ERR_NONE is not an error");
+assert_eq(svara_is_err(SVARA_ERR_INVALID_FORMANT), 1, "negative code is an error");
+assert_eq(svara_is_err(SVARA_ERR_COMPUTATION), 1, "computation code is an error");
+assert_streq(svara_err_name(SVARA_ERR_INVALID_PHONEME), "invalid phoneme", "phoneme err name maps");
+assert_streq(svara_err_name(SVARA_ERR_ARTICULATION), "articulation failed", "articulation err name maps");
+assert_streq(svara_err_name(SVARA_ERR_NONE), "none", "none name maps");
+
+# ================================================================
+test_group("svara_map_naad_error");
+assert_eq(svara_map_naad_error(f64_neg(F64_ONE)), SVARA_ERR_COMPUTATION, "naad error folds to computation error");
+
+var rc = assert_summary();
+syscall(60, rc);

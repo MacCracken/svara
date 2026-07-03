@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Cyrius port (in progress)
+
+Rust → Cyrius port toward **3.0.0 = full parity** with the Rust 2.0.0 surface
+(213 tests / 15 benches). The Rust source is preserved at `rust-old/` as the
+parity oracle. Port plan and locked decisions: [`docs/development/state.md`](docs/development/state.md),
+sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
+
+### Added (port scaffold + foundation layer)
+
+- **Scaffold** via `cyrius port`: `cyrius.cyml` manifest (stdlib incl. `math`,
+  `ganita`, `tagged`, `bench`; `[lib]` bundle list), `src/main.cyr` smoke entry,
+  `.tcyr`/`.bcyr`/`.fcyr` harnesses. Toolchain pinned to `6.3.38`.
+- **`src/error.cyr`** (L0) — ports `error.rs` (`SvaraError` → integer `SVARA_ERR_*`
+  codes) + `dsp.rs` validators (`svara_validate_sample_rate`/`_duration`) + shared
+  f64 tolerances (`SV_EPSILON`, `SV_POS_INF`) and `svara_is_finite`. **25 tests.**
+- **`src/rng.cyr`** (L0) — ports `rng.rs` PCG32 (`SvRng`, seedable). u64/u32 math
+  hand-emulated on i64 (`& 0xFFFFFFFF` masking, logical shifts). Verified against
+  golden values from a faithful algorithm replica. **17 tests.**
+- **`src/smooth.cyr`** (L0) — ports `smooth.rs` one-pole `SvSmoothedParam`
+  (`exp(-1/(τ·sr))` via ganita builtin). **6 tests.**
+
+### Changed
+
+- `VERSION` set to `0.1.0` (climbs to `3.0.0` at parity); `math.rs` needs no
+  Cyrius module (its `libm`/std shims map directly to `ganita` / f64 builtins).
+- Symbol convention: all svara symbols `svara_`/`SVARA_`/`SV_`/`Sv`-prefixed to
+  coexist with naad's distlib bundle in one flat namespace.
+
+### Notes (parity)
+
+- f32 → f64 throughout (hisab/naad are f64-only); tolerance parity, not bit-exact.
+- `next_f32` ports the Rust **code** ([0.0, 1.0), not the doc's [-1.0, 1.0]).
+- svara does not flush denormals (its Rust never did) — none added.
+
 ## [2.0.0] - 2026-04-01
 
 ### Added

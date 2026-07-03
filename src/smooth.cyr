@@ -1,0 +1,82 @@
+# smooth.cyr -- one-pole exponential parameter smoother (click-free param changes).
+# Ports rust-old/src/smooth.rs (SmoothedParam). When a synthesis parameter jumps,
+# the discontinuity clicks; this glides it toward a target over a time constant
+# (~63% after 1τ, ~95% after 3τ). f32->f64 promotion throughout.
+#
+# alpha semantics: 0.0 = instant (current := target), 1.0 = never moves.
+# next() short-circuits when converged (|current-target| < 1e-8), matching Rust.
+#
+# serde: SmoothedParam was Serialize/Deserialize; its JSON codec lands with
+# svara's serde surface, tracked in docs/development/roadmap.md.
+
+var SVARA_DEFAULT_SMOOTH_TIME = 0x3F747AE147AE147B;   # 0.005 s (~5 ms, fast for speech)
+var SVARA_SMOOTH_CONVERGED    = 0x3E45798EE2308C3A;   # 1e-8 convergence threshold
+
+#derive(accessors)
+struct SvSmoothedParam { current; target; alpha; }
+
+# alpha_from_time -- exp(-1/(time_secs*sample_rate)); 0.0 (instant) if either
+# input is non-positive. Defined before its callers (single-pass). `0` == +0.0.
+#must_use
+fn svara_smooth_alpha_from_time(time_secs, sample_rate) {
+    if (f64_le(time_secs, 0) == 1) { return 0; }
+    if (f64_le(sample_rate, 0) == 1) { return 0; }
+    var samples = f64_mul(time_secs, sample_rate);
+    return f64_exp(f64_div(f64_neg(F64_ONE), samples));
+}
+
+# new(initial, sample_rate) -- smoother at `initial`, default 5 ms time constant.
+#must_use
+fn svara_smooth_new(initial, sample_rate) {
+    var self = alloc(sizeof(SvSmoothedParam));
+    SvSmoothedParam_set_current(self, initial);
+    SvSmoothedParam_set_target(self, initial);
+    SvSmoothedParam_set_alpha(self, svara_smooth_alpha_from_time(SVARA_DEFAULT_SMOOTH_TIME, sample_rate));
+    return self;
+}
+
+# with_time(initial, smooth_time_secs, sample_rate) -- custom time constant.
+#must_use
+fn svara_smooth_with_time(initial, smooth_time_secs, sample_rate) {
+    var self = alloc(sizeof(SvSmoothedParam));
+    SvSmoothedParam_set_current(self, initial);
+    SvSmoothedParam_set_target(self, initial);
+    SvSmoothedParam_set_alpha(self, svara_smooth_alpha_from_time(smooth_time_secs, sample_rate));
+    return self;
+}
+
+# set_target -- new target to glide toward.
+#inline
+fn svara_smooth_set_target(self, target) {
+    SvSmoothedParam_set_target(self, target);
+}
+
+# next -- return current smoothed value and advance one sample.
+#inline
+fn svara_smooth_next(self) {
+    var current = SvSmoothedParam_current(self);
+    var target = SvSmoothedParam_target(self);
+    if (f64_lt(f64_abs(f64_sub(current, target)), SVARA_SMOOTH_CONVERGED) == 1) {
+        SvSmoothedParam_set_current(self, target);
+    } else {
+        var alpha = SvSmoothedParam_alpha(self);
+        # current = alpha*current + (1-alpha)*target
+        SvSmoothedParam_set_current(self,
+            f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
+    }
+    return SvSmoothedParam_current(self);
+}
+
+# value -- current value without advancing.
+#inline
+#must_use
+fn svara_smooth_value(self) {
+    return SvSmoothedParam_current(self);
+}
+
+# set_immediate -- set both current and target (no smoothing).
+#inline
+fn svara_smooth_set_immediate(self, value) {
+    SvSmoothedParam_set_current(self, value);
+    SvSmoothedParam_set_target(self, value);
+}
