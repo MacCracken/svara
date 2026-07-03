@@ -1,0 +1,45 @@
+# lod.cyr -- level-of-detail quality control for multi-voice scenarios.
+# Ports rust-old/src/lod.rs (Quality enum + pipeline-stage predicates). Lower
+# quality skips expensive synthesis stages to cut CPU per voice. Pure config
+# logic, no float. serde on Quality dropped (tracked in docs/development/roadmap.md).
+
+# Quality levels (was `enum Quality`). Order matches the Rust variant order.
+var SVARA_QUALITY_FULL    = 0;   # all stages
+var SVARA_QUALITY_REDUCED = 1;   # 3 formants, no subglottal, no interaction
+var SVARA_QUALITY_MINIMAL = 2;   # 2 formants, no nasal/subglottal/interaction/lip
+
+# max_formants -- Full=5, Reduced=3, Minimal=2.
+#must_use
+fn svara_quality_max_formants(q) {
+    if (q == SVARA_QUALITY_FULL) { return 5; }
+    if (q == SVARA_QUALITY_REDUCED) { return 3; }
+    return 2;
+}
+
+# use_nasal_coupling -- Full/Reduced only.
+#must_use
+fn svara_quality_use_nasal_coupling(q) {
+    if (q == SVARA_QUALITY_MINIMAL) { return 0; }
+    return 1;
+}
+
+# use_subglottal -- Full only.
+#must_use
+fn svara_quality_use_subglottal(q) {
+    if (q == SVARA_QUALITY_FULL) { return 1; }
+    return 0;
+}
+
+# use_interaction -- Full only.
+#must_use
+fn svara_quality_use_interaction(q) {
+    if (q == SVARA_QUALITY_FULL) { return 1; }
+    return 0;
+}
+
+# use_lip_radiation -- Full/Reduced only.
+#must_use
+fn svara_quality_use_lip_radiation(q) {
+    if (q == SVARA_QUALITY_MINIMAL) { return 0; }
+    return 1;
+}

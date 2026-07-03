@@ -36,6 +36,21 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   (Hann window, hisab `num_fft` over an interleaved HComplex buffer), `rms_level`,
   `total_energy`/`band_energy` (hisab `num_neumaier_sum`), peak picking and
   `estimate_formants`. **14 tests.** Adds the **hisab** git dep (pinned `2.6.7`).
+- **`src/glottal.cyr`** (L2) — ports `glottal.rs`: `GlottalSource` with Rosenberg B,
+  LF (Rd-parameterized via `LfParams::from_rd`), Whisper, and Creaky models, plus
+  jitter/shimmer/breathiness/diplophonia/vibrato. Carries the **naad-backend path**
+  (aspiration noise = naad `NoiseGenerator::White`, vibrato = naad `Lfo::Sine`;
+  svara's PCG32 still drives jitter/shimmer/period). Golden-verified LF params and
+  first-period Rosenberg output. **35 tests.** Adds the **naad** (`2.1.0`) + **goonj**
+  (`2.0.0`) git deps (full naad bundle).
+- **`src/lod.cyr`** (L4, pulled early) — ports `lod.rs` `Quality` (Full/Reduced/Minimal)
+  + pipeline-stage predicates (`max_formants`, `use_nasal_coupling`, `use_subglottal`,
+  `use_interaction`, `use_lip_radiation`). **15 tests.**
+- **`src/tract.cyr`** (L2) — ports `tract.rs`: `VocalTract` + `NasalPlace`. Pipeline =
+  source-filter interaction feedback → `FormantFilter` → nasal antiformant (naad `Notch`
+  biquad, place-dependent) → subglottal resonance (naad `BandPass` ~600 Hz) → lip-radiation
+  HPF → gain, all LOD-gated. Carries the naad-backend path (CFG split collapsed).
+  Determinism verified. **14 tests.**
 
 ### Changed
 

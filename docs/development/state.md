@@ -38,26 +38,33 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L0 | math.rs | — | ✅ n/a | — | libm/std shim → maps to ganita/f64 builtins; no module needed |
 | L1 | formant.rs | src/formant.cyr | ✅ ported | 25 | svara's own SOA 8× bandpass bank (NOT naad); golden coeffs+output verified |
 | L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
-| L2 | glottal.rs | src/glottal.cyr | ⏳ next | — | hottest path; pulse models + PCG noise; needs naad noise/LFO |
-| L2 | tract.rs | src/tract.cyr | ⏳ | — | biquad chain + feedback; collapse CFG; needs naad biquad |
-| L3 | phoneme.rs | src/phoneme.cyr | ⏳ | — | 2,636 LOC; `.cyml` data tables |
+| L2 | glottal.rs | src/glottal.cyr | ✅ ported | 35 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
+| L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
+| L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
+| L3 | phoneme.rs | src/phoneme.cyr | ⏳ next | — | 2,636 LOC; `.cyml` data tables |
 | L3 | prosody/voice/sequence/trajectory | … | ⏳ | — | speech-science layer |
-| L4 | lod/pool/render/bridge | … | ⏳ | — | orchestration + glue |
+| L4 | pool/render/bridge | … | ⏳ | — | orchestration + glue |
 
-**Total ported: 5 modules, 87 tests passing.** Smoke binary (`build/svara`) green.
+**Total ported: 8 modules, 151 tests passing.** Smoke binary (`build/svara`) green —
+runs the full glottal→tract pipeline.
 
 ## Tests
 
-87 `.tcyr` assertions across error / rng / smooth / formant / spectral — all passing.
-Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
+151 `.tcyr` assertions across error / rng / smooth / lod / formant / spectral /
+glottal / tract — all passing. Run one suite: `cyrius test tests/<mod>.tcyr` (no auto-discovery).
 
 ## Dependencies
 
 Direct (declared in `cyrius.cyml`):
 
-- **stdlib** — syscalls, string, alloc, str, fmt, vec, io, args, assert, math, ganita, tagged, bench
+- **stdlib** — syscalls, string, alloc, str, fmt, vec, io, args, assert, math, ganita, tagged, fnptr, bench
 - **hisab** (git, pinned `2.6.7`) — FFT / HComplex / compensated sum. **Added** (spectral.cyr).
-- **naad** (git, pinned) — biquad / noise / LFO backends. Added when tract/glottal land.
+- **naad** (git, pinned `2.1.0`) — NoiseGenerator / Lfo / BiquadFilter backends. **Added** (glottal.cyr).
+- **goonj** (git, pinned `2.0.0`) — transitive: the naad bundle references it. sakshi resolves via hisab.
+
+> Decision (2026-07-03): glottal's noise + vibrato use the **full naad bundle**
+> (per user choice), pulling goonj + sakshi transitively — maximally faithful to
+> shipped 2.0.0-default behavior.
 
 ## Deferred work (tracked)
 
@@ -70,8 +77,8 @@ dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.c
 
 ## Next
 
-Excitation/tract layer (L2, highest float risk): `glottal.cyr` (pulse models +
-PCG-driven aspiration noise; the hottest path) then `tract.cyr` (biquad chain +
-source-filter feedback). Both add the **naad** git dep (noise/LFO for glottal;
-biquad for tract's nasal notch + subglottal) and require collapsing the
-naad-backend-vs-fallback CFG split to the naad-backend path. See [`roadmap.md`](roadmap.md).
+L3 speech-science layer, starting with `phoneme.cyr` — the crate's largest module
+(2,636 LOC): 101-phoneme inventory, 13 PhonemeClass strategies, per-class synthesis,
+formant/duration/tilt/VOT/nasalization data tables. Data tables to ship as `.cyml`
+files parsed once at init (vidya pattern). Then prosody / voice / sequence /
+trajectory, then the remaining orchestration (pool / render / bridge). See [`roadmap.md`](roadmap.md).

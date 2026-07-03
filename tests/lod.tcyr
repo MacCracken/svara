@@ -1,0 +1,32 @@
+# lod.tcyr -- tests for src/lod.cyr (Quality). Ports rust-old/src/lod.rs
+# #[test] blocks (serde-roundtrip dropped).
+
+include "src/lod.cyr"
+
+alloc_init();
+
+# ================================================================
+test_group("max_formants");
+assert_eq(svara_quality_max_formants(SVARA_QUALITY_FULL), 5, "Full = 5");
+assert_eq(svara_quality_max_formants(SVARA_QUALITY_REDUCED), 3, "Reduced = 3");
+assert_eq(svara_quality_max_formants(SVARA_QUALITY_MINIMAL), 2, "Minimal = 2");
+
+# ================================================================
+test_group("feature flags");
+assert_eq(svara_quality_use_nasal_coupling(SVARA_QUALITY_FULL), 1, "Full nasal");
+assert_eq(svara_quality_use_subglottal(SVARA_QUALITY_FULL), 1, "Full subglottal");
+assert_eq(svara_quality_use_interaction(SVARA_QUALITY_FULL), 1, "Full interaction");
+assert_eq(svara_quality_use_lip_radiation(SVARA_QUALITY_FULL), 1, "Full lip");
+
+assert_eq(svara_quality_use_nasal_coupling(SVARA_QUALITY_REDUCED), 1, "Reduced nasal");
+assert_eq(svara_quality_use_subglottal(SVARA_QUALITY_REDUCED), 0, "Reduced no subglottal");
+assert_eq(svara_quality_use_interaction(SVARA_QUALITY_REDUCED), 0, "Reduced no interaction");
+assert_eq(svara_quality_use_lip_radiation(SVARA_QUALITY_REDUCED), 1, "Reduced lip");
+
+assert_eq(svara_quality_use_nasal_coupling(SVARA_QUALITY_MINIMAL), 0, "Minimal no nasal");
+assert_eq(svara_quality_use_subglottal(SVARA_QUALITY_MINIMAL), 0, "Minimal no subglottal");
+assert_eq(svara_quality_use_interaction(SVARA_QUALITY_MINIMAL), 0, "Minimal no interaction");
+assert_eq(svara_quality_use_lip_radiation(SVARA_QUALITY_MINIMAL), 0, "Minimal no lip");
+
+var rc = assert_summary();
+syscall(60, rc);

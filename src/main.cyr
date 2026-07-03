@@ -7,11 +7,16 @@
 # `dist/svara.cyr` bundle instead (see cyrius.cyml [lib]).
 
 include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
 include "src/error.cyr"
 include "src/rng.cyr"
 include "src/smooth.cyr"
+include "src/lod.cyr"
 include "src/formant.cyr"
 include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
 
 fn main() {
     alloc_init();
@@ -57,6 +62,26 @@ fn main() {
     var spec = svara_spectral_analyze(buf, f64_from(44100));
     if (svara_is_err(spec) == 1) {
         println("svara: spectral analyze failed");
+        return 1;
+    }
+    # Smoke: a glottal source (naad-backed) produces a finite excitation sample.
+    var gs = svara_glottal_new(f64_from(120), f64_from(44100));
+    if (svara_is_err(gs) == 1) {
+        println("svara: glottal source init failed");
+        return 1;
+    }
+    if (svara_is_finite(svara_glottal_next_sample(gs)) == 0) {
+        println("svara: glottal output not finite");
+        return 1;
+    }
+    # Smoke: pipe the glottal source through a vocal tract (/a/).
+    var vt = svara_tract_new(f64_from(44100));
+    if (svara_is_err(svara_tract_set_vowel(vt, SVARA_VOWEL_A)) == 1) {
+        println("svara: tract set_vowel failed");
+        return 1;
+    }
+    if (svara_is_finite(svara_tract_process_sample(vt, svara_glottal_next_sample(gs))) == 0) {
+        println("svara: tract output not finite");
         return 1;
     }
     println("svara (Cyrius port) — smoke OK");

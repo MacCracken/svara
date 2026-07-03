@@ -1,5 +1,8 @@
 commit	0185805ee68c5961f39a2a7c3d6f316cb41f622e	hisab	https://github.com/MacCracken/hisab.git	2.6.7
+commit	6a7a33f193227b5a75755b7ae2873ab8b28b290d	naad	https://github.com/MacCracken/naad.git	2.1.0
+commit	95c3bd37c4b1dab5b35842ed8d39b552fed15e4c	goonj	https://github.com/MacCracken/goonj.git	2.0.0
 commit	d9dbb0239803421cbed430b00ea544f93516a27e	sakshi	https://github.com/MacCracken/sakshi.git	2.4.2
+35bfc749a0c691763c8d04615eaa53cbf296562b97ad52dfa865aeb15699da79  lib/naad.cyr
 d9f3b17ddbbe1bba48917c3a679807b01c39c4a1ce776efdbdfbb7a1680e86e4  lib/tagged.cyr
 d7a14f337a9e8c67ac95023cddf58614a21d8aacd2eb1736da798843ccf0deba  lib/syscalls_macos.cyr
 ae5617e74a5a6a792a50eefd8551a9ae5f76f85eddc3a495a10d03711aab9eb3  lib/math.cyr
@@ -22,6 +25,7 @@ ff14f0d7999956754937f612c0aa60719c138f0967a81019cf99e08aae088087  lib/string.cyr
 f7b9d52f29de6d3d633962ccc765a76637091a7256eebc1da5547530eed2c44b  lib/args_win.cyr
 de007db716c765556beff5293726d099a7368fb0b48cfa23423e25b070d4bbc3  lib/syscalls_aarch64_linux.cyr
 8af62caaa9cdd96bca338a5587526a275a0e36dbfc33066febf81498321f9bb1  lib/bench.cyr
+a5bf5c23131d10ea2fe4fe7b696b19ac0284347a260ad39afcdaf81d5b586cb4  lib/goonj.cyr
 8e5bbcff32aadd412a18c83c344e29c110b563ea0ec10b02400242def9613910  lib/hisab.cyr
 19bcb006802c5d158ce1b9e0090a07da7e4d1092236f9850c61ebcbf294021c4  lib/vec.cyr
 34460df54170e0cc60ec3cd78c221f14bfab015e3f6b48e966178ae854f65084  lib/io.cyr

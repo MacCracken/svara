@@ -1,0 +1,166 @@
+# glottal.tcyr -- tests for src/glottal.cyr (naad-backend path).
+# Ports the #[test] blocks from rust-old/src/glottal.rs (serde-roundtrip dropped).
+# Golden values: from_rd (pure arithmetic) and the first-period Rosenberg output
+# (breathiness=0 -> aspiration noise vanishes -> voiced output is pure pulse).
+# Noise/whisper/energy tests are property-based (as in Rust). Include order:
+# hisab -> goonj -> naad (bundle deps) -> error -> rng -> glottal.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/glottal.cyr"
+
+var TOL_1EM9 = 0x3E112E0BE826D695;   # 1e-9
+
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+# sum of squared samples over n draws (energy)
+#must_use
+fn glottal_energy(gs, n) {
+    var e = 0;
+    var i = 0;
+    while (i < n) {
+        var s = svara_glottal_next_sample(gs);
+        e = f64_add(e, f64_mul(s, s));
+        i = i + 1;
+    }
+    return e;
+}
+
+# out[0] = any |s| > thresh, out[1] = all finite
+fn glottal_scan(gs, n, thresh, out) {
+    var any = 0;
+    var fin = 1;
+    var i = 0;
+    while (i < n) {
+        var s = svara_glottal_next_sample(gs);
+        if (f64_gt(f64_abs(s), thresh) == 1) { any = 1; }
+        if (svara_is_finite(s) == 0) { fin = 0; }
+        i = i + 1;
+    }
+    store64(out, any);
+    store64(out + 8, fin);
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var scan = alloc(16);
+
+# ================================================================
+test_group("LfParams from_rd (golden)");
+var lp = alloc(24);
+svara_lf_params_from_rd(F64_ONE, lp);
+assert_eq(approx(load64(lp),      0x3F7A9FBE76C8B43A, TOL_1EM9), 1, "rd=1.0 ta");
+assert_eq(approx(load64(lp + 8),  0x3FDD555555555556, TOL_1EM9), 1, "rd=1.0 te");
+assert_eq(approx(load64(lp + 16), 0x3FED333333333333, TOL_1EM9), 1, "rd=1.0 ee");
+svara_lf_params_from_rd(SV_G_0_3, lp);
+assert_eq(approx(load64(lp + 8), 0x3FD999999999999A, TOL_1EM9), 1, "rd=0.3 te=0.4");
+assert_eq(approx(load64(lp + 16), F64_ONE, TOL_1EM9), 1, "rd=0.3 ee=1.0 (pressed, strongest)");
+svara_lf_params_from_rd(SV_G_2_7, lp);
+assert_eq(approx(load64(lp + 16), 0x3FE6666666666666, TOL_1EM9), 1, "rd=2.7 ee=0.7 (breathy, weakest)");
+
+# ================================================================
+test_group("creation + f0 validation");
+var gs = svara_glottal_new(f64_from(120), SR);
+assert_eq(svara_is_err(gs), 0, "120 Hz @ 44100 valid");
+assert_eq(approx(svara_glottal_f0(gs), f64_from(120), SV_EPSILON), 1, "f0 == 120");
+assert_eq(svara_glottal_model(gs), SVARA_GLOTTAL_ROSENBERG, "default model is Rosenberg");
+assert_eq(svara_is_err(svara_glottal_new(f64_from(5), SR)), 1, "f0=5 rejected");
+assert_eq(svara_is_err(svara_glottal_new(f64_from(3000), SR)), 1, "f0=3000 rejected");
+
+# ================================================================
+test_group("Rosenberg first-period output (golden, breathiness=0)");
+var gr = svara_glottal_new(f64_from(120), SR);
+var buf = alloc(251 * 8);
+var i = 0;
+while (i < 251) { store64(buf + i * 8, svara_glottal_next_sample(gr)); i = i + 1; }
+assert_eq(load64(buf), 0, "sample[0] = 0 (t=0)");
+assert_eq(approx(load64(buf + 1 * 8),   0x3F10204718AA29EE, TOL_1EM9), 1, "sample[1]");
+assert_eq(approx(load64(buf + 50 * 8),  0x3FC0C28F37645C94, TOL_1EM9), 1, "sample[50]");
+assert_eq(approx(load64(buf + 110 * 8), 0x3FDFE422D797AA1B, TOL_1EM9), 1, "sample[110] (near peak)");
+assert_eq(approx(load64(buf + 220 * 8), 0x3FEFFFDFB2ECD62C, TOL_1EM9), 1, "sample[220] (t<0.6)");
+assert_eq(load64(buf + 250 * 8), 0, "sample[250] = 0 (closed phase, t>0.6)");
+
+# ================================================================
+test_group("generates samples (Rosenberg)");
+var g1 = svara_glottal_new(f64_from(120), SR);
+glottal_scan(g1, 1024, SV_G_0_01, scan);
+assert_eq(load64(scan), 1, "some |s| > 0.01");
+assert_eq(load64(scan + 8), 1, "all finite");
+
+# ================================================================
+test_group("LF model produces output");
+var g2 = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_model(g2, SVARA_GLOTTAL_LF);
+glottal_scan(g2, 1024, SV_G_0_01, scan);
+assert_eq(load64(scan), 1, "LF some |s| > 0.01");
+assert_eq(load64(scan + 8), 1, "LF all finite");
+
+# ================================================================
+test_group("Rd parameterization: pressed louder than breathy");
+var pressed = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_rd(pressed, SV_G_0_3);
+svara_glottal_set_jitter(pressed, 0);
+svara_glottal_set_shimmer(pressed, 0);
+var pressed_e = glottal_energy(pressed, 4410);
+var breathy = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_rd(breathy, SV_G_2_7);
+svara_glottal_set_jitter(breathy, 0);
+svara_glottal_set_shimmer(breathy, 0);
+var breathy_e = glottal_energy(breathy, 4410);
+assert_eq(f64_gt(pressed_e, breathy_e), 1, "pressed (Rd=0.3) energy > breathy (Rd=2.7)");
+
+# ================================================================
+test_group("set_rd auto-switches to LF");
+var g3 = svara_glottal_new(f64_from(120), SR);
+assert_eq(svara_glottal_model(g3), SVARA_GLOTTAL_ROSENBERG, "starts Rosenberg");
+svara_glottal_set_rd(g3, F64_ONE);
+assert_eq(svara_glottal_model(g3), SVARA_GLOTTAL_LF, "set_rd -> LF");
+
+# ================================================================
+test_group("whisper");
+var whis = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_whisper(whis);
+assert_eq(svara_glottal_model(whis), SVARA_GLOTTAL_WHISPER, "model is Whisper");
+glottal_scan(whis, 4410, 0x3EB0C6F7A0B5ED8D, scan);   # 1e-6
+assert_eq(load64(scan + 8), 1, "whisper all finite");
+assert_eq(load64(scan), 1, "whisper some |s| > 1e-6");
+# whisper RMS < voiced RMS
+var whis2 = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_whisper(whis2);
+var w_e = glottal_energy(whis2, 4410);
+var voiced = svara_glottal_new(f64_from(120), SR);
+var v_e = glottal_energy(voiced, 4410);
+assert_eq(f64_lt(w_e, v_e), 1, "whisper energy < voiced energy");
+
+# ================================================================
+test_group("creaky");
+var cr = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_creaky(cr, F64_HALF);
+assert_eq(svara_glottal_model(cr), SVARA_GLOTTAL_CREAKY, "model is Creaky");
+assert_eq(approx(svara_glottal_rd(cr), F64_HALF, SV_EPSILON), 1, "rd == 0.5");
+glottal_scan(cr, 4410, SV_G_0_01, scan);
+assert_eq(load64(scan + 8), 1, "creaky all finite");
+assert_eq(load64(scan), 1, "creaky some |s| > 0.01");
+
+# ================================================================
+test_group("creaky Rd clamped to [0.3, 0.8]");
+var cc = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_creaky(cc, F64_TWO);
+assert_eq(approx(svara_glottal_rd(cc), SV_G_0_8, SV_EPSILON), 1, "creaky(2.0) -> 0.8");
+svara_glottal_set_creaky(cc, SV_G_0_1);
+assert_eq(approx(svara_glottal_rd(cc), SV_G_0_3, SV_EPSILON), 1, "creaky(0.1) -> 0.3");
+
+# ================================================================
+test_group("period approximately correct (jitter off)");
+var gp = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_jitter(gp, 0);
+assert_eq(approx(svara_glottal_period_samples(gp), f64_div(f64_from(44100), f64_from(120)), F64_ONE), 1, "period ~ 367.5");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -1,0 +1,344 @@
+# glottal.cyr -- glottal source models (the vocal-tract excitation signal).
+# Ports rust-old/src/glottal.rs (naad-backend path — the shipped 2.0.0 default).
+# Models: Rosenberg B (3t^2-2t^3), LF (Liljencrants-Fant, Rd-parameterized),
+# Whisper (noise-only), Creaky (irregular LF). f32 -> f64 throughout.
+#
+# Backend (per the port's locked decision): aspiration/whisper noise uses naad's
+# NoiseGenerator (White); vibrato uses naad's Lfo (Sine). svara's own PCG32 rng
+# still drives jitter/shimmer/creaky-period/diplophonia. The fallback path's
+# vibrato_phase field is dropped (naad-backend uses the Lfo).
+#
+# Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita,
+# hisab, goonj, naad (noise_new/noise_next_sample/NOISE_WHITE, modulation_lfo_new/
+# modulation_lfo_next_value/modulation_lfo_set_frequency/Lfo_set_depth/
+# MODULATION_LFO_SINE), error.cyr, rng.cyr. serde on GlottalSource is dropped
+# (tracked in docs/development/roadmap.md).
+
+# Glottal pulse models (was `enum GlottalModel`).
+var SVARA_GLOTTAL_ROSENBERG = 0;
+var SVARA_GLOTTAL_LF        = 1;
+var SVARA_GLOTTAL_WHISPER   = 2;
+var SVARA_GLOTTAL_CREAKY    = 3;
+
+# Defaults + magic constants (IEEE-754 bit patterns).
+var SV_G_OQ_DEF      = 0x3FE3333333333333;   # 0.6  default open quotient
+var SV_G_JITTER_DEF  = 0x3F847AE147AE147B;   # 0.01 default jitter
+var SV_G_SHIMMER_DEF = 0x3F947AE147AE147B;   # 0.02 default shimmer
+var SV_G_0_001 = 0x3F50624DD2F1A9FC;   # 0.001
+var SV_G_0_003 = 0x3F689374BC6A7EFA;   # 0.003
+var SV_G_0_01  = 0x3F847AE147AE147B;   # 0.01
+var SV_G_0_012 = 0x3F889374BC6A7EFA;   # 0.012
+var SV_G_0_05  = 0x3FA999999999999A;   # 0.05
+var SV_G_0_1   = 0x3FB999999999999A;   # 0.1
+var SV_G_0_15  = 0x3FC3333333333333;   # 0.15
+var SV_G_0_2   = 0x3FC999999999999A;   # 0.2
+var SV_G_0_3   = 0x3FD3333333333333;   # 0.3
+var SV_G_0_4   = 0x3FD999999999999A;   # 0.4
+var SV_G_0_7   = 0x3FE6666666666666;   # 0.7
+var SV_G_0_8   = 0x3FE999999999999A;   # 0.8
+var SV_G_2_4   = 0x4003333333333333;   # 2.4
+var SV_G_2_7   = 0x400599999999999A;   # 2.7
+var SV_G_5_0   = 0x4014000000000000;   # 5.0
+
+# GlottalSource -- selectable-model excitation generator (naad-backend layout).
+#derive(accessors)
+struct SvGlottalSource {
+    model; rd; lf_ta; lf_te; lf_ee; f0; sample_rate;
+    open_quotient; speed_quotient; spectral_tilt;
+    jitter; shimmer; breathiness; diplophonia; diplo_phase;
+    vibrato_rate; vibrato_depth; tilt_state;
+    phase; current_period; current_amplitude;
+    rng; aspiration_noise; vibrato_lfo;
+}
+
+# lf_params_from_rd -- derive LF (ta, te, ee) from Rd; writes 3 f64 slots.
+# rd clamped to [0.3, 2.7]. Fant (1995) simplified mapping.
+fn svara_lf_params_from_rd(rd, out) {
+    var r = f64_clamp(rd, SV_G_0_3, SV_G_2_7);
+    var norm = f64_div(f64_sub(r, SV_G_0_3), SV_G_2_4);        # (rd-0.3)/2.4
+    var te = f64_add(SV_G_0_4, f64_mul(SV_G_0_2, norm));       # 0.4 + 0.2*norm
+    var ta = f64_add(SV_G_0_003, f64_mul(SV_G_0_012, norm));   # 0.003 + 0.012*norm
+    var ee = f64_sub(F64_ONE, f64_mul(SV_G_0_3, norm));        # 1.0 - 0.3*norm
+    store64(out, ta);
+    store64(out + 8, te);
+    store64(out + 16, ee);
+}
+
+# apply_rd -- compute + store LF params on the source.
+fn svara_glottal_apply_rd(self, rd) {
+    var out = alloc(24);
+    svara_lf_params_from_rd(rd, out);
+    SvGlottalSource_set_lf_ta(self, load64(out));
+    SvGlottalSource_set_lf_te(self, load64(out + 8));
+    SvGlottalSource_set_lf_ee(self, load64(out + 16));
+}
+
+# new -- f0 in [20, 2000] Hz, sample_rate > 0 finite. Returns ptr or neg error.
+#must_use
+fn svara_glottal_new(f0, sample_rate) {
+    if (f64_lt(f0, f64_from(20)) == 1) { return SVARA_ERR_INVALID_PITCH; }
+    if (f64_gt(f0, f64_from(2000)) == 1) { return SVARA_ERR_INVALID_PITCH; }
+    if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+    if (svara_is_finite(sample_rate) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+
+    var self = alloc(sizeof(SvGlottalSource));
+    SvGlottalSource_set_model(self, SVARA_GLOTTAL_ROSENBERG);
+    SvGlottalSource_set_rd(self, F64_ONE);
+    svara_glottal_apply_rd(self, F64_ONE);
+    SvGlottalSource_set_f0(self, f0);
+    SvGlottalSource_set_sample_rate(self, sample_rate);
+    SvGlottalSource_set_open_quotient(self, SV_G_OQ_DEF);
+    SvGlottalSource_set_speed_quotient(self, F64_TWO);
+    SvGlottalSource_set_spectral_tilt(self, 0);
+    SvGlottalSource_set_jitter(self, SV_G_JITTER_DEF);
+    SvGlottalSource_set_shimmer(self, SV_G_SHIMMER_DEF);
+    SvGlottalSource_set_breathiness(self, 0);
+    SvGlottalSource_set_diplophonia(self, 0);
+    SvGlottalSource_set_diplo_phase(self, 0);
+    SvGlottalSource_set_vibrato_rate(self, 0);
+    SvGlottalSource_set_vibrato_depth(self, 0);
+    SvGlottalSource_set_tilt_state(self, 0);
+    SvGlottalSource_set_phase(self, 0);
+    SvGlottalSource_set_current_period(self, f64_div(sample_rate, f0));
+    SvGlottalSource_set_current_amplitude(self, F64_ONE);
+    SvGlottalSource_set_rng(self, svara_rng_new(SVARA_RNG_DEFAULT_SEED));
+    SvGlottalSource_set_aspiration_noise(self, noise_new(NOISE_WHITE, 42));
+    SvGlottalSource_set_vibrato_lfo(self, modulation_lfo_new(MODULATION_LFO_SINE, SV_G_0_001, sample_rate));
+    return self;
+}
+
+# ---- setters --------------------------------------------------------------
+#must_use
+fn svara_glottal_set_f0(self, f0) {
+    if (f64_lt(f0, f64_from(20)) == 1) { return SVARA_ERR_INVALID_PITCH; }
+    if (f64_gt(f0, f64_from(2000)) == 1) { return SVARA_ERR_INVALID_PITCH; }
+    SvGlottalSource_set_f0(self, f0);
+    return SVARA_ERR_NONE;
+}
+
+fn svara_glottal_set_breathiness(self, amount) {
+    SvGlottalSource_set_breathiness(self, f64_clamp(amount, 0, F64_ONE));
+}
+
+fn svara_glottal_set_open_quotient(self, oq) {
+    SvGlottalSource_set_open_quotient(self, f64_clamp(oq, SV_G_0_4, SV_G_0_7));
+}
+
+fn svara_glottal_set_speed_quotient(self, sq) {
+    SvGlottalSource_set_speed_quotient(self, f64_clamp(sq, F64_HALF, SV_G_5_0));
+}
+
+fn svara_glottal_set_jitter(self, j) {
+    SvGlottalSource_set_jitter(self, f64_clamp(j, 0, SV_G_0_05));
+}
+
+fn svara_glottal_set_shimmer(self, s) {
+    SvGlottalSource_set_shimmer(self, f64_clamp(s, 0, SV_G_0_1));
+}
+
+fn svara_glottal_set_spectral_tilt(self, tilt) {
+    SvGlottalSource_set_spectral_tilt(self, tilt);
+}
+
+fn svara_glottal_set_diplophonia(self, amount) {
+    SvGlottalSource_set_diplophonia(self, f64_clamp(amount, 0, F64_ONE));
+}
+
+fn svara_glottal_set_model(self, model) {
+    SvGlottalSource_set_model(self, model);
+}
+
+# set_rd -- Rd clamped [0.3,2.7]; recompute LF params; switch model to LF.
+fn svara_glottal_set_rd(self, rd) {
+    var r = f64_clamp(rd, SV_G_0_3, SV_G_2_7);
+    SvGlottalSource_set_rd(self, r);
+    svara_glottal_apply_rd(self, r);
+    SvGlottalSource_set_model(self, SVARA_GLOTTAL_LF);
+}
+
+# set_whisper -- noise-only excitation; reset tilt filter state.
+fn svara_glottal_set_whisper(self) {
+    SvGlottalSource_set_model(self, SVARA_GLOTTAL_WHISPER);
+    SvGlottalSource_set_tilt_state(self, 0);
+}
+
+# set_creaky -- LF with very low Rd [0.3,0.8], irregular timing; reset tilt.
+fn svara_glottal_set_creaky(self, rd) {
+    var r = f64_clamp(rd, SV_G_0_3, SV_G_0_8);
+    SvGlottalSource_set_rd(self, r);
+    svara_glottal_apply_rd(self, r);
+    SvGlottalSource_set_model(self, SVARA_GLOTTAL_CREAKY);
+    SvGlottalSource_set_tilt_state(self, 0);
+}
+
+# set_vibrato -- rate Hz (>=0), depth fraction [0,0.5]. Updates the naad LFO.
+fn svara_glottal_set_vibrato(self, rate, depth) {
+    var r = f64_max(rate, 0);
+    var d = f64_clamp(depth, 0, F64_HALF);
+    SvGlottalSource_set_vibrato_rate(self, r);
+    SvGlottalSource_set_vibrato_depth(self, d);
+    if (f64_gt(r, 0) == 1) {
+        var lfo = SvGlottalSource_vibrato_lfo(self);
+        modulation_lfo_set_frequency(lfo, r);
+        Lfo_set_depth(lfo, d);
+    }
+}
+
+# ---- getters --------------------------------------------------------------
+#must_use
+fn svara_glottal_model(self) { return SvGlottalSource_model(self); }
+#must_use
+fn svara_glottal_rd(self) { return SvGlottalSource_rd(self); }
+#inline
+#must_use
+fn svara_glottal_f0(self) { return SvGlottalSource_f0(self); }
+#inline
+#must_use
+fn svara_glottal_sample_rate(self) { return SvGlottalSource_sample_rate(self); }
+#inline
+#must_use
+fn svara_glottal_period_samples(self) { return SvGlottalSource_current_period(self); }
+
+# ---- pulse models ---------------------------------------------------------
+# rosenberg_pulse -- 3t'^2 - 2t'^3 over the open phase (t < open_quotient), else 0.
+#inline
+#must_use
+fn svara_glottal_rosenberg_pulse(self, t) {
+    var oq = SvGlottalSource_open_quotient(self);
+    if (f64_lt(t, oq) == 1) {
+        var tn = f64_div(t, oq);
+        var tn2 = f64_mul(tn, tn);
+        var tn3 = f64_mul(tn2, tn);
+        # 3*tn^2 - 2*tn^3
+        return f64_sub(f64_mul(f64_from(3), tn2), f64_mul(F64_TWO, tn3));
+    }
+    return 0;
+}
+
+# lf_pulse -- LF glottal-flow derivative: sinusoidal open phase to -Ee at te,
+# exponential return over ta, then closed (0).
+#inline
+#must_use
+fn svara_glottal_lf_pulse(self, t) {
+    var te = SvGlottalSource_lf_te(self);
+    var ta = SvGlottalSource_lf_ta(self);
+    var ee = SvGlottalSource_lf_ee(self);
+    if (f64_lt(t, te) == 1) {
+        # -ee * sin(pi * t / te)
+        var phase = f64_div(f64_mul(F64_PI, t), te);
+        return f64_mul(f64_neg(ee), f64_sin(phase));
+    }
+    if (f64_lt(t, f64_add(te, ta)) == 1) {
+        # -ee * exp(-(t-te)/epsilon), epsilon = max(ta, 0.001)
+        var dt = f64_sub(t, te);
+        var epsilon = f64_max(ta, SV_G_0_001);
+        return f64_mul(f64_neg(ee), f64_exp(f64_neg(f64_div(dt, epsilon))));
+    }
+    return 0;
+}
+
+# whisper_sample -- noise-only with a steep (>=12 dB/oct) spectral tilt.
+#inline
+fn svara_glottal_whisper_sample(self) {
+    var noise = noise_next_sample(SvGlottalSource_aspiration_noise(self));
+    var tilt = f64_max(SvGlottalSource_spectral_tilt(self), f64_from(12));
+    var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, tilt)), SvGlottalSource_sample_rate(self)));
+    # filtered = (1-alpha)*noise*0.15 + alpha*tilt_state
+    var filtered = f64_add(f64_mul(f64_mul(f64_sub(F64_ONE, alpha), noise), SV_G_0_15),
+                           f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+    SvGlottalSource_set_tilt_state(self, filtered);
+    return filtered;
+}
+
+# new_period -- begin a new glottal cycle: vibrato -> jitter -> creaky period
+# multiplication -> shimmer -> diplophonia. rng draw ORDER is load-bearing.
+fn svara_glottal_new_period(self) {
+    var vibrato_mod = F64_ONE;
+    if (f64_gt(SvGlottalSource_vibrato_rate(self), 0) == 1) {
+        var lfo_val = modulation_lfo_next_value(SvGlottalSource_vibrato_lfo(self));
+        # 1 + depth * (lfo_val*2 - 1)
+        vibrato_mod = f64_add(F64_ONE,
+            f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
+    }
+    var effective_f0 = f64_mul(SvGlottalSource_f0(self), vibrato_mod);
+
+    var rng = SvGlottalSource_rng(self);
+    var base_period = f64_div(SvGlottalSource_sample_rate(self), effective_f0);
+    var jitter_offset = f64_mul(f64_mul(svara_rng_next_f32(rng), SvGlottalSource_jitter(self)), base_period);
+    var period = f64_max(f64_add(base_period, jitter_offset), F64_ONE);
+
+    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_CREAKY) {
+        var r = f64_abs(svara_rng_next_f32(rng));
+        if (f64_lt(r, SV_G_0_1) == 1) {
+            period = f64_mul(period, f64_from(3));
+        } elif (f64_lt(r, SV_G_0_4) == 1) {
+            period = f64_mul(period, F64_TWO);
+        }
+    }
+    SvGlottalSource_set_current_period(self, period);
+
+    var shimmer_scale = SvGlottalSource_shimmer(self);
+    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_CREAKY) {
+        shimmer_scale = f64_mul(shimmer_scale, f64_from(3));
+    }
+    var shimmer_offset = f64_mul(svara_rng_next_f32(rng), shimmer_scale);
+    var amp = f64_max(f64_add(F64_ONE, shimmer_offset), SV_G_0_01);
+
+    if (f64_gt(SvGlottalSource_diplophonia(self), 0) == 1) {
+        SvGlottalSource_set_diplo_phase(self, 1 - SvGlottalSource_diplo_phase(self));
+        if (SvGlottalSource_diplo_phase(self) == 1) {
+            amp = f64_mul(amp, f64_sub(F64_ONE, f64_mul(SvGlottalSource_diplophonia(self), SV_G_0_8)));
+        }
+    }
+    SvGlottalSource_set_current_amplitude(self, amp);
+}
+
+# next_sample -- one glottal-source sample. Whisper is pure noise; otherwise a
+# model pulse with spectral tilt, shimmer, and gated aspiration-noise mix.
+#inline
+fn svara_glottal_next_sample(self) {
+    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_WHISPER) {
+        return svara_glottal_whisper_sample(self);
+    }
+
+    var t = f64_div(SvGlottalSource_phase(self), SvGlottalSource_current_period(self));
+
+    var pulse = 0;
+    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_ROSENBERG) {
+        pulse = svara_glottal_rosenberg_pulse(self, t);
+    } else {
+        pulse = svara_glottal_lf_pulse(self, t);
+    }
+
+    # spectral tilt one-pole low-pass
+    if (f64_gt(SvGlottalSource_spectral_tilt(self), 0) == 1) {
+        var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, SvGlottalSource_spectral_tilt(self))),
+                                    SvGlottalSource_sample_rate(self)));
+        var filtered = f64_add(f64_mul(f64_sub(F64_ONE, alpha), pulse),
+                               f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+        SvGlottalSource_set_tilt_state(self, filtered);
+        pulse = filtered;
+    } else {
+        SvGlottalSource_set_tilt_state(self, pulse);
+    }
+
+    pulse = f64_mul(pulse, SvGlottalSource_current_amplitude(self));
+
+    var noise = noise_next_sample(SvGlottalSource_aspiration_noise(self));
+    var noise_gate = SV_G_0_1;
+    if (f64_lt(t, SvGlottalSource_open_quotient(self)) == 1) { noise_gate = F64_ONE; }
+    var breath = SvGlottalSource_breathiness(self);
+    # sample = pulse*(1-breath) + noise*breath*0.3*gate
+    var sample = f64_add(f64_mul(pulse, f64_sub(F64_ONE, breath)),
+                         f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
+
+    var phase = f64_add(SvGlottalSource_phase(self), F64_ONE);
+    if (f64_ge(phase, SvGlottalSource_current_period(self)) == 1) {
+        phase = f64_sub(phase, SvGlottalSource_current_period(self));
+        SvGlottalSource_set_phase(self, phase);
+        svara_glottal_new_period(self);
+    } else {
+        SvGlottalSource_set_phase(self, phase);
+    }
+    return sample;
+}

@@ -1,0 +1,105 @@
+# tract.tcyr -- tests for src/tract.cyr. Ports rust-old/src/tract.rs #[test]
+# blocks (serde dropped) + a determinism check. Include order:
+# hisab -> goonj -> naad -> error -> rng -> smooth -> lod -> formant -> glottal -> tract.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+# out[0] = any |s| > thresh, out[1] = all finite, over an n-slot f64 buffer
+fn buf_scan(buf, n, thresh, out) {
+    var any = 0;
+    var fin = 1;
+    var i = 0;
+    while (i < n) {
+        var s = load64(buf + i * 8);
+        if (f64_gt(f64_abs(s), thresh) == 1) { any = 1; }
+        if (svara_is_finite(s) == 0) { fin = 0; }
+        i = i + 1;
+    }
+    store64(out, any);
+    store64(out + 8, fin);
+}
+
+alloc_init();
+var SR = f64_from(44100);
+var scan = alloc(16);
+
+# ================================================================
+test_group("creation");
+var vt = svara_tract_new(SR);
+assert_eq(approx(svara_tract_sample_rate(vt), f64_from(44100), SV_EPSILON), 1, "sample_rate == 44100");
+assert_eq(svara_tract_quality(vt), SVARA_QUALITY_FULL, "default quality Full");
+
+# ================================================================
+test_group("synthesize /a/");
+var vta = svara_tract_new(SR);
+assert_eq(svara_is_err(svara_tract_set_vowel(vta, SVARA_VOWEL_A)), 0, "set_vowel(A) ok");
+var ga = svara_glottal_new(f64_from(120), SR);
+var out = svara_tract_synthesize(vta, ga, 1024);
+buf_scan(out, 1024, TOL_1EM6, scan);
+assert_eq(load64(scan + 8), 1, "1024 samples all finite");
+assert_eq(load64(scan), 1, "some |s| > 1e-6 (non-silent)");
+
+# ================================================================
+test_group("nasal coupling");
+var vtn = svara_tract_new(SR);
+assert_eq(svara_is_err(svara_tract_set_vowel(vtn, SVARA_VOWEL_A)), 0, "set_vowel(A) ok");
+svara_tract_set_nasal_coupling(vtn, F64_HALF);
+var gn = svara_glottal_new(f64_from(120), SR);
+var outn = svara_tract_synthesize(vtn, gn, 512);
+buf_scan(outn, 512, TOL_1EM6, scan);
+assert_eq(load64(scan + 8), 1, "nasal-coupled output all finite");
+
+# ================================================================
+test_group("nasal place retune");
+var vtp = svara_tract_new(SR);
+assert_eq(svara_is_err(svara_tract_set_vowel(vtp, SVARA_VOWEL_A)), 0, "set_vowel(A) ok");
+svara_tract_set_nasal_place(vtp, SVARA_NASAL_BILABIAL);
+svara_tract_set_nasal_coupling(vtp, F64_HALF);
+var gp = svara_glottal_new(f64_from(120), SR);
+var outp = svara_tract_synthesize(vtp, gp, 256);
+buf_scan(outp, 256, TOL_1EM6, scan);
+assert_eq(load64(scan + 8), 1, "bilabial-nasal output all finite");
+assert_eq(approx(svara_nasal_place_antiformant_frequency(SVARA_NASAL_VELAR), f64_from(3000), SV_EPSILON), 1, "velar antiformant 3000 Hz");
+
+# ================================================================
+test_group("reset -> silence");
+var vtr = svara_tract_new(SR);
+var gr = svara_glottal_new(f64_from(120), SR);
+var junk = svara_tract_synthesize(vtr, gr, 100);
+svara_tract_reset(vtr);
+assert_eq(f64_lt(f64_abs(svara_tract_process_sample(vtr, 0)), TOL_1EM6), 1, "post-reset silence in -> ~0 out");
+
+# ================================================================
+test_group("determinism (same config + seed)");
+var t1 = svara_tract_new(SR);
+assert_eq(svara_is_err(svara_tract_set_vowel(t1, SVARA_VOWEL_A)), 0, "t1 set_vowel ok");
+var b1 = svara_tract_synthesize(t1, svara_glottal_new(f64_from(120), SR), 256);
+var t2 = svara_tract_new(SR);
+assert_eq(svara_is_err(svara_tract_set_vowel(t2, SVARA_VOWEL_A)), 0, "t2 set_vowel ok");
+var b2 = svara_tract_synthesize(t2, svara_glottal_new(f64_from(120), SR), 256);
+var identical = 1;
+var i = 0;
+while (i < 256) {
+    if (load64(b1 + i * 8) != load64(b2 + i * 8)) { identical = 0; }
+    i = i + 1;
+}
+assert_eq(identical, 1, "identical config + seed -> bit-identical output");
+
+var rc = assert_summary();
+syscall(60, rc);
