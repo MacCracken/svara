@@ -216,3 +216,321 @@ fn svara_phoneme_coarticulation_resistance(p) {
     if (c == SVARA_CLASS_DIPHTHONG) { return SV_PH_R06; }
     return 0;   # Silence
 }
+
+# ================================================================
+# PART 2 -- data tables (embedded, like formant's from_vowel). Requires
+# formant.cyr (VowelTarget + SVARA_VOWEL_*) and tract.cyr (NasalPlace / SVARA_NASAL_*).
+# ================================================================
+
+# Duration / VOT / misc f64 literals not already in the resistance set (SV_PH_R*).
+var SV_PH_004 = 0x3FA47AE147AE147B;   # 0.04
+var SV_PH_005 = 0x3FA999999999999A;   # 0.05
+var SV_PH_007 = 0x3FB1EB851EB851EC;   # 0.07
+var SV_PH_008 = 0x3FB47AE147AE147B;   # 0.08
+var SV_PH_012 = 0x3FBEB851EB851EB8;   # 0.12
+var SV_PH_018 = 0x3FC70A3D70A3D70A;   # 0.18
+var SV_PH_025 = 0x3FD0000000000000;   # 0.25
+var SV_PH_028 = 0x3FD1EB851EB851EC;   # 0.28
+var SV_PH_030 = 0x3FD3333333333333;   # 0.30
+var SV_PH_033 = 0x3FD51EB851EB851F;   # 0.33
+var SV_PH_035 = 0x3FD6666666666666;   # 0.35
+
+# int-arg VowelTarget builders (keep the table compact + under 120 cols).
+#must_use
+fn svara_ph_vt(f1, f2, f3, f4, f5) {
+    return svara_vowel_target_new(f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5));
+}
+#must_use
+fn svara_ph_vtb(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
+    return svara_vowel_target_with_bandwidths(
+        f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
+        f64_from(b1), f64_from(b2), f64_from(b3), f64_from(b4), f64_from(b5));
+}
+
+# ================================================================
+# f2_locus_equation -- writes (locus_hz, slope) into out (2 f64 slots) and
+# returns 1 for stops/nasals with a defined locus, else 0 (Rust None).
+# Sussman et al. (1991).
+# ================================================================
+#must_use
+fn svara_f2_locus_equation(p, out) {
+    if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_NASAL_M)) {
+        store64(out, f64_from(900)); store64(out + 8, SV_PH_R085); return 1;    # bilabial
+    }
+    if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D)
+        | (p == SVARA_PH_NASAL_N) | (p == SVARA_PH_TAP_FLAP)) {
+        store64(out, f64_from(1750)); store64(out + 8, SV_PH_R055); return 1;   # alveolar
+    }
+    if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)) {
+        store64(out, f64_from(2000)); store64(out + 8, SV_PH_R07); return 1;    # velar
+    }
+    return 0;
+}
+
+# ================================================================
+# phoneme_formants -- formant target (VowelTarget) for a phoneme. Vowels =
+# steady-state targets; consonants = locus frequencies. Full 101-arm table.
+# ================================================================
+#must_use
+fn svara_phoneme_formants(p) {
+    # vowels mapping directly to formant.cyr's from_vowel
+    if (p == SVARA_PH_VOWEL_A) { return svara_vowel_target_from_vowel(SVARA_VOWEL_A); }
+    if (p == SVARA_PH_VOWEL_E) { return svara_vowel_target_from_vowel(SVARA_VOWEL_E); }
+    if ((p == SVARA_PH_VOWEL_I) | (p == SVARA_PH_VOWEL_LONG_I)) { return svara_vowel_target_from_vowel(SVARA_VOWEL_I); }
+    if (p == SVARA_PH_VOWEL_O) { return svara_vowel_target_from_vowel(SVARA_VOWEL_O); }
+    if (p == SVARA_PH_VOWEL_U) { return svara_vowel_target_from_vowel(SVARA_VOWEL_U); }
+    if (p == SVARA_PH_VOWEL_SCHWA) { return svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA); }
+    if (p == SVARA_PH_VOWEL_OPEN_O) { return svara_vowel_target_from_vowel(SVARA_VOWEL_OPENO); }
+    if (p == SVARA_PH_VOWEL_ASH) { return svara_vowel_target_from_vowel(SVARA_VOWEL_ASH); }
+    if (p == SVARA_PH_VOWEL_NEAR_I) { return svara_vowel_target_from_vowel(SVARA_VOWEL_NEARI); }
+    if (p == SVARA_PH_VOWEL_NEAR_U) { return svara_vowel_target_from_vowel(SVARA_VOWEL_NEARU); }
+    if (p == SVARA_PH_VOWEL_OPEN_A) { return svara_ph_vtb(745, 1100, 2440, 3300, 3750, 85, 90, 110, 130, 150); }
+    if (p == SVARA_PH_VOWEL_BIRD) { return svara_ph_vtb(580, 1400, 2500, 3300, 3750, 70, 80, 100, 120, 140); }
+    if ((p == SVARA_PH_VOWEL_OPEN_E) | (p == SVARA_PH_VOWEL_CUP_V)) { return svara_ph_vt(600, 1770, 2500, 3300, 3750); }
+
+    # diphthong start targets
+    if ((p == SVARA_PH_DIPH_AI) | (p == SVARA_PH_DIPH_AU)) { return svara_vowel_target_from_vowel(SVARA_VOWEL_A); }
+    if (p == SVARA_PH_DIPH_OI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_OPENO); }
+    if (p == SVARA_PH_DIPH_EI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_E); }
+    if (p == SVARA_PH_DIPH_OU) { return svara_vowel_target_from_vowel(SVARA_VOWEL_O); }
+
+    # IPA-extension vowels (explicit bandwidths)
+    if (p == SVARA_PH_VOWEL_Y) { return svara_ph_vtb(320, 1800, 2400, 3300, 3750, 45, 70, 90, 120, 140); }
+    if (p == SVARA_PH_VOWEL_FRONT_ROUND_O) {
+        return svara_ph_vtb(400, 1600, 2400, 3300, 3750, 55, 75, 95, 120, 140);
+    }
+    if (p == SVARA_PH_VOWEL_OPEN_FRONT_ROUND_O) {
+        return svara_ph_vtb(550, 1500, 2400, 3300, 3750, 70, 80, 100, 120, 140);
+    }
+    if (p == SVARA_PH_VOWEL_CLOSE_BACK_UNROUNDED) {
+        return svara_ph_vtb(350, 1300, 2400, 3300, 3750, 45, 65, 90, 120, 140);
+    }
+    if (p == SVARA_PH_VOWEL_MID_BACK_UNROUNDED) {
+        return svara_ph_vtb(460, 1250, 2450, 3300, 3750, 55, 70, 95, 120, 140);
+    }
+    if (p == SVARA_PH_VOWEL_CLOSE_CENTRAL) {
+        return svara_ph_vtb(330, 1650, 2450, 3300, 3750, 45, 70, 90, 120, 140);
+    }
+    if (p == SVARA_PH_VOWEL_CLOSE_CENTRAL_ROUNDED) {
+        return svara_ph_vtb(310, 1500, 2300, 3300, 3750, 45, 70, 90, 120, 140);
+    }
+
+    # neutral-tract (schwa) consonants
+    if ((p == SVARA_PH_FRIC_H) | (p == SVARA_PH_GLOTTAL_STOP) | (p == SVARA_PH_FRIC_GLOTTAL_H)) {
+        return svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA);
+    }
+
+    # consonant locus targets (grouped by identical target)
+    # bilabial locus (350, 900, 2400)
+    if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_NASAL_M)
+        | (p == SVARA_PH_FRIC_BILABIAL_PH) | (p == SVARA_PH_FRIC_BILABIAL_B)
+        | (p == SVARA_PH_TRILL_BILABIAL) | (p == SVARA_PH_CLICK_BILABIAL)
+        | (p == SVARA_PH_EJECTIVE_P) | (p == SVARA_PH_IMPLOSIVE_B)) {
+        return svara_ph_vt(350, 900, 2400, 3300, 3750);
+    }
+    # alveolar locus (400, 1750, 2600)
+    if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D) | (p == SVARA_PH_NASAL_N)
+        | (p == SVARA_PH_LATERAL_L) | (p == SVARA_PH_FRIC_S) | (p == SVARA_PH_FRIC_Z)
+        | (p == SVARA_PH_TAP_FLAP) | (p == SVARA_PH_AFFR_TS) | (p == SVARA_PH_AFFR_DZ)
+        | (p == SVARA_PH_CLICK_ALVEOLAR) | (p == SVARA_PH_EJECTIVE_T) | (p == SVARA_PH_EJECTIVE_S)
+        | (p == SVARA_PH_IMPLOSIVE_D)) {
+        return svara_ph_vt(400, 1750, 2600, 3300, 3750);
+    }
+    # velar locus (350, 1800, 2500)
+    if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)
+        | (p == SVARA_PH_EJECTIVE_K) | (p == SVARA_PH_IMPLOSIVE_G)) {
+        return svara_ph_vt(350, 1800, 2500, 3300, 3750);
+    }
+    # labiodental (350, 1050, 2400)
+    if ((p == SVARA_PH_FRIC_F) | (p == SVARA_PH_FRIC_V) | (p == SVARA_PH_AFFR_PF)) {
+        return svara_ph_vt(350, 1050, 2400, 3300, 3750);
+    }
+    # postalveolar (350, 1600, 2500)
+    if ((p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH) | (p == SVARA_PH_AFFR_CH)
+        | (p == SVARA_PH_AFFR_J) | (p == SVARA_PH_EJECTIVE_CH)) {
+        return svara_ph_vt(350, 1600, 2500, 3300, 3750);
+    }
+    # dental (350, 1400, 2500)
+    if ((p == SVARA_PH_FRIC_TH) | (p == SVARA_PH_FRIC_DH)) { return svara_ph_vt(350, 1400, 2500, 3300, 3750); }
+    # rhotic / retroflex approximant (350, 1300, 1600)
+    if ((p == SVARA_PH_APPROX_R) | (p == SVARA_PH_APPROX_RETRO)) { return svara_ph_vt(350, 1300, 1600, 3300, 3750); }
+    if (p == SVARA_PH_APPROX_W) { return svara_ph_vt(300, 700, 2200, 3300, 3750); }
+    if (p == SVARA_PH_APPROX_J) { return svara_ph_vt(280, 2200, 2900, 3300, 3750); }
+    # uvular locus (350, 1100, 2300)
+    if ((p == SVARA_PH_PLOSIVE_UVULAR_Q) | (p == SVARA_PH_PLOSIVE_UVULAR_G)
+        | (p == SVARA_PH_FRIC_UVULAR_CH) | (p == SVARA_PH_FRIC_UVULAR_R)
+        | (p == SVARA_PH_NASAL_UVULAR) | (p == SVARA_PH_TRILL_UVULAR) | (p == SVARA_PH_LATERAL_VELAR)) {
+        return svara_ph_vt(350, 1100, 2300, 3300, 3750);
+    }
+    # retroflex locus (400, 1550, 2000)
+    if ((p == SVARA_PH_PLOSIVE_RETRO_T) | (p == SVARA_PH_PLOSIVE_RETRO_D)
+        | (p == SVARA_PH_FRIC_RETRO_S) | (p == SVARA_PH_FRIC_RETRO_Z)
+        | (p == SVARA_PH_NASAL_RETRO) | (p == SVARA_PH_FLAP_RETRO)
+        | (p == SVARA_PH_AFFR_RETRO) | (p == SVARA_PH_AFFR_RETRO_VOICED)) {
+        return svara_ph_vt(400, 1550, 2000, 3300, 3750);
+    }
+    # palatal (300, 2200, 2900)
+    if ((p == SVARA_PH_FRIC_PALATAL_C) | (p == SVARA_PH_FRIC_PALATAL_J) | (p == SVARA_PH_NASAL_PALATAL)) {
+        return svara_ph_vt(300, 2200, 2900, 3300, 3750);
+    }
+    # pharyngeal (700, 1000, 2400)
+    if ((p == SVARA_PH_FRIC_PHARYNGEAL_H) | (p == SVARA_PH_FRIC_PHARYNGEAL_A)) {
+        return svara_ph_vt(700, 1000, 2400, 3300, 3750);
+    }
+    # lateral fricative / affricate (400, 1600, 2500)
+    if ((p == SVARA_PH_FRIC_LATERAL_S) | (p == SVARA_PH_FRIC_LATERAL_Z)
+        | (p == SVARA_PH_FLAP_LATERAL) | (p == SVARA_PH_AFFR_LATERAL)) {
+        return svara_ph_vt(400, 1600, 2500, 3300, 3750);
+    }
+    if (p == SVARA_PH_TRILL_ALVEOLAR) { return svara_ph_vt(400, 1500, 2500, 3300, 3750); }
+    if (p == SVARA_PH_LATERAL_PALATAL) { return svara_ph_vt(300, 2000, 2800, 3300, 3750); }
+    # clicks (per place)
+    if (p == SVARA_PH_CLICK_DENTAL) { return svara_ph_vt(400, 1500, 2600, 3300, 3750); }
+    if (p == SVARA_PH_CLICK_PALATAL) { return svara_ph_vt(350, 2000, 2800, 3300, 3750); }
+    if (p == SVARA_PH_CLICK_LATERAL) { return svara_ph_vt(400, 1500, 2500, 3300, 3750); }
+
+    # Silence (and any fallthrough)
+    return svara_ph_vt(500, 1500, 2500, 3300, 3750);
+}
+
+# ================================================================
+# phoneme_duration -- default duration (seconds) by class.
+# ================================================================
+#must_use
+fn svara_phoneme_duration(p) {
+    var c = svara_phoneme_class(p);
+    if (c == SVARA_CLASS_VOWEL) { return SV_PH_012; }
+    if (c == SVARA_CLASS_DIPHTHONG) { return SV_PH_018; }
+    if (c == SVARA_CLASS_PLOSIVE) { return SV_PH_008; }
+    if (c == SVARA_CLASS_FRICATIVE) { return SV_PH_R01; }
+    if (c == SVARA_CLASS_NASAL) { return SV_PH_008; }
+    if (c == SVARA_CLASS_AFFRICATE) { return SV_PH_012; }
+    if (c == SVARA_CLASS_APPROXIMANT) { return SV_PH_007; }
+    if (c == SVARA_CLASS_LATERAL) { return SV_PH_007; }
+    if (c == SVARA_CLASS_TRILL) { return SV_PH_R01; }
+    if (c == SVARA_CLASS_CLICK) { return SV_PH_004; }
+    if (c == SVARA_CLASS_EJECTIVE) { return SV_PH_R01; }
+    if (c == SVARA_CLASS_IMPLOSIVE) { return SV_PH_008; }
+    return SV_PH_005;   # Silence
+}
+
+# ================================================================
+# phoneme_spectral_tilt -- dB/octave. Vowels/diphthongs: clamp((F1-300)/250, 0, 2);
+# consonants: 0. Stevens & Hanson (1995).
+# ================================================================
+#must_use
+fn svara_phoneme_spectral_tilt(p) {
+    var c = svara_phoneme_class(p);
+    if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG)) {
+        var f1 = SvVowelTarget_f1(svara_phoneme_formants(p));
+        return f64_clamp(f64_div(f64_sub(f1, f64_from(300)), f64_from(250)), 0, F64_TWO);
+    }
+    return 0;
+}
+
+# ================================================================
+# height_adjusted_amplitudes -- writes 5 F1..F5 amplitudes into out. Vowels:
+# attenuate F2-F5 with openness = clamp((F1-300)/500, 0, 1); else base. Fant (1960).
+# ================================================================
+fn svara_phoneme_height_adjusted_amplitudes(p, out) {
+    var c = svara_phoneme_class(p);
+    if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG)) {
+        var f1 = SvVowelTarget_f1(svara_phoneme_formants(p));
+        var op = f64_clamp(f64_div(f64_sub(f1, f64_from(300)), f64_from(500)), 0, F64_ONE);
+        store64(out,      SVARA_AMP_0);
+        store64(out + 8,  f64_mul(SVARA_AMP_1, f64_sub(F64_ONE, f64_mul(op, SV_PH_005))));
+        store64(out + 16, f64_mul(SVARA_AMP_2, f64_sub(F64_ONE, f64_mul(op, SV_PH_R01))));
+        store64(out + 24, f64_mul(SVARA_AMP_3, f64_sub(F64_ONE, f64_mul(op, SV_PH_R015))));
+        store64(out + 32, f64_mul(SVARA_AMP_4, f64_sub(F64_ONE, f64_mul(op, SV_PH_R015))));
+        return 0;
+    }
+    store64(out, SVARA_AMP_0);   store64(out + 8, SVARA_AMP_1);   store64(out + 16, SVARA_AMP_2);
+    store64(out + 24, SVARA_AMP_3);   store64(out + 32, SVARA_AMP_4);
+    return 0;
+}
+
+# ================================================================
+# VoiceOnsetTime -- closure/burst/aspiration fractions for plosives (Lisker &
+# Abramson 1964). `0` == 0.0.
+# ================================================================
+#derive(accessors)
+struct SvVOT { closure_fraction; burst_fraction; aspiration_fraction; }
+
+#must_use
+fn svara_vot_for_plosive(p) {
+    var self = alloc(sizeof(SvVOT));
+    if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_UVULAR_Q)) {
+        SvVOT_set_closure_fraction(self, SV_PH_035); SvVOT_set_burst_fraction(self, SV_PH_R01);
+        SvVOT_set_aspiration_fraction(self, SV_PH_025); return self;
+    }
+    if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_RETRO_T)) {
+        SvVOT_set_closure_fraction(self, SV_PH_030); SvVOT_set_burst_fraction(self, SV_PH_R01);
+        SvVOT_set_aspiration_fraction(self, SV_PH_030); return self;
+    }
+    if (p == SVARA_PH_PLOSIVE_K) {
+        SvVOT_set_closure_fraction(self, SV_PH_030); SvVOT_set_burst_fraction(self, SV_PH_012);
+        SvVOT_set_aspiration_fraction(self, SV_PH_028); return self;
+    }
+    if ((p == SVARA_PH_PLOSIVE_B) | (p == SVARA_PH_PLOSIVE_UVULAR_G)) {
+        SvVOT_set_closure_fraction(self, SV_PH_030); SvVOT_set_burst_fraction(self, SV_PH_008);
+        SvVOT_set_aspiration_fraction(self, 0); return self;
+    }
+    if ((p == SVARA_PH_PLOSIVE_D) | (p == SVARA_PH_PLOSIVE_RETRO_D)) {
+        SvVOT_set_closure_fraction(self, SV_PH_025); SvVOT_set_burst_fraction(self, SV_PH_008);
+        SvVOT_set_aspiration_fraction(self, 0); return self;
+    }
+    if (p == SVARA_PH_PLOSIVE_G) {
+        SvVOT_set_closure_fraction(self, SV_PH_025); SvVOT_set_burst_fraction(self, SV_PH_R01);
+        SvVOT_set_aspiration_fraction(self, 0); return self;
+    }
+    # default
+    SvVOT_set_closure_fraction(self, SV_PH_033); SvVOT_set_burst_fraction(self, SV_PH_R01);
+    SvVOT_set_aspiration_fraction(self, SV_PH_R01); return self;
+}
+
+# ================================================================
+# Nasalization -- anticipatory nasal coupling params for a vowel preceding a
+# nasal. onset=0.65, peak_coupling=0.4, place from the following nasal.
+# ================================================================
+#derive(accessors)
+struct SvNasalization { onset; peak_coupling; place; }
+
+# for_nasal -- returns a Nasalization pointer if `nasal` is a nasal consonant,
+# else 0 (null = Rust None). place maps to tract.cyr's SVARA_NASAL_*.
+#must_use
+fn svara_nasalization_for_nasal(nasal) {
+    var place = 0;
+    if (nasal == SVARA_PH_NASAL_M) { place = SVARA_NASAL_BILABIAL; }
+    elif ((nasal == SVARA_PH_NASAL_N) | (nasal == SVARA_PH_NASAL_RETRO)) { place = SVARA_NASAL_ALVEOLAR; }
+    elif ((nasal == SVARA_PH_NASAL_NG) | (nasal == SVARA_PH_NASAL_UVULAR)) { place = SVARA_NASAL_VELAR; }
+    elif (nasal == SVARA_PH_NASAL_PALATAL) { place = SVARA_NASAL_ALVEOLAR; }
+    else { return 0; }
+    var self = alloc(sizeof(SvNasalization));
+    SvNasalization_set_onset(self, SV_PH_R065);
+    SvNasalization_set_peak_coupling(self, SV_PH_R04);
+    SvNasalization_set_place(self, place);
+    return self;
+}
+
+# ================================================================
+# detect_nasalization -- vec parallel to `phonemes`: a Nasalization pointer for
+# each vowel/diphthong followed by a nasal, else 0 (null).
+# ================================================================
+#must_use
+fn svara_detect_nasalization(phonemes) {
+    var out = vec_new();
+    var n = vec_len(phonemes);
+    var i = 0;
+    while (i < n) {
+        var c = svara_phoneme_class(vec_get(phonemes, i));
+        var result = 0;
+        if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG)) {
+            if ((i + 1) < n) {
+                result = svara_nasalization_for_nasal(vec_get(phonemes, i + 1));
+            }
+        }
+        vec_push(out, result);
+        i = i + 1;
+    }
+    return out;
+}

@@ -59,6 +59,11 @@ sequencing: [`docs/development/roadmap.md`](docs/development/roadmap.md).
   Data tables (part 2) + synthesis (part 3, after `voice`) follow. The phoneme
   tables are `match`-based pure functions → ported as embedded Cyrius (if-chains),
   not externalized data files.
+- **`src/phoneme.cyr` (part 2/3)** (L3) — the data tables: `phoneme_formants`
+  (full 101-arm locus/steady-state table), `phoneme_duration`, `phoneme_spectral_tilt`,
+  `height_adjusted_amplitudes`, `f2_locus_equation`, `VoiceOnsetTime` (+`for_plosive`),
+  `Nasalization` (+`for_nasal`), `detect_nasalization`. Integer targets exact;
+  computed values (tilt, height amps) golden-verified. **+44 tests (273 total).**
 
 ### Changed
 

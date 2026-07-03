@@ -3,8 +3,24 @@
 # derived from an independent transcription of the Rust match logic;
 # coarticulation_resistance() spot-checked across every arm + class fallback.
 
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
 include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
 include "src/phoneme.cyr"
+
+var TOL_1EM9 = 0x3E112E0BE826D695;   # 1e-9
+
+#must_use
+fn ph_approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
 
 alloc_init();
 
@@ -244,6 +260,87 @@ assert_eq(svara_phoneme_coarticulation_resistance(SVARA_PH_NASAL_RETRO), SV_PH_R
 assert_eq(svara_phoneme_coarticulation_resistance(SVARA_PH_AFFR_TS), SV_PH_R085, "resist AFFR_TS");
 assert_eq(svara_phoneme_coarticulation_resistance(SVARA_PH_LATERAL_PALATAL), SV_PH_R055, "resist LATERAL_PALATAL");
 assert_eq(svara_phoneme_coarticulation_resistance(SVARA_PH_SILENCE), 0, "resist SILENCE");
+
+# ================================================================
+test_group("phoneme_formants (spot, integer targets are exact)");
+assert_eq(SvVowelTarget_f1(svara_phoneme_formants(SVARA_PH_VOWEL_A)), f64_from(768), "VowelA f1=768");
+assert_eq(SvVowelTarget_f2(svara_phoneme_formants(SVARA_PH_VOWEL_A)), f64_from(1333), "VowelA f2=1333");
+assert_eq(SvVowelTarget_f1(svara_phoneme_formants(SVARA_PH_VOWEL_OPEN_A)), f64_from(745), "VowelOpenA f1=745");
+assert_eq(SvVowelTarget_f2(svara_phoneme_formants(SVARA_PH_PLOSIVE_P)), f64_from(900), "PlosiveP F2 locus=900");
+assert_eq(SvVowelTarget_f2(svara_phoneme_formants(SVARA_PH_APPROX_R)), f64_from(1300), "ApproxR f2=1300");
+assert_eq(SvVowelTarget_f2(svara_phoneme_formants(SVARA_PH_EJECTIVE_K)), f64_from(1800), "EjectiveK f2=1800");
+assert_eq(SvVowelTarget_f1(svara_phoneme_formants(SVARA_PH_FRIC_H)), f64_from(523), "FricativeH -> schwa f1=523");
+assert_eq(SvVowelTarget_f1(svara_phoneme_formants(SVARA_PH_SILENCE)), f64_from(500), "Silence f1=500");
+
+# ================================================================
+test_group("phoneme_duration (by class)");
+assert_eq(svara_phoneme_duration(SVARA_PH_VOWEL_A), SV_PH_012, "vowel 0.12");
+assert_eq(svara_phoneme_duration(SVARA_PH_DIPH_AI), SV_PH_018, "diphthong 0.18");
+assert_eq(svara_phoneme_duration(SVARA_PH_PLOSIVE_P), SV_PH_008, "plosive 0.08");
+assert_eq(svara_phoneme_duration(SVARA_PH_FRIC_F), SV_PH_R01, "fricative 0.10");
+assert_eq(svara_phoneme_duration(SVARA_PH_APPROX_R), SV_PH_007, "approximant 0.07");
+assert_eq(svara_phoneme_duration(SVARA_PH_CLICK_BILABIAL), SV_PH_004, "click 0.04");
+assert_eq(svara_phoneme_duration(SVARA_PH_SILENCE), SV_PH_005, "silence 0.05");
+
+# ================================================================
+test_group("phoneme_spectral_tilt");
+assert_eq(ph_approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_A), 0x3FFDF3B645A1CAC1, TOL_1EM9), 1, "VowelA tilt=1.872");
+assert_eq(ph_approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_I), 0x3FC5810624DD2F1B, TOL_1EM9), 1, "VowelI tilt=0.168");
+assert_eq(svara_phoneme_spectral_tilt(SVARA_PH_PLOSIVE_P), 0, "consonant tilt=0");
+
+# ================================================================
+test_group("height_adjusted_amplitudes");
+var amp = alloc(40);
+svara_phoneme_height_adjusted_amplitudes(SVARA_PH_VOWEL_A, amp);
+assert_eq(load64(amp), 0x3FF0000000000000, "VowelA a0=1.0");
+assert_eq(ph_approx(load64(amp + 8), 0x3FE866E43AA79BBC, TOL_1EM9), 1, "VowelA a1");
+assert_eq(ph_approx(load64(amp + 16), 0x3FDD013A92A30553, TOL_1EM9), 1, "VowelA a2");
+assert_eq(ph_approx(load64(amp + 32), 0x3FC601797CC39FFE, TOL_1EM9), 1, "VowelA a4");
+svara_phoneme_height_adjusted_amplitudes(SVARA_PH_PLOSIVE_P, amp);
+assert_eq(load64(amp + 8), SVARA_AMP_1, "consonant a1 = base 0.8");
+assert_eq(load64(amp + 32), SVARA_AMP_4, "consonant a4 = base 0.2");
+
+# ================================================================
+test_group("f2_locus_equation");
+var loc = alloc(16);
+assert_eq(svara_f2_locus_equation(SVARA_PH_PLOSIVE_P, loc), 1, "PlosiveP has a locus");
+assert_eq(load64(loc), f64_from(900), "PlosiveP locus 900");
+assert_eq(load64(loc + 8), SV_PH_R085, "PlosiveP slope 0.85");
+assert_eq(svara_f2_locus_equation(SVARA_PH_NASAL_NG, loc), 1, "NasalNg has a locus");
+assert_eq(load64(loc), f64_from(2000), "velar locus 2000");
+assert_eq(svara_f2_locus_equation(SVARA_PH_VOWEL_A, loc), 0, "vowel has no locus");
+
+# ================================================================
+test_group("VoiceOnsetTime for_plosive");
+var votp = svara_vot_for_plosive(SVARA_PH_PLOSIVE_P);
+assert_eq(SvVOT_closure_fraction(votp), SV_PH_035, "P closure 0.35");
+assert_eq(SvVOT_aspiration_fraction(votp), SV_PH_025, "P aspiration 0.25 (long-lag)");
+var votd = svara_vot_for_plosive(SVARA_PH_PLOSIVE_D);
+assert_eq(SvVOT_aspiration_fraction(votd), 0, "D aspiration 0.0 (voiced)");
+var votx = svara_vot_for_plosive(SVARA_PH_GLOTTAL_STOP);
+assert_eq(SvVOT_closure_fraction(votx), SV_PH_033, "default closure 0.33");
+
+# ================================================================
+test_group("Nasalization for_nasal");
+var nm = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+assert_neq(nm, 0, "NasalM -> Some");
+assert_eq(SvNasalization_place(nm), SVARA_NASAL_BILABIAL, "NasalM place bilabial");
+assert_eq(SvNasalization_onset(nm), SV_PH_R065, "onset 0.65");
+assert_eq(SvNasalization_peak_coupling(nm), SV_PH_R04, "peak 0.4");
+assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_NG)), SVARA_NASAL_VELAR, "NasalNg place velar");
+assert_eq(svara_nasalization_for_nasal(SVARA_PH_VOWEL_A), 0, "non-nasal -> None");
+
+# ================================================================
+test_group("detect_nasalization");
+var seq = vec_new();
+vec_push(seq, SVARA_PH_VOWEL_A);
+vec_push(seq, SVARA_PH_NASAL_M);
+vec_push(seq, SVARA_PH_VOWEL_I);
+var det = svara_detect_nasalization(seq);
+assert_neq(vec_get(det, 0), 0, "vowel before nasal -> nasalized");
+assert_eq(SvNasalization_place(vec_get(det, 0)), SVARA_NASAL_BILABIAL, "nasalization place matches /m/");
+assert_eq(vec_get(det, 1), 0, "the nasal itself is not nasalized");
+assert_eq(vec_get(det, 2), 0, "final vowel (no following nasal) not nasalized");
 
 var rc = assert_summary();
 syscall(60, rc);
