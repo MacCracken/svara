@@ -131,7 +131,9 @@ at v3.0.0), ✅ M-serde value types, ✅ benchmarks + `docs/benchmarks.md`,
 
 Follow-ups (not 3.0.0 blockers):
 
-1. **Consumer smoke** — build dhvani / vansh against `dist/svara.cyr` end-to-end.
-2. **Security audit** — `docs/audit/YYYY-MM-DD-audit.md` for a v1.0 hardening pass.
-3. **Container-type serde** — derive on vec/buffer-bearing types once Cyrius gains
-   array-typed struct fields (compiler v6.4.x).
+1. **3.1.0 — container serde** (⏳ blocked on Cyrius **6.4.x**). Do NOT start until
+   the toolchain lands array-typed struct fields; then just add `#derive(Serialize)`
+   + a roundtrip `.tcyr` to each container type (no hand-written codecs — that was
+   explicitly rejected as throwaway). See [`roadmap.md`](roadmap.md) M2.
+2. **Consumer smoke** — build dhvani / vansh against `dist/svara.cyr` end-to-end.
+3. **Security audit** — `docs/audit/YYYY-MM-DD-audit.md` for a v1.0 hardening pass.

@@ -57,10 +57,32 @@ public value types derive it with round-trip `.tcyr` coverage (22 tests):
 - The static data tables (phoneme / vowel / formant / duration / tilt) stayed as
   embedded pure functions (if-chains) — a synth library shouldn't carry a runtime
   data-file dependency, and they were never serde in the Rust either.
-- **Deferred**: container-bearing types (vec/buffer fields — ProsodyContour,
-  PhonemeSequence, TrajectoryPlanner, RenderOutput, SynthesisContext, pool,
-  BiquadBankSoa, FormantFilter, GlottalSource) can't derive until Cyrius gains
-  array-typed struct fields (compiler v6.4.x). Tracked as a post-3.0.0 item.
+- **Deferred to [M2 (3.1.0)](#m2--container-serde--310--blocked-on-cyrius-64x)**:
+  container-bearing types can't derive until Cyrius gains array-typed struct fields.
+
+### M2 — container serde → 3.1.0 — ⏳ blocked on Cyrius 6.4.x
+
+**Not started — waiting on the toolchain.** The remaining public types carry
+`vec`/raw-buffer fields, which `#derive(Serialize)` can't introspect on the
+current compiler (6.3.40). The plan is deliberately **do nothing until Cyrius
+6.4.x lands array-typed struct fields** — then the same one-line `#derive(Serialize)`
+that covered the 8 scalar value types extends to the container types, no
+hand-written codecs. (Hand-writing codecs now was explicitly rejected: it would
+be throwaway work superseded by the derive.)
+
+When 6.4.x ships, 3.1.0 = add the derive + a roundtrip `.tcyr` to each container
+type, honoring Rust serde parity (match `rust-old/`'s `#[derive(Serialize,
+Deserialize)]` / `#[serde(skip)]` per type — skip transient runtime state and
+dep handles, rebuild them on load, exactly as the Rust did):
+
+- `ProsodyContour` (f0-point vec), `PhonemeSequence` (event vec),
+  `TrajectoryPlanner` + `FormantKeypoint`, `RenderOutput` / `BatchRenderer`,
+  `SynthesisContext`, `SynthesisPool`, `FormantFilter` + the SOA biquad bank,
+  `GlottalSource`, `VocalTract`.
+
+Gate: the annotated types must round-trip within the same f64 tolerance the
+value-type serde uses (~1e-3, 6-decimal text). No work begins before the 6.4.x
+pin is available in `cyrius.cyml`.
 
 ## Out of scope (for v1.0)
 
