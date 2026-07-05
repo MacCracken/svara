@@ -1,8 +1,8 @@
 commit	0185805ee68c5961f39a2a7c3d6f316cb41f622e	hisab	https://github.com/MacCracken/hisab.git	2.6.7
-commit	6a7a33f193227b5a75755b7ae2873ab8b28b290d	naad	https://github.com/MacCracken/naad.git	2.1.0
+commit	ff649d4617b0d65cd712e8a3c5c60fdac31afefa	naad	https://github.com/MacCracken/naad.git	2.1.1
 commit	95c3bd37c4b1dab5b35842ed8d39b552fed15e4c	goonj	https://github.com/MacCracken/goonj.git	2.0.0
 commit	d9dbb0239803421cbed430b00ea544f93516a27e	sakshi	https://github.com/MacCracken/sakshi.git	2.4.2
-35bfc749a0c691763c8d04615eaa53cbf296562b97ad52dfa865aeb15699da79  lib/naad.cyr
+2785d98a99e4f82e7fd4cf0e313575638af2c83855305c4dc834c545fc4fcf35  lib/naad.cyr
 d9f3b17ddbbe1bba48917c3a679807b01c39c4a1ce776efdbdfbb7a1680e86e4  lib/tagged.cyr
 d7a14f337a9e8c67ac95023cddf58614a21d8aacd2eb1736da798843ccf0deba  lib/syscalls_macos.cyr
 ae5617e74a5a6a792a50eefd8551a9ae5f76f85eddc3a495a10d03711aab9eb3  lib/math.cyr

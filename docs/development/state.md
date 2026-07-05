@@ -5,6 +5,13 @@
 
 ## Version
 
+**3.0.1** — dependency maintenance: pinned naad **2.1.0 → 2.1.1** (naad's
+abaco↔naad namespace de-collision — the two bare dB helpers gained the `naad_`
+prefix). svara doesn't call them (it uses naad's biquad / noise / LFO backends),
+so this is a pin-only bump, no source change. Re-vendor `lib/naad.cyr` via
+`cyrius deps` once naad 2.1.1 is tagged. Keeps svara coherent with naad 2.1.1 for
+downstream bundlers (dhvani / vansh).
+
 **3.0.0** — Rust→Cyrius port complete (shipped 2026-07-03; started 2026-07-03
 via `cyrius port`). **Full behavioral parity** with the Rust 2.0.0 surface:
 all 19 modules ported, 634 test assertions / 18 suites (vs Rust 213 tests),

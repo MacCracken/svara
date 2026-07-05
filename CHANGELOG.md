@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.0.1] - 2026-07-05 — naad 2.1.1 (namespace de-collision)
+
+Dependency maintenance. Bumps the pinned naad dependency **2.1.0 → 2.1.1**, in
+which naad renames its two bare dB helpers (`amplitude_to_db` / `db_to_amplitude`
+→ `naad_amplitude_to_db` / `naad_db_to_amplitude`) to clear a flat-distlib symbol
+clash with abaco. svara does **not** call those helpers — it consumes naad's
+biquad / noise (`NoiseGenerator`) / LFO (modulation) backends — so this is a
+pin-only bump with **no svara source or behavior change**. It keeps svara
+coherent with naad 2.1.1 for downstream consumers (dhvani / vansh) that bundle
+svara + naad (+ abaco) in one namespace.
+
+### Changed
+
+- `[deps.naad]` tag `2.1.0` → `2.1.1`. Re-vendor `lib/naad.cyr` with `cyrius deps`
+  once the naad 2.1.1 tag is published.
+
 ## [3.0.0] - 2026-07-03 — Cyrius port (full parity)
 
 Complete Rust → Cyrius port: **full behavioral parity** with the Rust 2.0.0
