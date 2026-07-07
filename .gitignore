@@ -1,4 +1,5 @@
 /target
+rust-old/target/
 Cargo.lock
 **/*.rs.bk
 *.pdb

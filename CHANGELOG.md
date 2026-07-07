@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.1.0] - 2026-07-06 — synthesis performance (control-rate glides)
+
+Performance minor. The faithful v3.0.x port re-derived formant filter coefficients
+on every sample of a vowel glide; this release moves that to control rate.
+
+### Changed
+- **Diphthong synthesis ~5.8× faster** (`phoneme synth /ai/`: 5.42 ms → 0.94 ms).
+  `svara_ph_synth_diphthong` re-solved the entire formant biquad bank from the
+  interpolated target on *every* sample; it now recomputes at a control rate of 64
+  samples (~1.45 ms at 44.1 kHz — standard for formant synthesizers) and holds the
+  coefficients between updates. The per-sample tract filtering is unchanged.
+  Perceptually identical (the glide target moves smoothly); the 652-assertion
+  tolerance suite passes unchanged. The diphthong path now matches a steady vowel
+  (~0.86 ms) and is faster than the Rust oracle (1.09 ms), which still re-solves
+  per sample.
+- **Toolchain pin 6.3.40 → 6.4.12** (current release; removes drift, aligns with
+  downstream consumers).
+
+### Notes
+- SIMD vectorization of the formant biquad bank (`f64v4`) was prototyped and
+  reverted: the per-sample loop is **memory-bound** (the SOA state shuffle +
+  builtin-call overhead dominate), so packed arithmetic bought only ~5% while the
+  ptr/value vector-op API can't keep lane state in registers across samples. The
+  real bit-identical lever there is eliminating the redundant per-slot input delay
+  line (x1/x2 are identical across all 8 formant slots — the input is shared),
+  tracked as future M-perf work alongside register-resident SIMD.
+
 ## [3.0.1] - 2026-07-05 — naad 2.1.1 (namespace de-collision)
 
 Dependency maintenance. Bumps the pinned naad dependency **2.1.0 → 2.1.1**, in

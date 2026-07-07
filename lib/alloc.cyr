@@ -94,6 +94,21 @@ fn _alloc_lock_release(): i64 {
     return 0;
 }
 
+# Zero `n` bytes at `base`. Used only by alloc_reset() to scrub the reclaimed
+# span before the allocator hands those addresses to a new owner — closing the
+# memory-reuse information-leak (CVE-2026-34988 / CVE-2022-39393 class; filed
+# 2026-07-03 by daimon, VULN-007). A local store64/store8 loop so the
+# foundational allocator carries NO lib/string.cyr (memset) dependency; un-gated
+# so every platform backend (win/macos/agnos + the Linux block below) can call
+# it. Allocation sizes round up to 8, so spans are 8-byte-aligned and the byte
+# tail is a safety net that normally never runs. (v6.4.1)
+fn _alloc_zero(base, n): i64 {
+    var i = 0;
+    while (i + 8 <= n) { store64(base + i, 0); i = i + 8; }
+    while (i < n) { store8(base + i, 0); i = i + 1; }
+    return 0;
+}
+
 #ifdef CYRIUS_TARGET_WIN
 include "lib/alloc_windows.cyr"
 #endif
@@ -227,6 +242,18 @@ fn alloc(size): i64 {
 # alloc() can't observe a half-updated bump pointer.
 fn alloc_reset(): i64 {
     _alloc_lock_acquire();
+    # Scrub the reused span of the FIRST chunk before rewinding, so a later
+    # alloc() can't read the prior occupant's bytes (memory-reuse info-leak,
+    # CVE-2026-34988 class). alloc_reset is the ONLY point the allocator hands
+    # the same address to a new owner — spills past the first chunk re-mmap
+    # FRESH kernel-zeroed chunks, so only the first chunk is a reuse channel.
+    # Still in the first chunk (the common case): the written extent is exactly
+    # _heap_ptr. Spilled to a later chunk: zero the whole first chunk — its exact
+    # fill point isn't tracked, so the untouched tail costs only a one-time page
+    # commit in the rare >256 MB-then-reset case.
+    var span = _heap_ptr - _heap_first_base;
+    if (_heap_base != _heap_first_base) { span = _heap_first_end - _heap_first_base; }
+    if (span > 0) { _alloc_zero(_heap_first_base, span); }
     _heap_base = _heap_first_base;
     _heap_ptr = _heap_first_base;
     _heap_end = _heap_first_end;

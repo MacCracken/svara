@@ -5,7 +5,7 @@ description = "svara — formant and vocal synthesis (glottal source, vocal trac
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/svara"
 language = "cyrius"
-cyrius = "6.3.40"
+cyrius = "6.4.12"
 
 [build]
 entry = "src/main.cyr"

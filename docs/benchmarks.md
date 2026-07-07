@@ -44,9 +44,12 @@ roughly **40× real-time** at 44.1 kHz on one core.
 - The diphthong render is the outlier (~5.4 ms) because it re-derives formant
   targets on every sample as the vowel glides — faithful to the Rust behavior,
   not a regression.
-- These are ~3–5× the Rust/LLVM figures per sample: Cyrius emits scalar code
-  (no auto-vectorization), and the SOA bank loop that LLVM vectorized runs as
-  scalar `load64`/`store64` + accessor calls here. Still comfortably real-time.
+- A same-machine head-to-head ([`benchmarks-rust-v-cyrius.md`](benchmarks-rust-v-cyrius.md))
+  puts the real per-DSP-unit gap at **10–38×** (formant bank 38×, tract 19×,
+  glottal 15×, vowel 10×) — NOT the "~3–5×" earlier estimated here. Cyrius emits
+  scalar code (no auto-vectorization) and the SOA bank loop LLVM vectorized runs
+  scalar `load64`/`store64` + f64-op overhead here. Addressable via SIMD + FMA —
+  see roadmap **M-perf**. Still comfortably real-time in absolute terms.
 
 ## History
 

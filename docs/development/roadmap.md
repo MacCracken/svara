@@ -14,6 +14,7 @@
 
 Remaining for a later v1.0 hardening pass (not 3.0.0 blockers):
 
+- [ ] **P1 — structured logging through sakshi** (see [M-log](#m-log--structured-logging-via-sakshi--p1))
 - [ ] At least one downstream consumer (dhvani / vansh) green against `dist/svara.cyr`
 - [ ] Security audit pass (`docs/audit/YYYY-MM-DD-audit.md`)
 - [ ] Container-type serde once Cyrius gains array-typed struct fields (v6.4.x)
@@ -83,6 +84,91 @@ dep handles, rebuild them on load, exactly as the Rust did):
 Gate: the annotated types must round-trip within the same f64 tolerance the
 value-type serde uses (~1e-3, 6-decimal text). No work begins before the 6.4.x
 pin is available in `cyrius.cyml`.
+
+### M-log — structured logging via sakshi — P1
+
+**Not started.** svara currently emits no logs — diagnostics are error codes only
+(`error.cyr` + `svara_err_name`). Route svara's tracing/diagnostics through
+**sakshi** (`lib/sakshi.cyr` — साक्षी, the AGNOS structured-logging/tracing
+substrate: levels error/warn/info/debug/trace, nestable timed spans, selectable
+output targets). sakshi is already in svara's transitive dep set (via hisab), so
+this is wiring, not a new dependency — and it completes the sakshi routing that
+varna's `logging.cyr` explicitly deferred.
+
+Plan (mirrors varna's `src/logging.cyr`):
+
+- Add `src/logging.cyr` gated behind `-D LOGGING`; **zero cost when off** (no log
+  calls compiled in). Off by default so the synthesis hot path stays
+  allocation-free.
+- Level-gated `svara_log_*` wrappers over sakshi's trace API; init reads a
+  `SVARA_LOG` level (default `info`).
+- Wrap the coarse entry points with sakshi spans for call-chain correlation —
+  `svara_sequence_render`, `svara_batch_render_all` / `_with_progress`,
+  `svara_synthctx_synthesize`, `svara_pool_render`. **Never per-sample** (hot path).
+- Tie errors to the active span via `sakshi_err_at_span(code, category)` so a
+  `SVARA_ERR_*` carries span context for downstream consumers (dhvani / vansh).
+
+Gate: builds warning-free with **and** without `-D LOGGING`; no allocation or log
+calls on the per-sample synthesis path; span/log output correlates across the
+AGNOS stack (same sakshi substrate as varna and shabdakosh).
+
+### M-perf — synthesis SIMD + hot-path optimization — P1 (in progress)
+
+**Control-rate glides shipped in 3.1.0; SIMD investigated + deferred; buffer
+pooling + memory-traffic work remain.** A same-machine Rust-vs-Cyrius run
+([`../benchmarks-rust-v-cyrius.md`](../benchmarks-rust-v-cyrius.md)) put the real
+per-DSP-unit gap at **10–38×**: formant bank 38×, vocal tract 19×, glottal 15×,
+vowel 10×. Optimize the synthesis hot path WITHOUT breaking tolerance parity
+(outputs stay within the existing `.tcyr` tolerance tests).
+
+- **✅ DONE (3.1.0) — control-rate formant coefficients in glides**
+  (`svara_ph_synth_diphthong`, `phoneme.cyr`). Was re-solving the whole biquad bank
+  from the interpolated target on *every* sample (the ~5.4 ms `/ai/` outlier); now
+  recomputes at a control rate of 64 samples (~1.45 ms) and holds between. Result:
+  **5.42 ms → 0.94 ms (5.8×)**, tolerance suite unchanged (652/0). The diphthong
+  now matches a steady vowel and beats the Rust oracle (1.09 ms, still per-sample).
+
+- **⚠ DEFERRED — SIMD the formant biquad bank** (`svara_formant_bank_process`).
+  Prototyped a bit-identical `f64v4` (AVX2) version of the 8-slot SOA bank (two
+  4-lane groups, scalar op order, `simd_has_avx2()`-guarded fallback). It passed
+  tolerance (652/0) but bought only **~5%**: the per-sample loop is **memory-bound**,
+  not compute-bound — the SOA *state shuffle* (~28 `load64`/`store64` per group) and
+  the vector-op call overhead dominate, and the ptr/value `f64v4` API can't keep
+  lane state in registers across samples. Reverted (also avoids a `simd` dep + a
+  distlib-sidecar gap: `simd_has_avx2` isn't auto-folded). Two better bit-identical
+  levers that attack the *actual* bottleneck (memory traffic):
+    - **Collapse the redundant input delay line.** `x1`/`x2` are per-slot buffers
+      but the input is shared across all 8 formant biquads, so every slot holds the
+      same `x1`/`x2` — replace the two 8-wide buffers with two scalars and drop
+      ~16 memory ops/sample. Bit-identical, no toolchain dep.
+    - **Register-resident block SIMD.** A `process_block` that keeps the 8-slot
+      state in vector registers across the sample loop (needs codegen that doesn't
+      round-trip each `f64v4` op through memory) — revisit when the SIMD API/codegen
+      supports it.
+
+- **P1 — pool the per-note render buffers.** `phoneme.cyr` allocates ~16× per note and
+  `pool.cyr` exists but is **not wired into the render path**. Reuse a per-render
+  scratch arena for the transient sample / `Formant` vecs instead of allocating per
+  phoneme — removes the "+alloc" overhead that shows in every `synthesize_phoneme` and
+  compounds across `svara_sequence_render`.
+
+- **P1 — FMA + block audit.** Ensure every biquad/mix inner loop uses fused
+  multiply-add (`f64v4_fmadd`) and that the glottal→tract→formant chain runs in blocks
+  (amortize per-call overhead, expose the vectorizable spans). `process_block` already
+  does this for the bank; extend it through the tract chain.
+
+- **P2 — tract per-sample chain** (`tract.cyr`, ~366 ns/sample: filter + nasal +
+  subglottal + lip + feedback). Hoist coefficient recompute out of the per-sample loop
+  and SIMD the independent parallel sub-filters.
+
+- **Track it:** add `docs/benchmarks-rust-v-cyrius.md` (the hisab/shabda format) so the
+  per-op gap and each optimization's win stay visible across commits, alongside
+  `bench-history.csv`.
+
+Gate: all tolerance-parity `.tcyr` tests stay green (SIMD / control-rate paths match the
+scalar output within tolerance); the AVX2 path is guarded by `simd_has_avx2()` with a
+scalar fallback byte-identical to today; `bench-history.csv` records before/after per-op
+deltas; no regression on non-AVX2 hosts.
 
 ## Out of scope (for v1.0)
 
