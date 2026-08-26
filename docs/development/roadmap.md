@@ -58,23 +58,32 @@ public value types derive it with round-trip `.tcyr` coverage (22 tests):
 - The static data tables (phoneme / vowel / formant / duration / tilt) stayed as
   embedded pure functions (if-chains) — a synth library shouldn't carry a runtime
   data-file dependency, and they were never serde in the Rust either.
-- **Deferred to [M2 (3.1.0)](#m2--container-serde--310--blocked-on-cyrius-64x)**:
-  container-bearing types can't derive until Cyrius gains array-typed struct fields.
+- **Deferred to [M2](#m2--container-serde--320--unblocked-as-of-6413)**:
+  container-bearing types couldn't derive until Cyrius gained array-typed struct
+  fields. That landed in 6.4.11–6.4.13 — M2 is now unblocked.
 
-### M2 — container serde → 3.1.0 — ⏳ blocked on Cyrius 6.4.x
+### M2 — container serde → 3.2.0 — unblocked as of 6.4.13
 
-**Not started — waiting on the toolchain.** The remaining public types carry
-`vec`/raw-buffer fields, which `#derive(Serialize)` can't introspect on the
-current compiler (6.3.40). The plan is deliberately **do nothing until Cyrius
-6.4.x lands array-typed struct fields** — then the same one-line `#derive(Serialize)`
-that covered the 8 scalar value types extends to the container types, no
-hand-written codecs. (Hand-writing codecs now was explicitly rejected: it would
-be throwaway work superseded by the derive.)
+**Not started; no longer blocked.** The remaining public types carry `vec`/raw-buffer
+fields, which `#derive(Serialize)` could not introspect. The plan was deliberately
+**do nothing until Cyrius landed array-typed struct fields** — hand-writing codecs
+was explicitly rejected as throwaway work the derive would supersede.
 
-When 6.4.x ships, 3.1.0 = add the derive + a roundtrip `.tcyr` to each container
-type, honoring Rust serde parity (match `rust-old/`'s `#[derive(Serialize,
-Deserialize)]` / `#[serde(skip)]` per type — skip transient runtime state and
-dep handles, rebuild them on load, exactly as the Rust did):
+✅ **The toolchain shipped it**, in three rounds:
+
+| Release | What landed |
+|---|---|
+| 6.4.11 | array-typed struct fields R1 — `Vec<T>` handle fields (parse + layout + access) |
+| 6.4.12 | R2 — `#derive` Serialize/Deserialize for `Vec<primitive>` |
+| 6.4.13 | R3 — `#derive` for `Vec<#derive-struct>` (the arc closes) |
+
+The 3.1.2 pin (**6.5.35**) carries all three. Retargeted to **3.2.0** — 3.1.0 went
+to control-rate glides and 3.1.1/3.1.2 to toolchain + dependency maintenance.
+
+M2 = add the derive + a roundtrip `.tcyr` to each container type, honoring Rust
+serde parity (match `rust-old/`'s `#[derive(Serialize, Deserialize)]` /
+`#[serde(skip)]` per type — skip transient runtime state and dep handles, rebuild
+them on load, exactly as the Rust did):
 
 - `ProsodyContour` (f0-point vec), `PhonemeSequence` (event vec),
   `TrajectoryPlanner` + `FormantKeypoint`, `RenderOutput` / `BatchRenderer`,
@@ -82,8 +91,7 @@ dep handles, rebuild them on load, exactly as the Rust did):
   `GlottalSource`, `VocalTract`.
 
 Gate: the annotated types must round-trip within the same f64 tolerance the
-value-type serde uses (~1e-3, 6-decimal text). No work begins before the 6.4.x
-pin is available in `cyrius.cyml`.
+value-type serde uses (~1e-3, 6-decimal text).
 
 ### M-log — structured logging via sakshi — P1
 

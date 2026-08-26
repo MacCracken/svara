@@ -5,12 +5,30 @@
 
 ## Version
 
-**3.0.1** — dependency maintenance: pinned naad **2.1.0 → 2.1.1** (naad's
-abaco↔naad namespace de-collision — the two bare dB helpers gained the `naad_`
-prefix). svara doesn't call them (it uses naad's biquad / noise / LFO backends),
-so this is a pin-only bump, no source change. Re-vendor `lib/naad.cyr` via
-`cyrius deps` once naad 2.1.1 is tagged. Keeps svara coherent with naad 2.1.1 for
-downstream bundlers (dhvani / vansh).
+**3.1.2** (2026-08-26) — toolchain + dependency catch-up. Cyrius pin
+**6.4.13 → 6.5.35** (109 releases), and every dependency to its current tag:
+hisab **2.6.7 → 2.11.2**, naad **2.1.1 → 2.2.1**, goonj **2.0.0 → 2.0.4**,
+sakshi **2.4.2 → 2.4.11** (transitive). One breaking upstream rename absorbed —
+naad 2.2.0's `FILTER_* → NAAD_FILTER_*`, which `src/tract.cyr` uses in two
+places (nasal antiformant, subglottal bandpass); values unchanged, so it is a
+compile-time break only. 90 lines reindented by the fixed `cyrfmt` (6.5.28
+taught it to track parentheses). 634 assertions / 18 suites green, benchmarks
+within noise of 3.1.0, and **`cyrius audit` now exits 0** (see Quality gate).
+
+**3.1.1** (2026-08-26) — pin-only: Cyrius `6.4.12 → 6.4.13`. No source change.
+Tagged without a CHANGELOG section at the time; recorded retroactively in 3.1.2.
+
+**3.1.0** (2026-07-06) — synthesis performance. `svara_ph_synth_diphthong`
+re-solved the whole formant biquad bank on *every* sample of a glide; it now
+recomputes at a control rate of 64 samples and holds the coefficients between
+updates. Diphthong render **5.42 ms → 0.94 ms (~5.8×)**, now faster than the
+Rust oracle (1.09 ms), which still re-solves per sample. Perceptually identical;
+the tolerance suite passes unchanged. SIMD (`f64v4`) on the formant bank was
+prototyped and reverted — the loop is memory-bound.
+
+**3.0.1** (2026-07-05) — dependency maintenance: pinned naad **2.1.0 → 2.1.1**
+(naad's abaco↔naad namespace de-collision — the two bare dB helpers gained the
+`naad_` prefix). svara doesn't call them, so this was a pin-only bump.
 
 **3.0.0** — Rust→Cyrius port complete (shipped 2026-07-03; started 2026-07-03
 via `cyrius port`). **Full behavioral parity** with the Rust 2.0.0 surface:
@@ -20,7 +38,18 @@ parity oracle.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.3.40` (in `cyrius.cyml [package].cyrius`)
+- **Cyrius pin**: `6.5.35` (in `cyrius.cyml [package].cyrius` — the single
+  source of truth; CI reads it and never hardcodes a version)
+- `lib/` holds 29 stdlib files vendored from `~/.cyrius/versions/6.5.35/lib`
+  (verified byte-identical file by file) plus the 4 dependency bundles.
+  `cyrius.lock`: 33 deps locked, 4 commit-pinned.
+- **`cyrfmt` canonical continuation indent is 2 spaces per open-paren level**
+  (4 also accepted). 6.5.28 fixed the formatter, which had never tracked
+  parentheses; the pre-6.5.28 8-space convention is retired.
+- **`lib/bench.cyr` measures the timer floor** and subtracts it from every
+  sample (6.5.19). It prints the measured value and `bench_clock_overhead_ns()`
+  returns it — never write a clock-overhead figure into a comment, it is host
+  specific across a ~230× range.
 
 ## Port decisions (locked 2026-07-03)
 
@@ -82,31 +111,75 @@ the whole tree recursively: `cyrius tests tests`.
 11 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
-per-call clock overhead: glottal ~82 ns, formant ~175 ns, tract ~294 ns/sample —
-a full chain ≈ 0.55 µs/sample (~40× real-time at 44.1 kHz).
+per-call clock overhead: glottal ~82 ns, formant ~179 ns, tract ~295 ns/sample —
+a full chain ≈ 0.56 µs/sample (~40× real-time at 44.1 kHz). Renders: `/a/`
+~857 µs, `/s/` ~458 µs, `/ai/` ~921 µs, 3-phoneme sequence ~3.36 ms
+(x86_64, 2026-08-26, cycc 6.5.35). Every row is within a few percent of the
+3.1.0 run — the 6.5.35 instrument change did not move svara's numbers because
+the per-sample benches already used `bench_run_batch1/2`.
 
 ## Quality gate
 
-fmt (`cyrfmt`), lint (`cyrlint`, 0 warnings), docs (`cyrdoc`, **0 undocumented**),
-tests (`cyrius tests tests`, 18/18), and `cyrius bench` are each green. The
-aggregate `cyrius audit` command's test/bench legs report compile errors because
-that command skips dependency resolution before compiling (stdlib prelude +
-hisab/naad/goonj bundles absent) — reproducible identically in the sibling
-`naad` 2.1.0 release, so a toolchain limitation, not a svara defect. Gate on the
-individual commands (all green) rather than the aggregate.
+All green on the 6.5.35 pin:
+
+| Gate | Command | Result |
+|---|---|---|
+| fmt | `cyrfmt --check <f>` | clean (38 files) |
+| lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
+| docs | `cyrdoc --check <f>` | 0 undocumented (243 public fns across 17 modules) |
+| tests | `cyrius tests tests` / bare `cyrius test` | 18/18 suites, 634 assertions |
+| fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
+| deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
+| bench | `cyrius bench` | 2/2 bench files |
+| **aggregate** | **`cyrius audit`** | **exits 0** |
+
+**`cyrius audit` works again as of this pin.** Through 3.1.1 it skipped
+dependency resolution before compiling its test and bench legs, so both failed
+with spurious *"undefined variable F64_ONE / SYS_WRITE"* — reproducible
+identically in the sibling `naad` 2.1.0, hence a toolchain bug rather than a
+svara defect, and the workaround was to gate on the individual tools. On 6.5.35
+it resolves deps first (`4 deps resolved`) and runs fmt · lint · docs · tests ·
+bench green. The per-tool commands still work and remain the finer-grained form.
+
+⚠ **`CONTRIBUTING.md` documents none of this** — it is still the pre-port Rust
+file (`cargo fmt --check`, `cargo clippy`, `cargo audit`, `cargo deny`, "Rust
+1.89+"). So is `README.md` ("Formant and vocal synthesis for Rust", crates.io
+links for hisab / naad, a `use svara::prelude::*` example, Cargo feature flags,
+"48 phonemes" where the port ships 101). Both survived the port untouched and are
+out of scope for 3.1.2; they need their own doc sweep.
+
+⚠ The `cyrius fmt` / `cyrius doc` wrappers used to mangle their arguments; on
+this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout).
+`cyrfmt` / `cyrlint` / `cyrdoc` from `~/.cyrius/bin` remain the direct forms.
 
 ## Dependencies
 
-Direct (declared in `cyrius.cyml`):
+Pinned tags as of **3.1.2**; see [`dependency-watch.md`](dependency-watch.md) for
+the upgrade policy and the symbols svara actually consumes.
 
-- **stdlib** — syscalls, string, alloc, str, fmt, vec, io, args, assert, math, ganita, tagged, fnptr, bench
-- **hisab** (git, pinned `2.6.7`) — FFT / HComplex / compensated sum. **Added** (spectral.cyr).
-- **naad** (git, pinned `2.1.0`) — NoiseGenerator / Lfo / BiquadFilter backends. **Added** (glottal.cyr).
-- **goonj** (git, pinned `2.0.0`) — transitive: the naad bundle references it. sakshi resolves via hisab.
+| Dep | Pin | Declared | What svara uses |
+|---|---|---|---|
+| **hisab** | `2.11.2` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| **naad** | `2.2.1` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
+| **goonj** | `2.0.4` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
+| **sakshi** | `2.4.11` | transitive (via hisab) | nothing directly — goonj's logging backend |
+
+**stdlib** (`[deps].stdlib`) — syscalls, string, alloc, str, fmt, vec, io, args,
+assert, math, ganita, tagged, fnptr, bench. `bayan` + `hashmap` are **opt-in via
+explicit `include`**, not stdlib entries (auto-vendor fails for them); every
+entry file that includes a `#derive(Serialize)` module also includes those two so
+the codecs are callable and warning-free.
 
 > Decision (2026-07-03): glottal's noise + vibrato use the **full naad bundle**
 > (per user choice), pulling goonj + sakshi transitively — maximally faithful to
 > shipped 2.0.0-default behavior.
+
+⚠ **naad renames land as compile-time breaks, not silent ones.** 2.1.3 moved
+`ERR_* → NAAD_ERR_*` (inert here: svara's codes are `SVARA_ERR_*`) and 2.2.0
+moved `FILTER_* → NAAD_FILTER_*`, `VOICE_* → NAAD_VOICE_*` and six bare helpers
+(`lerp`, `rms`, `peak`, `normalize`, `chromagram`, `crossfade_equal_power`) under
+`naad_`. Only the two `FILTER_*` constants reached svara. On any future bump,
+diff the used-symbol set against the new bundle before assuming a clean build.
 
 ## Deferred work (tracked)
 
@@ -128,19 +201,35 @@ VoiceOnsetTime, RenderProgress. `bayan` is opt-in (`include "lib/bayan.cyr"`, no
 `lib/hashmap.cyr` + `lib/bayan.cyr` so codecs are callable + warning-free.
 **Deferred:** container types (vec/buffer fields — ProsodyContour/PhonemeSequence/
 TrajectoryPlanner/RenderOutput/SynthesisContext/pool/BiquadBankSoa/FormantFilter/
-GlottalSource) can't derive until Cyrius gains array-typed struct fields (compiler v6.4.x).
+GlottalSource) could not derive until Cyrius gained array-typed struct fields.
 
-## Next — post-3.0.0
+✅ **That blocker is gone.** The feature landed across cyrius **6.4.11 → 6.4.13**
+in three rounds: `Vec<T>` handle fields (parse + layout + access), then `#derive`
+Serialize/Deserialize for `Vec<primitive>`, then for `Vec<#derive-struct>`. The
+6.5.35 pin carries all three. M2 is unblocked and deliberately **not** started in
+3.1.2 — it is its own milestone, and the standing rule holds: add the derive plus
+a roundtrip `.tcyr` per container type, **no hand-written codecs**.
 
-3.0.0 is shipped. All release items done: ✅ distlib (`dist/svara.cyr`, 4530 lines
-at v3.0.0), ✅ M-serde value types, ✅ benchmarks + `docs/benchmarks.md`,
-✅ quality gate (fmt/lint/docs/tests/bench), ✅ version bump + CHANGELOG/roadmap.
+## Next — post-3.1.2
 
-Follow-ups (not 3.0.0 blockers):
+3.1.2 is release-ready: ✅ toolchain + dependency catch-up, ✅ distlib regenerated
+(`dist/svara.cyr`, 4,543 lines at v3.1.2, `.deps` sidecar now 16 stdlib leaves),
+✅ full gate incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded,
+✅ CHANGELOG (3.1.2 and the retroactive 3.1.1) + this file.
 
-1. **3.1.0 — container serde** (⏳ blocked on Cyrius **6.4.x**). Do NOT start until
-   the toolchain lands array-typed struct fields; then just add `#derive(Serialize)`
-   + a roundtrip `.tcyr` to each container type (no hand-written codecs — that was
-   explicitly rejected as throwaway). See [`roadmap.md`](roadmap.md) M2.
+Open follow-ups, none of them 3.1.2 blockers:
+
+1. **M2 — container serde** (🟢 **unblocked** as of the 6.4.11–6.4.13 array-typed
+   struct-field work, carried by the 6.5.35 pin). Add `#derive(Serialize)` + a
+   roundtrip `.tcyr` to each container type. No hand-written codecs — that was
+   explicitly rejected as throwaway. See [`roadmap.md`](roadmap.md) M2.
 2. **Consumer smoke** — build dhvani / vansh against `dist/svara.cyr` end-to-end.
+   Now more valuable than before: naad 2.2.1's own release notes list
+   consumer-green (dhvani / svara) as its last open gate, and this bump is svara's
+   half of it.
 3. **Security audit** — `docs/audit/YYYY-MM-DD-audit.md` for a v1.0 hardening pass.
+4. **CI hardening (optional)** — add a *"toolchain matches the pin"* step to both
+   workflows, as hisab 2.11.2 did. svara already installs via the canonical
+   `scripts/install.sh` (so the CVE-21 checksum / CVE-13 signature verification is
+   in place); what is missing is asserting `cyrius version` equals the manifest pin
+   *before* `cyrius deps` fails two steps later with a path error.

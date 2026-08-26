@@ -5,7 +5,7 @@ description = "svara — formant and vocal synthesis (glottal source, vocal trac
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/svara"
 language = "cyrius"
-cyrius = "6.4.13"
+cyrius = "6.5.35"
 
 [build]
 entry = "src/main.cyr"
@@ -62,7 +62,7 @@ stdlib = [
 # coherent bundle in downstream consumers (dhvani / vansh) that pull both.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "2.6.7"
+tag = "2.11.2"
 modules = ["dist/hisab.cyr"]
 
 # naad — biquad / noise (NoiseGenerator) / LFO (modulation) backends consumed by
@@ -72,10 +72,10 @@ modules = ["dist/hisab.cyr"]
 # released tags naad uses, for a coherent bundle in downstream consumers.
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.1.1"
+tag = "2.2.1"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.0.0"
+tag = "2.0.4"
 modules = ["dist/goonj.cyr"]

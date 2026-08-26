@@ -272,7 +272,7 @@ fn svara_sequence_render(seq, voice, sample_rate) {
             SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
         }
         var seg = svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, sample_rate,
-        vec_get(durs, i), vec_get(nasals, i));
+          vec_get(durs, i), vec_get(nasals, i));
         if (svara_is_err(seg) == 1) { return seg; }
         vec_push(segments, seg);
         i = i + 1;
@@ -380,8 +380,8 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         var c = svara_phoneme_class(phoneme);
         var sample = 0;
         if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG) | (c == SVARA_CLASS_APPROXIMANT)
-        | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
-        | (c == SVARA_CLASS_TRILL)) {
+          | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
+          | (c == SVARA_CLASS_TRILL)) {
             sample = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
         } elif (c == SVARA_CLASS_FRICATIVE) {
             var nz = f64_mul(svara_rng_next_f32(noise), F64_HALF);
@@ -392,7 +392,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
                 sample = f64_mul(nz, SV_PH_R06);
             }
         } elif ((c == SVARA_CLASS_PLOSIVE) | (c == SVARA_CLASS_AFFRICATE)
-        | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
+          | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
             var span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
             if (span < 1) { span = 1; }
             var bf = f64_div(f64_from(s - vec_get(boundaries, idx)), f64_from(span));

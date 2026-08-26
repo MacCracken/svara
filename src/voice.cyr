@@ -253,16 +253,16 @@ fn svara_voice_apply_formant_scale(self, target) {
     if ((f64_gt(SvVoiceProfile_bandwidth_widening(self), 0) == 1) & (f64_gt(f0, f64_from(300)) == 1)) {
         var extra = f64_add(F64_ONE, f64_mul(SV_V_03, f64_div(f64_sub(f0, f64_from(300)), f64_from(500))));
         bw_scale = f64_mul(bw_scale,
-        f64_add(F64_ONE, f64_mul(SvVoiceProfile_bandwidth_widening(self), f64_sub(extra, F64_ONE))));
+          f64_add(F64_ONE, f64_mul(SvVoiceProfile_bandwidth_widening(self), f64_sub(extra, F64_ONE))));
     }
     var fs = SvVoiceProfile_formant_scale(self);
     return svara_vowel_target_with_bandwidths(
-    f64_mul(SvVowelTarget_f1(target), fs), f64_mul(SvVowelTarget_f2(target), fs),
-    f64_mul(SvVowelTarget_f3(target), fs), f64_mul(SvVowelTarget_f4(target), fs),
-    f64_mul(SvVowelTarget_f5(target), fs),
-    f64_mul(SvVowelTarget_b1(target), bw_scale), f64_mul(SvVowelTarget_b2(target), bw_scale),
-    f64_mul(SvVowelTarget_b3(target), bw_scale), f64_mul(SvVowelTarget_b4(target), bw_scale),
-    f64_mul(SvVowelTarget_b5(target), bw_scale));
+      f64_mul(SvVowelTarget_f1(target), fs), f64_mul(SvVowelTarget_f2(target), fs),
+      f64_mul(SvVowelTarget_f3(target), fs), f64_mul(SvVowelTarget_f4(target), fs),
+      f64_mul(SvVowelTarget_f5(target), fs),
+      f64_mul(SvVowelTarget_b1(target), bw_scale), f64_mul(SvVowelTarget_b2(target), bw_scale),
+      f64_mul(SvVowelTarget_b3(target), bw_scale), f64_mul(SvVowelTarget_b4(target), bw_scale),
+      f64_mul(SvVowelTarget_b5(target), bw_scale));
 }
 
 # apply_formant_scale_with_effort -- apply_formant_scale then effort bandwidth factor.
@@ -271,9 +271,9 @@ fn svara_voice_apply_formant_scale_with_effort(self, target, effort) {
     var base = svara_voice_apply_formant_scale(self, target);
     var ebw = SvEffortParams_bandwidth_scale(svara_effort_params(effort));
     return svara_vowel_target_with_bandwidths(
-    SvVowelTarget_f1(base), SvVowelTarget_f2(base), SvVowelTarget_f3(base),
-    SvVowelTarget_f4(base), SvVowelTarget_f5(base),
-    f64_mul(SvVowelTarget_b1(base), ebw), f64_mul(SvVowelTarget_b2(base), ebw),
-    f64_mul(SvVowelTarget_b3(base), ebw), f64_mul(SvVowelTarget_b4(base), ebw),
-    f64_mul(SvVowelTarget_b5(base), ebw));
+      SvVowelTarget_f1(base), SvVowelTarget_f2(base), SvVowelTarget_f3(base),
+      SvVowelTarget_f4(base), SvVowelTarget_f5(base),
+      f64_mul(SvVowelTarget_b1(base), ebw), f64_mul(SvVowelTarget_b2(base), ebw),
+      f64_mul(SvVowelTarget_b3(base), ebw), f64_mul(SvVowelTarget_b4(base), ebw),
+      f64_mul(SvVowelTarget_b5(base), ebw));
 }

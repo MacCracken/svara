@@ -54,9 +54,12 @@ fn bench(name, fp, n) {
     return 0;
 }
 
-# Per-sample ops are sub-microsecond, so per-call clock overhead (~240ns) would
-# dominate bench_run. Batch measurement wraps one clock pair around `batch` calls,
-# then averages over `rounds` batches -> honest per-sample cost.
+# Per-sample ops are sub-microsecond, so per-call clock overhead would dominate
+# bench_run. Batch measurement wraps one clock pair around `batch` calls, then
+# averages over `rounds` batches -> honest per-sample cost. The overhead is host
+# specific (a clock read spans ~15ns to ~3.5us across supported targets) -- no
+# single figure belongs in a comment; lib/bench.cyr measures it and reports it as
+# the "timer floor" line, and bench_clock_overhead_ns() returns it.
 fn bench1(name, fp, arg, batch, rounds) {
     var b = bench_new(name);
     bench_run_batch1(b, fp, arg, batch, rounds);
@@ -85,7 +88,7 @@ fn main() {
     svara_glottal_set_creaky(_creaky, F64_HALF);
 
     _formant = svara_formant_filter_new(
-    svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), _sr);
+      svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), _sr);
     _tract = svara_tract_new(_sr);
     var e = svara_tract_set_vowel(_tract, SVARA_VOWEL_A);
     if (svara_is_err(e) == 1) { return 1; }

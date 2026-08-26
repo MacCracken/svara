@@ -9,6 +9,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.1.2] - 2026-08-26 — toolchain + dependency catch-up
+
+Maintenance release. Bumps the Cyrius pin **6.4.13 → 6.5.35** (109 toolchain
+releases) and every pinned dependency to its current tag. One **breaking upstream
+rename** had to be absorbed; behaviour is otherwise unchanged. Suite **634
+assertions / 18 suites**, all green; fmt · lint · docs · fuzz · deny clean, and
+`cyrius audit` now exits 0 (see below).
+
+### Changed — toolchain
+
+- **`[package].cyrius` `6.4.13` → `6.5.35`.**
+- **`lib/` re-vendored from the 6.5.35 snapshot** — all 29 stdlib files verified
+  byte-identical to `~/.cyrius/versions/6.5.35/lib`, file by file, rather than
+  assumed. `lib/callback.cyr` is newly vendored (a stdlib leaf the refreshed
+  dependency bundles now fold in).
+- **90 lines reindented across 12 files.** cyrius **6.5.28** fixed `cyrfmt`,
+  which had never tracked parentheses: continuation lines inside an unclosed `(`
+  were indented at `brace_depth * 4` regardless of nesting. Canonical is now
+  2 spaces per open-paren level. **Whitespace only** — `git diff -w` over
+  `src/`, `tests/` and `benches/` is empty apart from the `NAAD_FILTER_*` rename
+  below.
+
+### Changed — dependencies
+
+| Dep | Was | Now | |
+|---|---|---|---|
+| hisab | 2.6.7 | **2.11.2** | FFT / compensated sum / monotone-cubic / easing |
+| naad | 2.1.1 | **2.2.1** | biquad · noise · LFO backends |
+| goonj | 2.0.0 | **2.0.4** | acoustics, referenced by the naad bundle |
+| sakshi | 2.4.2 | **2.4.11** | transitive via hisab |
+
+All four match what the bundles themselves pin — naad 2.2.1 pins hisab 2.11.2
+and goonj 2.0.4; hisab 2.11.2 pins sakshi 2.4.11 — so a downstream consumer
+(dhvani / vansh) bundling svara + naad + hisab in one flat namespace gets a
+coherent set.
+
+### Fixed — BREAKING upstream rename absorbed (`src/tract.cyr`)
+
+naad **2.2.0** renamed all eight `FILTER_*` constants to `NAAD_FILTER_*` to clear
+a flat-namespace collision with `nidhi`, which defines `FILTER_LOWPASS..NOTCH` at
+**identical values**. svara calls exactly two of them:
+
+- `FILTER_NOTCH` → `NAAD_FILTER_NOTCH` (nasal antiformant)
+- `FILTER_BANDPASS` → `NAAD_FILTER_BANDPASS` (subglottal bandpass)
+
+Values are unchanged (3 and 2), so this is a compile-time break, not a behaviour
+change — the tract suite's 14 assertions pass unchanged.
+
+⚠ **The other renames in that wave were checked and none reach svara.** The full
+set of dependency symbols svara actually references was extracted — 24 candidate
+identifiers, 17 real top-level references plus the derive-generated
+`Lfo_set_depth` accessor — and diffed against the new bundles: `ERR_* → NAAD_ERR_*`
+(2.1.3) is inert here because svara's codes are `SVARA_ERR_*`-prefixed and its one
+bare `ERR_NONE` mention is a comment; `VOICE_*`, `lerp`, `rms`, `peak`,
+`crossfade_equal_power` and the removed `white_noise_sample` / `U32_MAXF` have no
+call site. Every remaining signature — `num_fft`, `num_neumaier_sum`,
+`calc_monotone_cubic`, `ease_in_out_smooth`, the four `filter_biquad_*`, the two
+`noise_*`, the three `modulation_lfo_*` — is byte-identical across the bump.
+
+### Fixed — a stale constant in the benchmark harness
+
+`benches/hotpath.bcyr` and `docs/benchmarks.md` both stated per-call clock
+overhead as **"~240 ns on this host"**. cyrius 6.5.19 taught `lib/bench.cyr` to
+**measure** the timer floor and subtract it from every sample, and upstream
+retired the figure outright: a clock read spans ~15 ns (macOS arm64) to ~3,550 ns
+(aarch64 Linux), a 230× range that no single number in a comment can carry. The
+harness now prints its own measured floor — **1.34 µs on this host, 5.6× the
+number that was written down** — and `bench_clock_overhead_ns()` returns it. Both
+mentions now point at the function instead of quoting a value.
+
+The batch-timed figures themselves did not move (`bench_run_batch1/2` already
+wrapped one clock pair around 1000 calls), which is what makes the stale comment
+harmless in effect and worth fixing anyway.
+
+### Changed — `cyrius audit` is now the gate again
+
+3.0.0 recorded that `cyrius audit` **skipped dependency resolution** before
+compiling its test and bench legs, so both failed with spurious *"undefined
+variable F64_ONE / SYS_WRITE"* on any project whose tests need the stdlib prelude
+plus git-dep bundles — reproducible identically in naad 2.1.0, hence a toolchain
+bug rather than a svara defect. The workaround was to gate on the individual
+tools.
+
+On 6.5.35 `cyrius audit` resolves deps first (`4 deps resolved`) and **exits 0**:
+fmt clean · lint clean · docs complete · 18 suites / 634 assertions · 2 bench
+files. The per-tool commands still work as the finer-grained form; the aggregate
+is simply no longer broken.
+
+### Notes
+
+- **Benchmarks re-run, no regression.** Per-sample: glottal 82 ns, formant
+  179 ns, tract 295 ns. Renders: `/a/` 857 µs, `/s/` 458 µs, `/ai/` 921 µs,
+  3-phoneme sequence 3.36 ms. Every row is within a few percent of the 3.1.0 run
+  — the spread is host noise, not the toolchain. Recorded in
+  `benches/history.csv`; `docs/benchmarks.md` refreshed (its results table still
+  carried the pre-3.1.0 `/ai/` figure of ~5.4 ms).
+- **`dist/svara.cyr` regenerated at v3.1.2** (4,543 lines). The `.deps` sidecar
+  grew from 2 entries to 16 — `cyrius distlib` now emits the full stdlib leaf set
+  the bundle folds in, not just the opt-in `hashmap` / `bayan` pair.
+- **The 3.1.0 entry's assertion count was wrong and is corrected in place.** It
+  said 652; `src/` and `tests/` are byte-identical between the 3.1.0 tag and 3.1.1
+  and the suite measures **634** on both, so 652 was never right. `state.md`,
+  which said 634, was the one telling the truth.
+- **`docs/development/dependency-watch.md` rewritten.** It was still the pre-port
+  Rust table — hisab 1.2, naad 1.0, libm, serde, thiserror, tracing, criterion,
+  `cargo audit` / `cargo deny`, and a `codecov.yml` coverage threshold for a file
+  that does not exist in this repo. It now carries the real pins, the symbols
+  svara consumes from each, the flat-namespace rename history, and the procedure
+  for checking the next bump.
+- **M2 (container serde) is no longer blocked.** It was gated on array-typed
+  struct fields, which landed across cyrius **6.4.11–6.4.13** (`Vec<T>` handle
+  fields → `#derive` for `Vec<primitive>` → `Vec<#derive-struct>`). Deliberately
+  **not** started here — this release is a pin bump, and M2 is its own milestone.
+
+### Known — not addressed here
+
+- **`README.md` and `CONTRIBUTING.md` are still the pre-port Rust files.** They
+  survived `cyrius port` untouched: "Formant and vocal synthesis for **Rust**",
+  crates.io links for hisab / naad, a `use svara::prelude::*` example, a Cargo
+  feature-flag table, "48 phonemes" where the port ships 101, "~1,000× real-time"
+  where the measured figure is ~40×, and a quality-gate section made entirely of
+  `cargo` commands. Out of scope for a pin bump; they need their own doc sweep.
+- **`benches/history.csv` cannot be committed.** `.gitignore` carries a Rust-era
+  `*.csv` rule (almost certainly meant for coverage output), so the benchmark
+  history is untracked — which defeats the "so regressions are visible across
+  commits" purpose `docs/benchmarks.md` states for it. Left alone because
+  un-ignoring it is a call about committing a data file, not a maintenance fix.
+
+## [3.1.1] - 2026-08-26 — toolchain pin (retroactive entry)
+
+Pin-only release, tagged without a changelog section at the time; recorded here so
+the release workflow's changelog extraction has something to publish.
+
+### Changed
+
+- **`[package].cyrius` `6.4.12` → `6.4.13`.** No source, dependency or behaviour
+  change — `VERSION` and the manifest pin are the entire diff.
+
 ## [3.1.0] - 2026-07-06 — synthesis performance (control-rate glides)
 
 Performance minor. The faithful v3.0.x port re-derived formant filter coefficients
@@ -20,8 +158,10 @@ on every sample of a vowel glide; this release moves that to control rate.
   interpolated target on *every* sample; it now recomputes at a control rate of 64
   samples (~1.45 ms at 44.1 kHz — standard for formant synthesizers) and holds the
   coefficients between updates. The per-sample tract filtering is unchanged.
-  Perceptually identical (the glide target moves smoothly); the 652-assertion
-  tolerance suite passes unchanged. The diphthong path now matches a steady vowel
+  Perceptually identical (the glide target moves smoothly); the 634-assertion
+  tolerance suite passes unchanged. [*Corrected 3.1.2: this entry originally said
+  652. `src/` and `tests/` are byte-identical between the 3.1.0 tag and 3.1.1, and
+  the suite measures 634 on both, so 652 was never right.*] The diphthong path now matches a steady vowel
   (~0.86 ms) and is faster than the Rust oracle (1.09 ms), which still re-solves
   per sample.
 - **Toolchain pin 6.3.40 → 6.4.12** (current release; removes drift, aligns with

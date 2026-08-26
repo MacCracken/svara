@@ -8,7 +8,7 @@
 # (tracked in docs/development/roadmap.md).
 #
 # Requires (from the build/test unit): stdlib alloc/vec/math, hisab, goonj, naad
-# (filter_biquad_new/process_sample/set_params/reset, FILTER_NOTCH/FILTER_BANDPASS),
+# (filter_biquad_new/process_sample/set_params/reset, NAAD_FILTER_NOTCH/NAAD_FILTER_BANDPASS),
 # error.cyr, smooth.cyr, lod.cyr, formant.cyr, glottal.cyr.
 
 var SV_T_LIP_DEFAULT = 0x3FEF0A3D70A3D70A;   # 0.97 default lip radiation coeff
@@ -61,14 +61,14 @@ fn svara_tract_new(sample_rate) {
     SvVocalTract_set_nasal_coupling(self, svara_smooth_new(0, sample_rate));
     var nasal_q = f64_div(f64_from(SV_T_NASAL_FREQ_NEUTRAL), f64_from(SV_T_NASAL_BW));   # 2.5
     SvVocalTract_set_nasal_antiformant(self,
-    filter_biquad_new(FILTER_NOTCH, sample_rate, f64_from(SV_T_NASAL_FREQ_NEUTRAL), nasal_q));
+      filter_biquad_new(NAAD_FILTER_NOTCH, sample_rate, f64_from(SV_T_NASAL_FREQ_NEUTRAL), nasal_q));
     SvVocalTract_set_lip_prev(self, 0);
     SvVocalTract_set_lip_radiation(self, SV_T_LIP_DEFAULT);
     SvVocalTract_set_interaction_strength(self, SV_T_0_05);
     SvVocalTract_set_interaction_feedback(self, 0);
     SvVocalTract_set_subglottal_coupling(self, SV_T_0_05);
     var sg_q = f64_div(f64_from(600), f64_from(80));   # 7.5
-    SvVocalTract_set_subglottal_filter(self, filter_biquad_new(FILTER_BANDPASS, sample_rate, f64_from(600), sg_q));
+    SvVocalTract_set_subglottal_filter(self, filter_biquad_new(NAAD_FILTER_BANDPASS, sample_rate, f64_from(600), sg_q));
     SvVocalTract_set_gain(self, svara_smooth_new(F64_ONE, sample_rate));
     SvVocalTract_set_quality(self, SVARA_QUALITY_FULL);
     SvVocalTract_set_sample_rate(self, sample_rate);
@@ -147,7 +147,7 @@ fn svara_tract_process_sample(self, input) {
     var excitation = input;
     if (svara_quality_use_interaction(q) == 1) {
         excitation = f64_sub(input,
-        f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
+          f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
     }
 
     var formant_out = svara_formant_filter_process_sample(SvVocalTract_filter(self), excitation);

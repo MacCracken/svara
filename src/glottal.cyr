@@ -253,7 +253,7 @@ fn svara_glottal_whisper_sample(self) {
     var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, tilt)), SvGlottalSource_sample_rate(self)));
     # filtered = (1-alpha)*noise*0.15 + alpha*tilt_state
     var filtered = f64_add(f64_mul(f64_mul(f64_sub(F64_ONE, alpha), noise), SV_G_0_15),
-    f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+      f64_mul(alpha, SvGlottalSource_tilt_state(self)));
     SvGlottalSource_set_tilt_state(self, filtered);
     return filtered;
 }
@@ -266,7 +266,7 @@ fn svara_glottal_new_period(self) {
         var lfo_val = modulation_lfo_next_value(SvGlottalSource_vibrato_lfo(self));
         # 1 + depth * (lfo_val*2 - 1)
         vibrato_mod = f64_add(F64_ONE,
-        f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
+          f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
     }
     var effective_f0 = f64_mul(SvGlottalSource_f0(self), vibrato_mod);
 
@@ -321,9 +321,9 @@ fn svara_glottal_next_sample(self) {
     # spectral tilt one-pole low-pass
     if (f64_gt(SvGlottalSource_spectral_tilt(self), 0) == 1) {
         var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, SvGlottalSource_spectral_tilt(self))),
-        SvGlottalSource_sample_rate(self)));
+            SvGlottalSource_sample_rate(self)));
         var filtered = f64_add(f64_mul(f64_sub(F64_ONE, alpha), pulse),
-        f64_mul(alpha, SvGlottalSource_tilt_state(self)));
+          f64_mul(alpha, SvGlottalSource_tilt_state(self)));
         SvGlottalSource_set_tilt_state(self, filtered);
         pulse = filtered;
     } else {
@@ -338,7 +338,7 @@ fn svara_glottal_next_sample(self) {
     var breath = SvGlottalSource_breathiness(self);
     # sample = pulse*(1-breath) + noise*breath*0.3*gate
     var sample = f64_add(f64_mul(pulse, f64_sub(F64_ONE, breath)),
-    f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
+      f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
 
     var phase = f64_add(SvGlottalSource_phase(self), F64_ONE);
     if (f64_ge(phase, SvGlottalSource_current_period(self)) == 1) {

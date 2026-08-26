@@ -211,7 +211,7 @@ fn svara_spectral_analyze(samples, sample_rate) {
         var re = 0;
         if (i < len) {
             var window = f64_mul(F64_HALF,
-            f64_sub(F64_ONE, f64_cos(f64_div(f64_mul(F64_TAU, f64_from(i)), n))));
+              f64_sub(F64_ONE, f64_cos(f64_div(f64_mul(F64_TAU, f64_from(i)), n))));
             re = f64_mul(vec_get(samples, i), window);
         }
         store64(data + i * 16, re);

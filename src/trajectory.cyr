@@ -52,20 +52,20 @@ fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     # leading keypoint at time 0
     var p0 = vec_get(phonemes, 0);
     vec_push(kps, svara_keypoint_new(0, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(p0)),
-    svara_phoneme_coarticulation_resistance(p0)));
+        svara_phoneme_coarticulation_resistance(p0)));
     # midpoint keypoint per phoneme
     i = 0;
     while (i < np) {
         var ph = vec_get(phonemes, i);
         var mid = (vec_get(boundaries, i) + vec_get(boundaries, i + 1)) / 2;
         vec_push(kps, svara_keypoint_new(mid, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(ph)),
-        svara_phoneme_coarticulation_resistance(ph)));
+            svara_phoneme_coarticulation_resistance(ph)));
         i = i + 1;
     }
     # trailing keypoint at end
     var pl = vec_get(phonemes, np - 1);
     vec_push(kps, svara_keypoint_new(total, svara_voice_apply_formant_scale(voice, svara_phoneme_formants(pl)),
-    svara_phoneme_coarticulation_resistance(pl)));
+        svara_phoneme_coarticulation_resistance(pl)));
 
     SvTrajectoryPlanner_set_keypoints(self, kps);
     SvTrajectoryPlanner_set_total_samples(self, total);
@@ -116,16 +116,16 @@ fn svara_traj_cr(a, b, c, d, t) {
 #must_use
 fn svara_catmull_rom_vowel(p0, p1, p2, p3, t) {
     return svara_vowel_target_with_bandwidths(
-    svara_traj_cr(SvVowelTarget_f1(p0), SvVowelTarget_f1(p1), SvVowelTarget_f1(p2), SvVowelTarget_f1(p3), t),
-    svara_traj_cr(SvVowelTarget_f2(p0), SvVowelTarget_f2(p1), SvVowelTarget_f2(p2), SvVowelTarget_f2(p3), t),
-    svara_traj_cr(SvVowelTarget_f3(p0), SvVowelTarget_f3(p1), SvVowelTarget_f3(p2), SvVowelTarget_f3(p3), t),
-    svara_traj_cr(SvVowelTarget_f4(p0), SvVowelTarget_f4(p1), SvVowelTarget_f4(p2), SvVowelTarget_f4(p3), t),
-    svara_traj_cr(SvVowelTarget_f5(p0), SvVowelTarget_f5(p1), SvVowelTarget_f5(p2), SvVowelTarget_f5(p3), t),
-    svara_traj_cr(SvVowelTarget_b1(p0), SvVowelTarget_b1(p1), SvVowelTarget_b1(p2), SvVowelTarget_b1(p3), t),
-    svara_traj_cr(SvVowelTarget_b2(p0), SvVowelTarget_b2(p1), SvVowelTarget_b2(p2), SvVowelTarget_b2(p3), t),
-    svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1), SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t),
-    svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1), SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t),
-    svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1), SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
+      svara_traj_cr(SvVowelTarget_f1(p0), SvVowelTarget_f1(p1), SvVowelTarget_f1(p2), SvVowelTarget_f1(p3), t),
+      svara_traj_cr(SvVowelTarget_f2(p0), SvVowelTarget_f2(p1), SvVowelTarget_f2(p2), SvVowelTarget_f2(p3), t),
+      svara_traj_cr(SvVowelTarget_f3(p0), SvVowelTarget_f3(p1), SvVowelTarget_f3(p2), SvVowelTarget_f3(p3), t),
+      svara_traj_cr(SvVowelTarget_f4(p0), SvVowelTarget_f4(p1), SvVowelTarget_f4(p2), SvVowelTarget_f4(p3), t),
+      svara_traj_cr(SvVowelTarget_f5(p0), SvVowelTarget_f5(p1), SvVowelTarget_f5(p2), SvVowelTarget_f5(p3), t),
+      svara_traj_cr(SvVowelTarget_b1(p0), SvVowelTarget_b1(p1), SvVowelTarget_b1(p2), SvVowelTarget_b1(p3), t),
+      svara_traj_cr(SvVowelTarget_b2(p0), SvVowelTarget_b2(p1), SvVowelTarget_b2(p2), SvVowelTarget_b2(p3), t),
+      svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1), SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t),
+      svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1), SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t),
+      svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1), SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
 }
 
 # formants_at -- interpolated VowelTarget at a sample position.
@@ -158,7 +158,7 @@ fn svara_trajectory_formants_at(self, sample) {
         if (f64_gt(catmull_weight, 0.05) == 1) {
             var linear = svara_vowel_target_interpolate(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1), t);
             var catmull = svara_catmull_rom_vowel(SvFormantKeypoint_target(km1), SvFormantKeypoint_target(k0),
-            SvFormantKeypoint_target(k1), SvFormantKeypoint_target(k2), t);
+              SvFormantKeypoint_target(k1), SvFormantKeypoint_target(k2), t);
             return svara_vowel_target_interpolate(linear, catmull, catmull_weight);
         }
     }
