@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.5.1** (2026-08-26) — **the five oracle test gaps.** `tests/oracle.tcyr`,
+69 assertions, every expected value re-derived from `rust-old/` and cited by
+line. ⭐ **`svara_tract_set_quality` appeared in no suite or bench**, so every
+quality-conditional branch ran Full-only under test. Also closed: jitter/shimmer
+non-periodicity, `set_breathiness`, spectral energy at F1 on *synthesized*
+speech, and seven bridge maps tested on neither side. **No defects found.**
+Separately: **`cyrius audit` prints `scope: src` and never lints `tests/` or
+`benches/`** — a new suite had five >120-char lines and audit still said clean.
+CI lints them now.
+
 **3.5.0** (2026-08-26) — **the redundant input delay line.** All eight biquads
 in the formant bank are driven by the same input, so `x1`/`x2` held identical
 values in every slot — 16 bytes of state doing the work of 2, and 32 memory ops
@@ -236,13 +246,23 @@ All green on the 6.5.35 pin:
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 21/21 suites, 840 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 909 assertions |
+| **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | ⚠ NOT covered by `cyrius audit`, whose scope is `src` |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
 | **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
-| **aggregate** | **`cyrius audit`** | **exits 0** |
+| **aggregate** | **`cyrius audit`** | **exits 0** — but see below |
+
+
+⚠ **`cyrius audit` exiting 0 is necessary, not sufficient — twice over.**
+It prints `scope: src`, so its fmt / lint / docs legs never touch `tests/` or
+`benches/`; a suite with five >120-char lines passed it clean (found 3.5.1). And
+`cyrius test` does not forward `-D`, so its tests leg only ever compiles the
+logging-OFF half (found 3.4.0). CI closes both — a tests/benches lint step and
+`scripts/check-logging.sh`. **What the aggregate covers is worth re-checking
+rather than assumed.**
 
 **`cyrius audit` works again as of this pin.** Through 3.1.1 it skipped
 dependency resolution before compiling its test and bench legs, so both failed

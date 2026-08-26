@@ -74,6 +74,25 @@ jobs:
       - name: Dependency policy
         run: cyrius deny src/main.cyr
 
+      - name: Lint tests and benches
+        # `cyrius audit` prints `scope: src` — its fmt/lint/docs legs cover
+        # src/ ONLY. tests/*.tcyr and benches/*.bcyr are compiled by the tests
+        # leg but never linted, so an over-long line or an untracked deferral in
+        # a test file passed the whole gate. Found in 3.5.1, when a new suite
+        # had five >120-char lines and `cyrius audit` still reported lint clean.
+        run: |
+          set -e
+          fail=0
+          for f in tests/*.tcyr tests/*.bcyr tests/*.fcyr benches/*.bcyr; do
+              [ -f "$f" ] || continue
+              cyrfmt --check "$f" || fail=1
+              out="$(cyrlint "$f" 2>&1)"
+              echo "$out" | grep -qE '^0 warnings' || { echo "$out"; fail=1; }
+              echo "$out" | grep -qE '^0 untracked deferrals' || { echo "$out"; fail=1; }
+          done
+          [ "$fail" -eq 0 ] || { echo "tests/benches failed fmt or lint"; exit 1; }
+          echo "tests and benches: fmt + lint clean"
+
       - name: Logging gate — builds and passes with AND without -D LOGGING
         # `cyrius test` does not forward `-D`, so `cyrius audit` above only ever
         # compiles the logging-OFF half. Without this step the entire

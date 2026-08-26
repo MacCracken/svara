@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.5.1] - 2026-08-26 — the five scenarios the Rust asserted and the port did not
+
+**Test-only; no source change.** An audit of `rust-old/`'s 213 tests against the
+port's suites found five behaviours the Rust asserted and Cyrius asserted
+nowhere. They are closed now, **while the oracle is still readable** — after
+`rust-old/` goes (roadmap 3.6.0) the expectations could only be transcribed from
+svara's own output, which would freeze any existing bug in as "correct". That is
+naad 2.2.1's lesson, learned there while closing 182 untested public functions.
+
+**No defects found.** 69 new assertions, all green on the first run. That is the
+useful result, not a disappointing one: code that had never been exercised now
+has evidence behind it.
+
+Suite **840 → 909 assertions** across 22 suites.
+
+### Added — `tests/oracle.tcyr`
+
+Every expected value is **re-derived from the Rust source and cited by line**,
+never taken from running svara.
+
+| Gap | Why it mattered | Oracle |
+|---|---|---|
+| **Quality levels** | ⭐ `svara_tract_set_quality` appeared in **no suite or bench**. Every quality-conditional branch in `svara_tract_process_sample` ran Full-only under test — an entire feature with no evidence behind it. | `integration.rs:593-645` |
+| **Jitter / shimmer** | The glottal suite sets both to **0** to keep its goldens deterministic, so nothing asserted that non-zero perturbation perturbs. | `integration.rs:111-138` |
+| **Breathiness** | `svara_glottal_set_breathiness` was referenced in no suite at all. | `glottal.rs:609-615` |
+| **Spectral energy at F1** | `tests/spectral.tcyr` analyses synthetic sines only. Nothing fed **synthesized speech** to the analyzer, so the one cross-module acoustic check was absent. | `integration.rs:40-63` |
+| **Seven bridge maps** | `vibrato_depth_from_valence`, `intonation_from_emotion`, `f0_range_scale_from_arousal`, `f0_peak_from_prominence`, `jitter_from_age`, `spectral_tilt_from_distance`, `lombard_f0_shift` — tested on **neither** side of the port. | `bridge.rs`, per-function |
+
+The Goertzel estimator is ported from the Rust test helper
+(`integration.rs:655-677`) rather than reimplemented, so the acoustic check uses
+the oracle's own estimator instead of a different one that might disagree.
+
+Each group carries a control that would fail if the assertion were vacuous: two
+**Full** tracts must agree *exactly* (or "Full ≠ Minimal" would pass for any two
+independently-driven tracts); with jitter and shimmer **off** the same periods
+must differ far less; the Goertzel estimator must read **0** on silence; and
+`jitter_from_age` must be U-shaped in both directions around its minimum.
+
+### Fixed — `cyrius audit` does not lint tests or benches
+
+⭐ **`cyrius audit` prints `scope: src`.** Its fmt, lint and docs legs cover
+`src/` only — `tests/*.tcyr` and `benches/*.bcyr` are *compiled* by the tests leg
+but never linted. So an over-long line or an untracked deferral in a test file
+passed the entire gate.
+
+Found the honest way: the new suite had **five lines over 120 characters** and
+`cyrius audit` still reported *lint clean*. CI now lints `tests/` and `benches/`
+explicitly — `cyrfmt --check`, zero warnings, and zero untracked deferrals.
+
+This is the second gap of its kind in three releases: 3.4.0 found that
+`cyrius test` does not forward `-D`, so audit only ever compiled the logging-OFF
+half. **`cyrius audit` exiting 0 is necessary, not sufficient**; what it covers
+is worth re-checking rather than assumed.
+
+- `dist/svara.cyr` regenerated at v3.5.1.
+
 ## [3.5.0] - 2026-08-26 — the redundant delay line, and a roadmap premise that was wrong
 
 **M-perf, the bit-identical half.** The formant bank kept its input delay in

@@ -20,6 +20,7 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.5.1** | 2026-08-26 | **Five oracle test gaps closed** (`tests/oracle.tcyr`, 69 assertions, no defects found) — quality levels had **no** suite or bench at all. Also found that `cyrius audit` prints `scope: src` and never lints tests or benches; CI does now. |
 | **3.5.0** | 2026-08-26 | **Redundant input delay line collapsed.** The bank's eight per-slot `x1`/`x2` buffers all held the same two values — verified by 28,672 cross-slot comparisons before changing anything. Now two scalars: −6.0% formant `process_sample`, −4.2% `process_block`, bit-identical. A `#inline` experiment was measured, rejected and recorded. |
 | **3.4.0** | 2026-08-26 | **Structured logging (M-log).** sakshi tracing behind `-D LOGGING`, off by default and compiled out when off; four coarse entry points, never per-sample. Spans are token-based because every entry point has early returns. `scripts/check-logging.sh` builds and runs both ways — `cyrius test` does not forward `-D`, so `cyrius audit` only ever compiled the OFF half. |
 | **3.3.2** | 2026-08-26 | **Glottal restore is exact.** 3.3.0 documented a limitation that was not real — naad derives accessors on `NoiseGenerator` and `Lfo`, so their state was reachable all along. `SvGlottalState` now carries it; the test flipped from asserting divergence to asserting identity. Lesson recorded in ADR-0002: a foreign type lacks a **codec**, not accessors. |
@@ -163,23 +164,27 @@ have frozen an existing bug in as correct.
 
 ### Close the test gaps while the oracle is readable
 
-Five Rust-asserted scenarios are asserted nowhere in Cyrius. Re-derive
-expectations **from `rust-old/`**, not from svara's own output — that is naad
-2.2.1's method, and the reason for it.
+✅ **Done 3.5.1** — `tests/oracle.tcyr`, 69 assertions, every expected value
+re-derived from the Rust and cited by line. **No defects found**, which is the
+point: code that had never been exercised now has evidence behind it. All five
+below are closed; they are kept here as the record of what was missing and why.
 
-- [ ] **Quality levels are never exercised.** `svara_tract_set_quality` appears in
+Re-derive expectations **from `rust-old/`**, not from svara's own output — that
+is naad 2.2.1's method, and the reason for it.
+
+- [x] **Quality levels are never exercised.** `svara_tract_set_quality` appears in
       no suite and no bench; `tests/lod.tcyr` covers only the predicates and
       `tests/tract.tcyr` only asserts the default is Full. Every quality-conditional
       branch in `svara_tract_process_sample` runs Full-only under test. Rust
       asserted finite non-silent output at Full/Reduced/Minimal and Minimal ≠ Full.
-- [ ] **Non-zero jitter/shimmer is never asserted to perturb.** The glottal suite
+- [x] **Non-zero jitter/shimmer is never asserted to perturb.** The glottal suite
       sets both to 0 to keep goldens deterministic.
-- [ ] **`svara_glottal_set_breathiness` is referenced in no suite.**
-- [ ] **No test feeds synthesized speech into the analyzer.** `tests/spectral.tcyr`
+- [x] **`svara_glottal_set_breathiness` is referenced in no suite.**
+- [x] **No test feeds synthesized speech into the analyzer.** `tests/spectral.tcyr`
       analyses synthetic sines only; Rust checked that a male /a/ has more energy
       at F1 (768 Hz) than at 200 Hz — the one cross-module acoustic-correctness
       check.
-- [ ] **Seven `bridge` maps are tested on neither side** —
+- [x] **Seven `bridge` maps are tested on neither side** —
       `vibrato_depth_from_valence`, `intonation_from_emotion`,
       `f0_range_scale_from_arousal`, `f0_peak_from_prominence`, `jitter_from_age`,
       `spectral_tilt_from_distance`, `lombard_f0_shift`. Not a port regression;

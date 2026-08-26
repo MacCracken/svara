@@ -1,0 +1,320 @@
+# oracle.tcyr -- scenarios the Rust asserted that the Cyrius port did not.
+#
+# Found by an audit of `rust-old/`'s 213 tests against the port's suites, as the
+# pre-removal gate in docs/development/roadmap.md 3.6.0: these must be closed
+# WHILE the oracle is still readable, because after deletion the expectations
+# could only be transcribed from svara's own output -- which would freeze any
+# existing bug in as "correct". That is naad 2.2.1's lesson, learned there the
+# hard way while closing 182 untested public functions.
+#
+# ⚠ EVERY expected value below is re-derived from the Rust source, cited by
+# line, and NOT taken from running svara. Where the Rust asserted a relation
+# (finite, non-silent, differs) rather than a number, the relation is asserted.
+#
+# The five gaps, and why each mattered:
+#   1. Quality levels    -- `svara_tract_set_quality` appeared in NO suite or
+#                           bench, so every quality-conditional branch in
+#                           svara_tract_process_sample ran Full-only under test.
+#   2. Jitter / shimmer  -- the glottal suite sets both to 0 to keep its goldens
+#                           deterministic, so nothing asserted that non-zero
+#                           perturbation perturbs.
+#   3. Breathiness       -- svara_glottal_set_breathiness was in no suite at all.
+#   4. Spectral energy   -- tests/spectral.tcyr analyses synthetic sines only;
+#                           nothing fed SYNTHESIZED SPEECH to the analyzer, so
+#                           the one cross-module acoustic check was absent.
+#   5. Seven bridge maps -- tested on neither side of the port.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/bridge.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3
+
+#must_use
+fn or_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
+
+# Goertzel magnitude at `target_freq`, ported from the Rust test helper
+# (rust-old/tests/integration.rs:655-677) so the acoustic check below uses the
+# oracle's own estimator rather than a different one that might disagree.
+#   k     = (0.5 + n*f/sr) truncated      omega = 2*pi*k/n      coeff = 2*cos(omega)
+#   s0    = sample + coeff*s1 - s2        (s2 <- s1, s1 <- s0 each step)
+#   power = s0^2 + s1^2 - coeff*s0*s1     -> sqrt(|power|)/n
+#must_use
+fn or_goertzel(buf, n, target_freq, sample_rate) {
+    if (n == 0) { return 0; }
+    var k = svara_count_from_f64(f64_add(F64_HALF,
+        f64_div(f64_mul(f64_from(n), target_freq), sample_rate)));
+    var omega = f64_div(f64_mul(F64_TAU, f64_from(k)), f64_from(n));
+    var coeff = f64_mul(F64_TWO, f64_cos(omega));
+    var s0 = 0;
+    var s1 = 0;
+    var i = 0;
+    while (i < n) {
+        var s2 = s1;
+        s1 = s0;
+        s0 = f64_sub(f64_add(vec_get(buf, i), f64_mul(coeff, s1)), s2);
+        i = i + 1;
+    }
+    var power = f64_sub(f64_add(f64_mul(s0, s0), f64_mul(s1, s1)), f64_mul(f64_mul(coeff, s0), s1));
+    return f64_div(f64_sqrt(f64_abs(power)), f64_from(n));
+}
+
+# sum of |a[i] - b[i]| over n slots of two raw f64 buffers
+#must_use
+fn or_bufdiff(a, b, n) {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        acc = f64_add(acc, f64_abs(f64_sub(load64(a + i * 8), load64(b + i * 8))));
+        i = i + 1;
+    }
+    return acc;
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+
+    # ================================================================
+    test_group("GAP 1: every Quality level synthesizes");
+    # ================================================================
+    # rust-old/tests/integration.rs:593-616 -- for Full, Reduced and Minimal:
+    # 1024 samples must all be finite, and at least one must exceed 1e-6.
+    # Until now nothing exercised Reduced or Minimal at all.
+    var qi = 0;
+    var q_checked = 0;
+    while (qi < 3) {
+        var tr = svara_tract_new(SR);
+        assert_eq(svara_is_err(tr), 0, "control: tract constructs");
+        var ve = svara_tract_set_vowel(tr, SVARA_VOWEL_A);
+        assert_eq(ve, SVARA_ERR_NONE, "control: vowel set");
+        svara_tract_set_quality(tr, qi);
+        var gq = svara_glottal_new(f64_from(120), SR);
+        var bufq = svara_tract_synthesize(tr, gq, 1024);
+        assert_eq(bufq != 0, 1, "quality level synthesizes a buffer");
+        var fin = 1;
+        var loud = 0;
+        var si = 0;
+        while (si < 1024) {
+            var v = load64(bufq + si * 8);
+            if (svara_is_finite(v) == 0) { fin = 0; }
+            if (f64_gt(f64_abs(v), TOL_1EM6) == 1) { loud = 1; }
+            si = si + 1;
+        }
+        assert_eq(fin, 1, "all 1024 samples finite at this quality");
+        assert_eq(loud, 1, "and the output is not silence at this quality");
+        q_checked = q_checked + 1;
+        qi = qi + 1;
+    }
+    assert_eq(q_checked, 3, "control: all three quality levels were exercised");
+
+    # rust-old/tests/integration.rs:617-645 -- Full and Minimal must DIFFER,
+    # sum of |difference| over 512 samples > 0.001, because Minimal skips the
+    # subglottal and interaction stages.
+    var tf = svara_tract_new(SR);
+    var tfe = svara_tract_set_vowel(tf, SVARA_VOWEL_A);
+    assert_eq(tfe, SVARA_ERR_NONE, "control: full tract configured");
+    svara_tract_set_quality(tf, SVARA_QUALITY_FULL);
+    var tm = svara_tract_new(SR);
+    var tme = svara_tract_set_vowel(tm, SVARA_VOWEL_A);
+    assert_eq(tme, SVARA_ERR_NONE, "control: minimal tract configured");
+    svara_tract_set_quality(tm, SVARA_QUALITY_MINIMAL);
+    var g1 = svara_glottal_new(f64_from(120), SR);
+    var g2 = svara_glottal_new(f64_from(120), SR);
+    var bf = svara_tract_synthesize(tf, g1, 512);
+    var bm = svara_tract_synthesize(tm, g2, 512);
+    assert_eq(f64_gt(or_bufdiff(bf, bm, 512), TOL_1EM3), 1,
+      "Full and Minimal produce different output -- the stages really are skipped");
+    # CONTROL: two tracts at the SAME quality must agree, or the check above
+    # would pass for any two independently-driven tracts.
+    var tf2 = svara_tract_new(SR);
+    var tf2e = svara_tract_set_vowel(tf2, SVARA_VOWEL_A);
+    assert_eq(tf2e, SVARA_ERR_NONE, "control: second full tract configured");
+    svara_tract_set_quality(tf2, SVARA_QUALITY_FULL);
+    var g3 = svara_glottal_new(f64_from(120), SR);
+    var tf3 = svara_tract_new(SR);
+    var tf3e = svara_tract_set_vowel(tf3, SVARA_VOWEL_A);
+    assert_eq(tf3e, SVARA_ERR_NONE, "control: third full tract configured");
+    svara_tract_set_quality(tf3, SVARA_QUALITY_FULL);
+    var g4 = svara_glottal_new(f64_from(120), SR);
+    var b3 = svara_tract_synthesize(tf2, g3, 512);
+    var b4 = svara_tract_synthesize(tf3, g4, 512);
+    assert_eq(or_bufdiff(b3, b4, 512), 0, "control: two Full tracts agree exactly");
+
+    # ================================================================
+    test_group("GAP 2: jitter and shimmer make periods differ");
+    # ================================================================
+    # rust-old/tests/integration.rs:111-138 -- jitter 0.02, shimmer 0.04 over
+    # 44100 samples; consecutive periods (44100/120 = 367 samples) must differ by
+    # a summed |difference| > 0.001, and every sample must be finite.
+    var gj = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_jitter(gj, 0.02);
+    svara_glottal_set_shimmer(gj, 0.04);
+    var jn = 44100;
+    var jbuf = svara_alloc_samples(jn);
+    assert_eq(jbuf != 0, 1, "control: the sample buffer allocated");
+    var jfin = 1;
+    var ji = 0;
+    while (ji < jn) {
+        var jv = svara_glottal_next_sample(gj);
+        if (svara_is_finite(jv) == 0) { jfin = 0; }
+        store64(jbuf + ji * 8, jv);
+        ji = ji + 1;
+    }
+    assert_eq(jfin, 1, "44100 samples with jitter+shimmer are all finite");
+    var period = 367;   # (44100 / 120) truncated, as the Rust computes it
+    var pdiff = or_bufdiff(jbuf, jbuf + period * 8, period);
+    assert_eq(f64_gt(pdiff, TOL_1EM3), 1,
+      "consecutive periods DIFFER with jitter+shimmer on");
+    # CONTROL: with both at zero the same comparison must find near-nothing, or
+    # the assertion above would pass on any two chunks of a varying signal.
+    var gz = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_jitter(gz, 0);
+    svara_glottal_set_shimmer(gz, 0);
+    var zbuf = svara_alloc_samples(period * 2);
+    var zi = 0;
+    while (zi < period * 2) { store64(zbuf + zi * 8, svara_glottal_next_sample(gz)); zi = zi + 1; }
+    var zdiff = or_bufdiff(zbuf, zbuf + period * 8, period);
+    assert_eq(f64_lt(zdiff, pdiff), 1,
+      "control: with jitter+shimmer OFF the same periods differ far less");
+
+    # ================================================================
+    test_group("GAP 3: full breathiness stays finite");
+    # ================================================================
+    # rust-old/src/glottal.rs:609-615 -- set_breathiness(1.0), 1024 samples,
+    # all finite. svara_glottal_set_breathiness was referenced in no suite.
+    var gb = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_breathiness(gb, F64_ONE);
+    assert_eq(or_approx(SvGlottalSource_breathiness(gb), F64_ONE, TOL_1EM6), 1,
+      "control: breathiness really is 1.0");
+    var bfin = 1;
+    var bloud = 0;
+    var bi = 0;
+    while (bi < 1024) {
+        var bv = svara_glottal_next_sample(gb);
+        if (svara_is_finite(bv) == 0) { bfin = 0; }
+        if (f64_gt(f64_abs(bv), TOL_1EM6) == 1) { bloud = 1; }
+        bi = bi + 1;
+    }
+    assert_eq(bfin, 1, "1024 samples at full breathiness are all finite");
+    assert_eq(bloud, 1, "control: and they are not silence");
+
+    # ================================================================
+    test_group("GAP 4: synthesized speech has energy at F1");
+    # ================================================================
+    # rust-old/tests/integration.rs:40-63 -- the one cross-module acoustic check.
+    # A male /a/ should carry energy at F1 (768 Hz, Hillenbrand et al. 1995) that
+    # is substantial relative to 200 Hz, well below F1.
+    var speech = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, F64_HALF);
+    assert_eq(svara_is_err(speech), 0, "control: /a/ synthesizes");
+    var sn = vec_len(speech);
+    assert_eq(sn > 0, 1, "control: it produced samples");
+    var e_f1 = or_goertzel(speech, sn, f64_from(768), SR);
+    var e_low = or_goertzel(speech, sn, f64_from(200), SR);
+    assert_eq(f64_gt(e_f1, 0), 1, "there is energy at F1 (768 Hz)");
+    assert_eq(f64_gt(e_f1, f64_mul(e_low, 0.1)), 1,
+      "F1 energy is substantial relative to 200 Hz");
+    # CONTROL: the estimator discriminates -- silence must read as no energy.
+    var quiet = vec_new();
+    var qq = 0;
+    while (qq < 1024) { vec_push(quiet, 0); qq = qq + 1; }
+    assert_eq(or_goertzel(quiet, 1024, f64_from(768), SR), 0,
+      "control: the Goertzel estimator reads 0 on silence");
+
+    # ================================================================
+    test_group("GAP 5: the seven bridge maps neither side tested");
+    # ================================================================
+    # Every expected value below is computed from the Rust formula by hand.
+
+    # vibrato_depth_from_valence (rust-old/src/bridge.rs:44-48)
+    #   clamp(0.03 + 0.03*clamp(v,-1,1), 0, 0.06)
+    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(0), 0.03, TOL_1EM6), 1,
+      "valence 0 -> 0.03");
+    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(F64_ONE), 0.06, TOL_1EM6), 1,
+      "valence +1 -> 0.06");
+    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_neg(F64_ONE)), 0, TOL_1EM6), 1,
+      "valence -1 -> 0.0");
+    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_from(5)), 0.06, TOL_1EM6), 1,
+      "valence clamps high");
+    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_from(0 - 5)), 0, TOL_1EM6), 1,
+      "valence clamps low");
+
+    # intonation_from_emotion (rust-old/src/bridge.rs:86-95); None -> -1 here
+    assert_eq(svara_bridge_intonation_from_emotion(0), SVARA_INTONATION_DECLARATIVE, "cat 0 -> declarative");
+    assert_eq(svara_bridge_intonation_from_emotion(1), SVARA_INTONATION_EXCLAMATORY, "cat 1 -> exclamatory");
+    assert_eq(svara_bridge_intonation_from_emotion(2), SVARA_INTONATION_DECLARATIVE, "cat 2 -> declarative");
+    assert_eq(svara_bridge_intonation_from_emotion(3), SVARA_INTONATION_EXCLAMATORY,
+      "cat 3 -> exclamatory (shares 1)");
+    assert_eq(svara_bridge_intonation_from_emotion(4), SVARA_INTONATION_INTERROGATIVE, "cat 4 -> interrogative");
+    assert_eq(svara_bridge_intonation_from_emotion(5), SVARA_INTONATION_CONTINUATION, "cat 5 -> continuation");
+    assert_eq(svara_bridge_intonation_from_emotion(6), 0 - 1, "cat 6 -> none (Rust None)");
+    assert_eq(svara_bridge_intonation_from_emotion(255), 0 - 1, "cat 255 -> none");
+
+    # f0_range_scale_from_arousal (rust-old/src/bridge.rs:103-107): 0.6 + 1.2*a
+    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(0), 0.6, TOL_1EM6), 1, "arousal 0 -> 0.6");
+    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(F64_ONE), 1.8, TOL_1EM6), 1, "arousal 1 -> 1.8");
+    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(F64_HALF), 1.2, TOL_1EM6), 1,
+      "arousal 0.5 -> 1.2");
+    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(f64_neg(F64_ONE)), 0.6, TOL_1EM6), 1,
+      "arousal clamps low");
+
+    # f0_peak_from_prominence (rust-old/src/bridge.rs:147-150): 1.0 + 0.3*p
+    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(0), F64_ONE, TOL_1EM6), 1, "prominence 0 -> 1.0");
+    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(F64_ONE), 1.3, TOL_1EM6), 1, "prominence 1 -> 1.3");
+    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(F64_HALF), 1.15, TOL_1EM6), 1,
+      "prominence 0.5 -> 1.15");
+
+    # jitter_from_age (rust-old/src/bridge.rs:185-190): 0.005 + 0.035*|a-0.4|/0.6
+    # U-shaped with its minimum at 0.4, so both ends must exceed the middle.
+    assert_eq(or_approx(svara_bridge_jitter_from_age(0.4), 0.005, TOL_1EM6), 1, "age 0.4 -> 0.005 (the minimum)");
+    assert_eq(or_approx(svara_bridge_jitter_from_age(0), 0.0283333333, TOL_1EM6), 1,
+      "age 0 -> 0.005+0.035*0.4/0.6");
+    assert_eq(or_approx(svara_bridge_jitter_from_age(F64_ONE), 0.04, TOL_1EM6), 1, "age 1 -> 0.04");
+    assert_eq(or_approx(svara_bridge_jitter_from_age(0.7), 0.0225, TOL_1EM6), 1, "age 0.7 -> 0.0225");
+    assert_eq(f64_gt(svara_bridge_jitter_from_age(0), svara_bridge_jitter_from_age(0.4)), 1,
+      "control: the curve really is U-shaped (young > prime)");
+    assert_eq(f64_gt(svara_bridge_jitter_from_age(F64_ONE), svara_bridge_jitter_from_age(0.4)), 1,
+      "control: and old > prime");
+
+    # spectral_tilt_from_distance (rust-old/src/bridge.rs:249-253): min(d*0.005, 6)
+    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(0), 0, TOL_1EM6), 1, "0 m -> 0");
+    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(100)), F64_HALF, TOL_1EM6), 1,
+      "100 m -> 0.5");
+    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(1200)), f64_from(6), TOL_1EM6), 1,
+      "1200 m -> 6.0 (exactly at the cap)");
+    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(50000)), f64_from(6), TOL_1EM6), 1,
+      "50 km -> capped at 6.0");
+
+    # lombard_f0_shift (rust-old/src/bridge.rs:285-290): min(max(db-50,0)*0.75, 30)
+    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(50)), 0, TOL_1EM6), 1, "50 dB -> 0 (threshold)");
+    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(40)), 0, TOL_1EM6), 1, "40 dB -> 0 (below threshold)");
+    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(70)), f64_from(15), TOL_1EM6), 1,
+      "70 dB -> 15 Hz");
+    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(90)), f64_from(30), TOL_1EM6), 1,
+      "90 dB -> 30 Hz (exactly at the cap)");
+    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(1000)), f64_from(30), TOL_1EM6), 1,
+      "1000 dB -> capped");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);
