@@ -20,6 +20,8 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.3.2** | 2026-08-26 | **Glottal restore is exact.** 3.3.0 documented a limitation that was not real — naad derives accessors on `NoiseGenerator` and `Lfo`, so their state was reachable all along. `SvGlottalState` now carries it; the test flipped from asserting divergence to asserting identity. Lesson recorded in ADR-0002: a foreign type lacks a **codec**, not accessors. |
+| **3.3.1** | 2026-08-26 | **Docs, CI, stale claims.** CI ran four steps and none of the gate it documents; it now runs `cyrius audit` + fuzz + deny, asserts the toolchain matches the pin, and checks `dist/` is current. Four Rust-era docs rewritten (incl. the threat model, which asserted mitigations 3.1.3 disproved); four pre-port ADRs re-homed as 0003–0006; `.gitignore` stopped hiding `benches/history.csv`. |
 | **3.3.0** | 2026-08-26 | **State companions.** The nine engine types ADR-0002 excluded from direct derive each got a flat companion + `save`/`restore`. Derived types 13 → 22, suite 745 → 826. Restore is measured behaviourally, and its two limits (naad's internal state; filter delay lines) are pinned by tests that assert the divergence exists. |
 | **3.1.3** | 2026-08-26 | **P1 audit sweep.** Five defects reachable through the public API — a SIGSEGV, three process aborts, a silent NaN — plus a constructor returning an error code as a pointer and an infinite loop. Per-sample arena use in `render_planned` **1,121 → 33 B** (34×) untoned, **1,505 → 113 B** (13×) toned. Output bit-for-bit identical. 713 assertions / 20 suites. [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). |
 
@@ -31,163 +33,6 @@ round-trip coverage (`tests/serde.tcyr`, 22 tests): `Formant`, `VowelTarget`,
 `VoiceOnsetTime`, `RenderProgress`. The static data tables stayed as embedded
 pure functions — a synth library shouldn't carry a runtime data file, and they
 were never serde in the Rust either. Container types are [3.2.0](#320--container-serde).
-
----
-
-## 3.1.4 — documentation, CI, and stale-claim sweep
-
-**No source change; patch release.** Everything here is unblocked and cheap. The
-common thread is that `cyrlint`'s "0 untracked deferrals" is accurate and nearly
-meaningless as a completeness signal: it scans **only `.cyr` sources**, matches
-twelve literal terms (`NOT_IMPLEMENTED`, `SCAFFOLD`, `TODO`, `FIXME`, `XXX`,
-`deferred`, `follow-up`, `for now`, `not yet`, `later bite`, `future bite`,
-`out of scope`), and counts one "tracked" if the *same line* also contains
-`CHANGELOG`, `roadmap`, `docs/`, `issue`, `See `, `v6.` or `v5.` — a substring
-test, not a check that the roadmap says anything. Markdown is never linted.
-
-### CI actually runs the gate
-
-- [ ] **`.github/workflows/ci.yml` has four steps** — install, `cyrius deps`,
-      `cyrius build`, `cyrius test`. No fmt, lint, docs, fuzz, deny, bench or
-      audit runs on any push or PR, while `CONTRIBUTING.md` names `cyrius audit`
-      as the pre-PR gate and [`state.md`](state.md#quality-gate) documents eight
-      gates. `release.yml` inherits the same thin gate. `cyrius audit` exits 0 on
-      the 6.5.35 pin, so this is one step.
-- [ ] **Assert the toolchain matches the pin** before `cyrius deps` fails two
-      steps later with a path error, as hisab 2.11.2 does: `cyrius version` must
-      equal `cyrius.cyml [package].cyrius`, and
-      `~/.cyrius/versions/<pin>/lib` must exist.
-
-### Four docs that never left Rust
-
-`README.md` and `CONTRIBUTING.md` were swept for Cyrius in 2026-08-26; these four
-were not, and still document a language this project does not use.
-
-- [ ] **`docs/architecture/overview.md`** — a `math` module that doesn't exist,
-      "stored as f32 for processing" (the port is f64 throughout), "~5,000×
-      real-time" (measured ~40×), a `## no_std Support` section with
-      `#![cfg_attr]` and `default-features = false`.
-- [ ] **`docs/development/integration-guide.md`** — `use svara::prelude::*;`,
-      `vec![0.0f32; 512]`, a Cargo feature table (`std` / `naad-backend` /
-      `logging`) that `README.md` explicitly says does not exist.
-- [ ] **`docs/guides/testing.md`** — `cargo test --all-features`, `make check`,
-      criterion, `target/criterion/report/index.html`.
-- [ ] **`docs/development/threat-model.md`** — `cargo deny` / `cargo audit` /
-      "`deny.toml` restricts to crates.io only (no git dependencies)", for a
-      project whose dependencies are now *entirely* git. Its §1 parameter-injection
-      mitigations were disproved by 3.1.3 and it does not reference ADR-0001.
-      **Prerequisite for the v1.0 security audit.**
-
-### ADR housekeeping
-
-- [ ] **Re-home the four pre-port ADRs.** `docs/architecture/adr-001-source-filter-model.md`
-      … `adr-004-scope-boundaries.md` sit outside the `docs/adr/` scheme that
-      `docs/adr/README.md` states, are absent from its index, and still reference
-      `bridge.rs` and "~1,000× real-time". Meanwhile `docs/architecture/README.md`
-      declares itself "_Empty._" while sitting beside them.
-- [ ] **ADR-0001 says three raw `f64_to` sites remain; there are four** —
-      `src/phoneme.cyr:714,715,716` and `src/sequence.cyr:296`. All four are
-      correctly annotated in place; only the count is wrong.
-
-### Stale claims to retire
-
-- [ ] **`state.md` warns that README and CONTRIBUTING "are still the pre-port
-      Rust files"** — they were rewritten on 2026-08-26. A reader trusting the
-      state authority would redo finished work.
-- [ ] **`docs/benchmarks-rust-v-cyrius.md`** is headed "svara v3.0.1 / cycc
-      6.4.11", still calls SIMD **P0** where this file marks it deferred, and its
-      table predates 3.1.3 entirely.
-- [ ] **`docs/benchmarks.md` lists 11 benchmark rows**; `benches/hotpath.bcyr`
-      defines 13 — the two `render_planned` benches from 3.1.3 are missing.
-- [ ] **`CLAUDE.md`'s mission statement is still the scaffold placeholder**
-      (`_TODO: one-or-two-sentence mission statement…_`) at 3.1.3. `cyrlint`
-      never sees it because it does not lint Markdown.
-- [ ] **README says the bridge has 19 scalar maps**; `state.md` and the CHANGELOG
-      say 18. Count once, fix the other.
-- [ ] **README's consumer example pins `tag = "3.1.2"`** against a 3.1.3 `VERSION`.
-- [ ] **`docs/guides/getting-started.md`** sends new tests to `tests/svara.tcyr`
-      (the smoke suite) rather than the 20 per-module suites.
-- [ ] **`.github/workflows/ci.yml`** still explains a v5.6.28 `cyrius test`
-      workaround under a 6.5.35 pin.
-- [ ] **Log the README/CONTRIBUTING sweep in the CHANGELOG** — it shipped
-      unrecorded; `## [Unreleased]` still says "Nothing yet."
-
-### `.gitignore` decision
-
-- [ ] **`*.csv` shadows `benches/history.csv`** (verified: `git check-ignore -v`
-      → `.gitignore:7`), so the benchmark history is untracked and cannot serve
-      the cross-commit regression purpose `docs/benchmarks.md` claims for it.
-      3.1.3 deliberately left this as "a call about committing a data file"; the
-      call still needs making. Same sweep retires `/target`, `Cargo.lock`,
-      `**/*.rs.bk`, `/coverage/`.
-
----
-
-## 3.2.0 — container serde
-
-✅ **Shipped 2026-08-26. M2, delivered — but not as this file described it.** Two of the milestone's
-premises were false and had to be measured:
-
-1. **There was no Rust skip policy to inherit.** The oracle has **30
-   `Serialize`-deriving types, 3 `#[serde(default)]`, and zero `#[serde(skip)]`**.
-   Rust serialized everything because `VocalTract` holds a
-   `naad::filter::BiquadFilter` that is itself `Serialize` in the Rust naad;
-   Cyrius naad exposes opaque handles with no codec, so the policy had to be
-   decided. It is, in [ADR-0002](../adr/0002-serialization-boundary.md).
-2. **The toolchain reaches less than 6.4.13's changelog implies.** `Vec<f64>` and
-   `Vec<flat-derive-struct>` round-trip; a **nested `#derive`-struct field does
-   not, in either direction** — it is laid out inline while
-   `#derive(accessors)` gives it pointer semantics, so the encoder emits the
-   pointer reinterpreted as the first member, and the decoder returns zeros
-   regardless. That rules out 6 of the 9 container types this file named.
-
-**Shipped:** `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
-`(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
-`SvPhonemeSequence` (`Vec<SvPhonemeEvent>`). Serialized surface 8 → 13 types;
-suite 713 → 745; every render path still bit-for-bit identical to 3.1.2.
-
-Round-trips are asserted **behaviourally** — a restored `Rng` reproduces 32 draws
-exactly, a restored contour traces the same curve at 21 points, a restored
-`PhonemeSequence` renders bit-identical audio.
-
-`SvProsodyContour`'s interpolation scratch moved to module level: `#derive(Serialize)`
-has no skip attribute, so a scratch pointer would have leaked a heap address into
-the JSON and come back dangling. That also answered the "skip the seven 3.1.3
-scratch fields" item — the other six live on types that are not serialized.
-
-**`Quality` needed no work.** It is a `var SVARA_*` integer, not a struct, and
-already round-trips wherever it appears as a field. Same for the other 12 Rust
-`Serialize` enums.
-
----
-
-## 3.3.0 — state companions for the engine types
-
-✅ **Shipped 2026-08-26.** The nine types ADR-0002 excluded from direct derive
-each got a flat state companion plus `save` / `restore`. Derived types 13 → 22;
-serde suite 54 → 135 assertions; whole suite 745 → 826.
-
-`SvSpectrum` needed no companion — it was already flat and only wanted the
-annotations. `SvFormantFilter` needed none either: its state is
-(formants, sample_rate), and the tract now records its formants, so
-`svara_tract_restore` rebuilds the filter without a separate type.
-
-**Released as a minor, not the planned patch** — ten new public types and sixteen
-new public functions.
-
-Two findings worth carrying forward:
-
-- **The SynthesisContext holds almost nothing across calls.**
-  `svara_synthctx_synthesize` resets the tract and re-applies every glottal
-  parameter from the voice at the top of each call, so its whole persistent state
-  is the noise PRNG and the sample rate. `SvSynthCtxState` is three fields. The
-  same is true of the pool and the batch renderer, which is why all three take
-  the voice as a `restore` argument rather than inlining `SvVoiceProfile`'s nine
-  fields into three more schemas.
-- **A fresh tract used to misreport its own formants** — the constructor built
-  the filter from the schwa targets while setting the record to a zeroed scratch
-  vec, so a new tract claimed five 0 Hz formants. Caught by a control assertion
-  written to prove the *rejection* tests were not vacuous; it failed instead.
 
 ---
 
@@ -398,7 +243,122 @@ expectations **from `rust-old/`**, not from svara's own output — that is naad
   ganita's transcendentals are per-arch. See [`state.md`](state.md).
 - **Non-American-English vowel targets.** The Hillenbrand data is US English;
   other languages and dialects need their own targets
-  (`docs/architecture/adr-003-formant-data.md`).
+  ([ADR-0005](../adr/0005-formant-data-source.md)).
 - **Populating `docs/examples/`** as a separate concern — the runnable examples
   land in `examples/` in [3.6.0](#360--retire-rust-old), ported from the Rust.
   Either point `CLAUDE.md` at `examples/` or drop the `docs/examples/` reference.
+
+---
+
+## Shipped lanes — what actually happened
+
+Kept because in all three the *plan* was wrong in a way worth remembering, not
+just because the work is done.
+
+## 3.2.0 — container serde
+
+✅ **Shipped 2026-08-26. M2, delivered — but not as this file described it.** Two of the milestone's
+premises were false and had to be measured:
+
+1. **There was no Rust skip policy to inherit.** The oracle has **30
+   `Serialize`-deriving types, 3 `#[serde(default)]`, and zero `#[serde(skip)]`**.
+   Rust serialized everything because `VocalTract` holds a
+   `naad::filter::BiquadFilter` that is itself `Serialize` in the Rust naad;
+   Cyrius naad exposes opaque handles with no codec, so the policy had to be
+   decided. It is, in [ADR-0002](../adr/0002-serialization-boundary.md).
+2. **The toolchain reaches less than 6.4.13's changelog implies.** `Vec<f64>` and
+   `Vec<flat-derive-struct>` round-trip; a **nested `#derive`-struct field does
+   not, in either direction** — it is laid out inline while
+   `#derive(accessors)` gives it pointer semantics, so the encoder emits the
+   pointer reinterpreted as the first member, and the decoder returns zeros
+   regardless. That rules out 6 of the 9 container types this file named.
+
+**Shipped:** `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
+`(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
+`SvPhonemeSequence` (`Vec<SvPhonemeEvent>`). Serialized surface 8 → 13 types;
+suite 713 → 745; every render path still bit-for-bit identical to 3.1.2.
+
+Round-trips are asserted **behaviourally** — a restored `Rng` reproduces 32 draws
+exactly, a restored contour traces the same curve at 21 points, a restored
+`PhonemeSequence` renders bit-identical audio.
+
+`SvProsodyContour`'s interpolation scratch moved to module level: `#derive(Serialize)`
+has no skip attribute, so a scratch pointer would have leaked a heap address into
+the JSON and come back dangling. That also answered the "skip the seven 3.1.3
+scratch fields" item — the other six live on types that are not serialized.
+
+**`Quality` needed no work.** It is a `var SVARA_*` integer, not a struct, and
+already round-trips wherever it appears as a field. Same for the other 12 Rust
+`Serialize` enums.
+
+---
+
+## 3.3.0 — state companions for the engine types
+
+✅ **Shipped 2026-08-26.** The nine types ADR-0002 excluded from direct derive
+each got a flat state companion plus `save` / `restore`. Derived types 13 → 22;
+serde suite 54 → 135 assertions; whole suite 745 → 826.
+
+`SvSpectrum` needed no companion — it was already flat and only wanted the
+annotations. `SvFormantFilter` needed none either: its state is
+(formants, sample_rate), and the tract now records its formants, so
+`svara_tract_restore` rebuilds the filter without a separate type.
+
+**Released as a minor, not the planned patch** — ten new public types and sixteen
+new public functions.
+
+⚠ **3.3.0 also shipped a limitation that was not real** — see 3.3.2. It claimed
+naad's `NoiseGenerator` cell and `Lfo` phase could not be read out, and the test
+suite *asserted that divergence*, which made a wrong belief look measured. naad
+derives accessors on both structs. Before concluding a foreign handle is opaque,
+check for accessors: what it lacks is a codec.
+
+Two findings worth carrying forward:
+
+- **The SynthesisContext holds almost nothing across calls.**
+  `svara_synthctx_synthesize` resets the tract and re-applies every glottal
+  parameter from the voice at the top of each call, so its whole persistent state
+  is the noise PRNG and the sample rate. `SvSynthCtxState` is three fields. The
+  same is true of the pool and the batch renderer, which is why all three take
+  the voice as a `restore` argument rather than inlining `SvVoiceProfile`'s nine
+  fields into three more schemas.
+- **A fresh tract used to misreport its own formants** — the constructor built
+  the filter from the schwa targets while setting the record to a zeroed scratch
+  vec, so a new tract claimed five 0 Hz formants. Caught by a control assertion
+  written to prove the *rejection* tests were not vacuous; it failed instead.
+
+---
+
+## 3.3.1 — documentation, CI, and stale-claim sweep
+
+✅ **Shipped 2026-08-26.** No source change. Lane was numbered 3.1.4 and was
+overtaken by 3.2.0 and 3.3.0 shipping first.
+
+**The finding with real consequences: CI ran almost none of the gate.**
+`ci.yml` had four steps — install, deps, build, `cyrius test` — while
+`CONTRIBUTING.md` names `cyrius audit` as the pre-PR gate and `state.md`
+documents eight. `release.yml` inherited it, so a release could ship having run
+only the tests. CI now runs `cyrius audit`, `cyrius fuzz` and `cyrius deny`, plus
+a toolchain-matches-the-pin assertion *before* `cyrius deps` (whose failure used
+to surface two steps later as an opaque path error) and a check that `dist/` is
+regenerable and current.
+
+Also done: the four Rust-era docs rewritten (`threat-model.md` — the v1.0 audit
+prerequisite, and the one asserting mitigations 3.1.3 disproved;
+`architecture/overview.md`; `integration-guide.md`; `guides/testing.md`); the
+four pre-port ADRs re-homed to `docs/adr/` as **0003–0006** and indexed;
+`.gitignore`'s Rust-era `*.csv` retired so `benches/history.csv` can finally be
+committed; `CLAUDE.md`'s mission statement written; and the stale claims retired
+(bridge count — README's **19** was right and `state.md` wrong; `benchmarks.md`
+11 → 13 rows; the head-to-head doc dated and its priorities corrected; README's
+consumer tag; `getting-started.md`'s test target).
+
+⚠ **Carried forward: `cyrlint`'s "0 untracked deferrals" is not a completeness
+signal.** It scans only `.cyr` sources, never Markdown, matches twelve literal
+terms, and counts one "tracked" if the *same line* also contains `CHANGELOG`,
+`roadmap`, `docs/`, `issue`, `See `, `v6.` or `v5.` — a substring test, not a
+check that the roadmap says anything. Every item in this lane was invisible to
+it. Do not cite it as evidence that there is no deferred work.
+
+---
+

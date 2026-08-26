@@ -9,6 +9,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.3.2] - 2026-08-26 — glottal restore is exact; a 3.3.0 limitation was self-inflicted
+
+⭐ **3.3.0 shipped a documented limitation that was not real.** `SvGlottalState`
+said naad's `NoiseGenerator` cell and `Lfo` phase "are internal to naad and
+cannot be read out", so a restored source restarted its aspiration and vibrato
+streams — and `tests/serde.tcyr` *asserted that divergence*, which made a wrong
+belief look like a measured fact.
+
+naad puts `#derive(accessors)` on both structs, and svara links against naad's
+bundle in **one flat namespace**. The state was reachable the whole time:
+`NoiseGenerator_rng` and `Lfo_rng` return pointers to 8-byte PRNG cells, and
+`Lfo_phase` / `Lfo_sh_value` are ordinary fields. Verified by probe before
+changing anything — two generators given the same cell produce 64 identical
+samples.
+
+**What a foreign type lacks is a codec, not accessors.** That is the
+generalisable lesson, and it is now recorded in
+[ADR-0002](docs/adr/0002-serialization-boundary.md).
+
+### Fixed — `svara_glottal_restore` is now exact in every configuration svara builds
+
+`SvGlottalState` gains four fields — `noise_cell`, `lfo_phase`, `lfo_sh_value`,
+`lfo_rng_cell` — captured in `save` and written back in `restore` *after*
+`svara_glottal_set_vibrato`, which would otherwise leave the LFO at its
+construction phase.
+
+The test group flipped from asserting divergence to asserting identity: a
+restored source now matches **exactly over 512 samples with breathiness at 0.5
+and vibrato at 5 Hz**, where 3.3.0 asserted it must differ. A control confirms a
+*fresh* source does not match, so the capture is doing the work rather than the
+comparison being vacuous.
+
+⚠ **Complete for the generators svara constructs** — a WHITE `NoiseGenerator`,
+whose entire state is that one cell, and a SINE `Lfo`. Pink noise keeps an octave
+**buffer** (`NoiseGenerator_pink_octaves`, a pointer) that this does not carry.
+If svara ever selects a non-white noise type, this must grow. State held in a
+buffer rather than a scalar is the boundary that genuinely remains.
+
+### Changed — corrections to what 3.3.0 and its docs claimed
+
+The 3.3.0 CHANGELOG entry is corrected **in place** rather than quietly
+superseded, because it stated the limitation as a measured finding. `ADR-0002`,
+`state.md` and `tests/serde.tcyr`'s header are amended the same way.
+
+**No naad change was needed.** The accessors already existed; nothing upstream
+had to move.
+
+### Notes
+
+- The one restore limit that *is* real remains: **filter delay lines are not
+  state**, and `tests/serde.tcyr` still asserts a warm tract and its restore
+  differ. That matches the oracle — Rust's `set_formants` is
+  `self.filter = FormantFilter::new(..)?`, which discards them on every call.
+- Suite 826 → **828 assertions**, 20 suites.
+- `dist/svara.cyr` regenerated at v3.3.2.
+
+## [3.3.1] - 2026-08-26 — documentation, CI, and the claims that had gone false
+
+**No source change.** A sweep of everything the repo asserts about itself. The
+common thread: `cyrlint` reports *0 untracked deferrals* and always has, which is
+accurate and nearly meaningless — it scans only `.cyr` sources, never Markdown,
+matches twelve literal terms, and counts one "tracked" if the **same line**
+contains `CHANGELOG`, `roadmap`, `docs/`, `issue`, `See `, `v6.` or `v5.`. That
+is a substring test, not a check that the roadmap says anything. Everything below
+was invisible to it.
+
+### Fixed — CI ran almost none of the gate it documents
+
+⭐ **`.github/workflows/ci.yml` had four steps: install, `cyrius deps`,
+`cyrius build`, `cyrius test`.** No fmt, lint, docs, fuzz, deny, bench or
+`cyrius audit` ran on any push or PR, while `CONTRIBUTING.md` names `cyrius audit`
+as what a PR must pass and `state.md` documents eight gates. `release.yml`
+inherited the same thin gate, so a release could ship having run only the tests.
+
+That was defensible while `cyrius audit` was broken — it skipped dependency
+resolution before compiling its test and bench legs and failed with spurious
+*"undefined variable F64_ONE"* on any project with git-dep bundles. It was fixed
+in 6.5.35 and svara has been on that pin since 3.1.2.
+
+CI now runs `cyrius audit`, `cyrius fuzz` and `cyrius deny`, plus two new checks:
+
+- **Toolchain matches the pin**, asserted *before* `cyrius deps` — the original
+  failure mode surfaced two steps later as an opaque path error. `cyrius version`
+  must equal the manifest pin and `~/.cyrius/versions/<pin>/lib` must exist.
+  (hisab 2.11.2 added the same step after hitting exactly this.)
+- **`dist/` is regenerable and current.** The bundle is what consumers actually
+  compile and it is checked in, so it can drift from `src/` silently. CI
+  regenerates and fails if the tree is dirty.
+
+Both new steps were verified locally before being written, including that
+`cyrius distlib` output is deterministic.
+
+### Fixed — four documents that never left Rust
+
+`README.md` and `CONTRIBUTING.md` were swept for Cyrius earlier; these four were
+not, and still described a language this project does not use.
+
+- **`docs/development/threat-model.md`** — the important one, and a prerequisite
+  for the v1.0 security audit. It claimed `cargo deny` / `cargo audit` /
+  "`deny.toml` restricts to crates.io only (no git dependencies)" for a project
+  whose dependencies are now **entirely** git, and it asserted parameter
+  validation mitigations that **3.1.3 disproved by finding five defects reachable
+  through the public API**. Rewritten around what actually changed the model:
+  Cyrius has no bounds checking on raw memory, `alloc` returns 0 rather than
+  aborting, `f64_to` does not saturate, there are no unsigned types, and there is
+  no panic. Resource exhaustion is now the sharpest section, because the bump
+  allocator never frees.
+- **`docs/architecture/overview.md`** — a `math` module that does not exist,
+  "coefficients stored as f32 for processing" (the port is f64 throughout),
+  compiler auto-vectorization (Cyrius emits scalar code), a `no_std` section, and
+  "~5,000× real-time" against a measured **~40×**.
+- **`docs/development/integration-guide.md`** — `use svara::prelude::*`,
+  `vec![0.0f32; 512]`, and a Cargo feature table for features this library does
+  not have. Rewritten around what a consumer actually needs: the manifest stanza,
+  the fact that **svara's transitive dependencies resolve from the CONSUMER's
+  manifest**, the error-code convention, and the zero-allocation streaming path.
+- **`docs/guides/testing.md`** — `cargo test --all-features`, `make check`,
+  criterion HTML reports. Rewritten around the real commands, plus the four rules
+  a new assertion here has to follow, each traced to a defect that motivated it.
+
+### Changed — the four pre-port ADRs are ADRs again
+
+`docs/architecture/adr-001-source-filter-model.md` … `adr-004-scope-boundaries.md`
+sat outside the scheme `docs/adr/README.md` states, were absent from its index,
+and still referenced `bridge.rs`. They are **decisions**, so they moved to
+`docs/adr/` as **0003–0006** and are indexed. Their substance is domain-level and
+survives the port untouched; only Rust-specific wording was corrected.
+
+`docs/architecture/README.md` had meanwhile declared itself *"Empty"* while
+sitting beside all four.
+
+### Changed — `.gitignore` no longer hides the benchmark history
+
+⭐ **`*.csv` shadowed `benches/history.csv`**, so the file `docs/benchmarks.md`
+describes as existing "so regressions are visible across commits" could never be
+committed. 3.1.3 deliberately left this as "a call about committing a data file";
+the call is made — the history is tracked.
+
+Three more Rust-era rules retired with it, each with the reason recorded in the
+file: `Cargo.lock` (`rust-old/Cargo.lock` is part of the frozen oracle and **is**
+tracked, so the rule only created confusion), `**/*.rs.bk` (no rustfmt here) and
+`/coverage/` (no coverage tooling here).
+
+### Fixed — claims that had gone false
+
+- **`CLAUDE.md`'s mission statement was still the scaffold placeholder** —
+  `_TODO: one-or-two-sentence mission statement…_` — 3 releases and five months
+  after the port. Written.
+- **The bridge map count disagreed with itself**: README said 19, `state.md` and
+  the CHANGELOG said 18. Counted — `src/bridge.cyr` defines **19** public
+  `svara_bridge_*` functions. README was right; `state.md` is corrected.
+- **`docs/benchmarks.md` listed 11 benchmark rows** where `benches/hotpath.bcyr`
+  defines **13** — the two `render_planned` benches from 3.1.3 were missing. Added,
+  with a note that they are the two rows a timer measures badly.
+- **`docs/benchmarks-rust-v-cyrius.md`** was headed "v3.0.1 / cycc 6.4.11" and
+  still called SIMD **P0** where the roadmap marks it deferred. It is now framed
+  as the dated head-to-head it is — the figures stand as taken — with the
+  priorities corrected: control-rate glides shipped, per-sample allocation
+  (never on the list) mattered more than SIMD, and SIMD bought ~5% and was
+  reverted.
+- **README's consumer example pinned `tag = "3.1.2"`**, and its ADR link pointed
+  at a file that just moved.
+- **`docs/guides/getting-started.md`** sent new tests to `tests/svara.tcyr`, the
+  smoke suite, rather than the per-module suite for whatever was touched.
+- **The README / CONTRIBUTING Cyrius sweep shipped unrecorded** — it landed in a
+  commit with no CHANGELOG entry, and `state.md` went on warning that both files
+  "are still the pre-port Rust files" until 3.1.3. Recorded here.
+
+### Notes
+
+- `docs/guides/testing.md` now records **five coverage gaps** rather than leaving
+  them implicit — `svara_tract_set_quality` appears in no suite or bench at all,
+  so every quality-conditional branch runs Full-only under test. All five are
+  scoped in the roadmap to be closed while `rust-old/` is still readable.
+- The roadmap lane for this work was numbered 3.1.4 and was overtaken by 3.2.0 and
+  3.3.0 shipping first; renumbered.
 ## [3.3.0] - 2026-08-26 — state companions: everything svara owns now round-trips
 
 The follow-on ADR-0002 scoped. Nine engine types could not be derived — each
@@ -90,6 +266,11 @@ Two limits are real, and each is pinned by a test that asserts the divergence
   configuration. With breathiness > 0 the aspiration stream restarts, because
   naad's `NoiseGenerator` cell and `Lfo` phase are internal to naad. Asserted
   both ways: identical in the first case, *different* in the second.
+
+  > ⚠ **Corrected in 3.3.2: this was wrong.** naad derives accessors on both
+  > structs, so the state was reachable all along and the restore is now exact in
+  > every configuration svara builds. The test that asserted the divergence now
+  > asserts identity.
 - **Filter delay lines are not state.** A restored `VocalTract` matches the
   original **over 512 samples from a clean filter state**, and a *warm* tract and
   its restore deliberately differ. That matches the oracle: Rust's `set_formants`

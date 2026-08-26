@@ -23,3 +23,10 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 |---|---|---|
 | [0001](0001-signed-index-and-float-conversion-hazards.md) | Signed-index and float-conversion hazards inherited from the Rust port | Accepted |
 | [0002](0002-serialization-boundary.md) | Where serialization stops | Accepted |
+| [0003](0003-source-filter-model.md) | Source-filter model choice | Accepted |
+| [0004](0004-coarticulation-model.md) | Coarticulation model | Accepted |
+| [0005](0005-formant-data-source.md) | Formant data source | Accepted |
+| [0006](0006-scope-boundaries.md) | Scope boundaries | Accepted |
+
+0003–0006 predate the Cyrius port (Rust v1.0.0) and were re-homed here from
+`docs/architecture/` on 2026-08-26; they are domain decisions and survive the port.

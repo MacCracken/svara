@@ -1,0 +1,73 @@
+timestamp,git_rev,benchmark,avg_us
+2026-07-03T12:52:00Z,fc0ab76,glottal next_sample (Rosenberg),0.081
+2026-07-03T12:52:00Z,fc0ab76,glottal next_sample (whisper),0.081
+2026-07-03T12:52:00Z,fc0ab76,glottal next_sample (creaky),0.106
+2026-07-03T12:52:00Z,fc0ab76,formant filter process_sample,0.175
+2026-07-03T12:52:00Z,fc0ab76,tract process_sample (Full),0.303
+2026-07-03T12:52:00Z,fc0ab76,formant filter process_block 1024,186.355
+2026-07-03T12:52:00Z,fc0ab76,tract synthesize_into 1024,374.360
+2026-07-03T12:52:00Z,fc0ab76,phoneme synth /a/ (vowel),875.119
+2026-07-03T12:52:00Z,fc0ab76,phoneme synth /s/ (fricative),466.933
+2026-07-03T12:52:00Z,fc0ab76,phoneme synth /ai/ (diphthong),5459.000
+2026-07-03T12:52:00Z,fc0ab76,sequence render 3 phonemes,3444.000
+2026-07-07T00:50:09Z,2734d82,glottal next_sample (Rosenberg),0.082
+2026-07-07T00:50:09Z,2734d82,glottal next_sample (whisper),0.083
+2026-07-07T00:50:09Z,2734d82,glottal next_sample (creaky),0.102
+2026-07-07T00:50:09Z,2734d82,formant filter process_sample,0.178
+2026-07-07T00:50:09Z,2734d82,tract process_sample (Full),0.295
+2026-07-07T00:50:09Z,2734d82,formant filter process_block 1024,200.377
+2026-07-07T00:50:09Z,2734d82,tract synthesize_into 1024,369.795
+2026-07-07T00:50:09Z,2734d82,phoneme synth /a/ (vowel),868.694
+2026-07-07T00:50:09Z,2734d82,phoneme synth /s/ (fricative),473.482
+2026-07-07T00:50:09Z,2734d82,phoneme synth /ai/ (diphthong),940.997
+2026-07-07T00:50:09Z,2734d82,sequence render 3 phonemes,3402.000
+2026-08-26T09:06:09Z,94d6cdf,glottal next_sample (Rosenberg),0.082
+2026-08-26T09:06:09Z,94d6cdf,glottal next_sample (whisper),0.086
+2026-08-26T09:06:09Z,94d6cdf,glottal next_sample (creaky),0.102
+2026-08-26T09:06:09Z,94d6cdf,formant filter process_sample,0.179
+2026-08-26T09:06:09Z,94d6cdf,tract process_sample (Full),0.295
+2026-08-26T09:06:09Z,94d6cdf,formant filter process_block 1024,194.033
+2026-08-26T09:06:09Z,94d6cdf,tract synthesize_into 1024,376.754
+2026-08-26T09:06:09Z,94d6cdf,phoneme synth /a/ (vowel),856.854
+2026-08-26T09:06:09Z,94d6cdf,phoneme synth /s/ (fricative),457.767
+2026-08-26T09:06:09Z,94d6cdf,phoneme synth /ai/ (diphthong),921.273
+2026-08-26T09:06:09Z,94d6cdf,sequence render 3 phonemes,3364.000
+2026-08-26T18:27:36Z,a8887b7,glottal next_sample (Rosenberg),0.079
+2026-08-26T18:27:36Z,a8887b7,glottal next_sample (whisper),0.081
+2026-08-26T18:27:36Z,a8887b7,glottal next_sample (creaky),0.104
+2026-08-26T18:27:36Z,a8887b7,formant filter process_sample,0.181
+2026-08-26T18:27:36Z,a8887b7,tract process_sample (Full),0.300
+2026-08-26T18:27:36Z,a8887b7,formant filter process_block 1024,198.342
+2026-08-26T18:27:36Z,a8887b7,tract synthesize_into 1024,380.761
+2026-08-26T18:27:36Z,a8887b7,phoneme synth /a/ (vowel),874.495
+2026-08-26T18:27:36Z,a8887b7,phoneme synth /s/ (fricative),460.528
+2026-08-26T18:27:36Z,a8887b7,phoneme synth /ai/ (diphthong),918.068
+2026-08-26T18:27:36Z,a8887b7,sequence render 3 phonemes,3374.000
+2026-08-26T18:27:36Z,a8887b7,sequence render_planned 3 phonemes,18691.000
+2026-08-26T18:27:36Z,a8887b7,sequence render_planned toned,21385.000
+2026-08-26T19:12:46Z,4a398db,glottal next_sample (Rosenberg),0.080
+2026-08-26T19:12:46Z,4a398db,glottal next_sample (whisper),0.081
+2026-08-26T19:12:46Z,4a398db,glottal next_sample (creaky),0.102
+2026-08-26T19:12:46Z,4a398db,formant filter process_sample,0.180
+2026-08-26T19:12:46Z,4a398db,tract process_sample (Full),0.298
+2026-08-26T19:12:46Z,4a398db,formant filter process_block 1024,194.721
+2026-08-26T19:12:46Z,4a398db,tract synthesize_into 1024,383.151
+2026-08-26T19:12:46Z,4a398db,phoneme synth /a/ (vowel),867.983
+2026-08-26T19:12:46Z,4a398db,phoneme synth /s/ (fricative),465.298
+2026-08-26T19:12:46Z,4a398db,phoneme synth /ai/ (diphthong),925.876
+2026-08-26T19:12:46Z,4a398db,sequence render 3 phonemes,3386.000
+2026-08-26T19:12:46Z,4a398db,sequence render_planned 3 phonemes,18667.000
+2026-08-26T19:12:46Z,4a398db,sequence render_planned toned,21608.000
+2026-08-26T19:35:14Z,55cd532,glottal next_sample (Rosenberg),0.081
+2026-08-26T19:35:14Z,55cd532,glottal next_sample (whisper),0.082
+2026-08-26T19:35:14Z,55cd532,glottal next_sample (creaky),0.103
+2026-08-26T19:35:14Z,55cd532,formant filter process_sample,0.181
+2026-08-26T19:35:14Z,55cd532,tract process_sample (Full),0.301
+2026-08-26T19:35:14Z,55cd532,formant filter process_block 1024,203.829
+2026-08-26T19:35:14Z,55cd532,tract synthesize_into 1024,379.177
+2026-08-26T19:35:14Z,55cd532,phoneme synth /a/ (vowel),861.036
+2026-08-26T19:35:14Z,55cd532,phoneme synth /s/ (fricative),457.236
+2026-08-26T19:35:14Z,55cd532,phoneme synth /ai/ (diphthong),917.423
+2026-08-26T19:35:14Z,55cd532,sequence render 3 phonemes,3377.000
+2026-08-26T19:35:14Z,55cd532,sequence render_planned 3 phonemes,18846.000
+2026-08-26T19:35:14Z,55cd532,sequence render_planned toned,21736.000

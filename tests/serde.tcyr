@@ -317,31 +317,50 @@ assert_eq(g_diff, 0, "restored source matches over 1024 samples");
 assert_eq(g_loud > 0, 1, "control: the compared signal is not silence");
 
 # ================================================================
-test_group("GlottalSource state companion -- the naad handles are NOT restored");
-# This is the documented limit of the companion, asserted so it stays a measured
-# fact rather than a caveat nobody checked. naad's NoiseGenerator cell and Lfo
-# phase are internal to naad and cannot be read out, so with breathiness > 0 the
-# aspiration stream restarts and the output legitimately differs.
+test_group("GlottalSource state companion -- the naad handles ARE restored");
+# 3.3.0 shipped asserting the OPPOSITE: that naad's NoiseGenerator cell and Lfo
+# phase could not be read out, so a restored source restarted its aspiration and
+# vibrato streams. That was wrong -- naad puts #derive(accessors) on both structs
+# and svara links against its bundle in one flat namespace, so the state was
+# always reachable. 3.3.2 captures it, and this group now asserts identity where
+# it used to assert divergence.
 var h1 = svara_glottal_new(f64_from(140), sr_hz);
 svara_glottal_set_breathiness(h1, F64_HALF);
+svara_glottal_set_vibrato(h1, f64_from(5), 0.1);
 var h_i = 0;
 while (h_i < 700) { var hw = svara_glottal_next_sample(h1); h_i = h_i + 1; }
-var h2 = svara_glottal_restore(svara_glottal_save(h1));
-assert_eq(svara_is_err(h2), 0, "control: restore still succeeds with breathiness");
+var h_st = svara_glottal_save(h1);
+assert_eq(SvGlottalState_noise_cell(h_st) != 0, 1, "control: the noise cell was actually captured");
+var h2 = svara_glottal_restore(SvGlottalState_from_json_str(se_json(&SvGlottalState_to_json, h_st)));
+assert_eq(svara_is_err(h2), 0, "restore succeeds with breathiness and vibrato on");
 var h_diff = 0;
-var h_fin = 1;
+var h_loud = 0;
 var h_j = 0;
 while (h_j < 512) {
     var t1 = svara_glottal_next_sample(h1);
     var t2 = svara_glottal_next_sample(h2);
     if (se_approx(t1, t2, TOL_1EM3) == 0) { h_diff = h_diff + 1; }
-    if (svara_is_finite(t2) == 0) { h_fin = 0; }
+    if (f64_gt(f64_abs(t1), TOL_1EM3) == 1) { h_loud = h_loud + 1; }
     h_j = h_j + 1;
 }
-assert_eq(h_diff > 0, 1, "the aspiration stream DOES restart -- the limit is real, not hypothetical");
-assert_eq(h_fin, 1, "and the restored source still produces finite output");
+assert_eq(h_diff, 0, "restored source matches EXACTLY with breathiness + vibrato on");
+assert_eq(h_loud > 0, 1, "control: the compared signal is not silence");
 assert_eq(se_approx(SvGlottalSource_breathiness(h2), F64_HALF, TOL_1EM3), 1,
-  "control: the breathiness field itself did survive");
+  "control: the breathiness field survived too");
+# CONTROL: the comparison discriminates -- a source that did NOT resume the naad
+# streams must differ, which is what proves the capture is doing the work.
+var h3 = svara_glottal_new(f64_from(140), sr_hz);
+svara_glottal_set_breathiness(h3, F64_HALF);
+svara_glottal_set_vibrato(h3, f64_from(5), 0.1);
+var h3_diff = 0;
+var h_k = 0;
+while (h_k < 512) {
+    var u1 = svara_glottal_next_sample(h1);
+    var u3 = svara_glottal_next_sample(h3);
+    if (se_approx(u1, u3, TOL_1EM3) == 0) { h3_diff = h3_diff + 1; }
+    h_k = h_k + 1;
+}
+assert_eq(h3_diff > 0, 1, "control: a fresh source does NOT match -- the streams really were resumed");
 
 # ================================================================
 test_group("restore validates a decoded state rather than trusting it");

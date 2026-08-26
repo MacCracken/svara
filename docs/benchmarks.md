@@ -52,6 +52,8 @@ comment here was harmless in effect and still worth deleting.
 | phoneme synth /s/ (fricative) | ~458 µs | −3% | noise excitation path |
 | phoneme synth /ai/ (diphthong) | ~921 µs | −2% | control-rate formant coeffs (3.1.0) |
 | sequence render (3 phonemes) | ~3.36 ms | −1% | per-phoneme synth + variable crossfade |
+| `render_planned` (3 phonemes) | ~18.7 ms | new | per-sample formant interpolation + tract re-target |
+| `render_planned` toned | ~21.6 ms | new | as above, plus a per-sample prosody contour lookup |
 
 A full glottal → formant → tract per-sample chain is ≈ 0.56 µs/sample, i.e.
 roughly **40× real-time** at 44.1 kHz on one core.
@@ -73,6 +75,13 @@ per-sample benches already batch-timed.
   scalar code (no auto-vectorization) and the SOA bank loop LLVM vectorized runs
   scalar `load64`/`store64` + f64-op overhead here. Addressable via SIMD + FMA —
   see roadmap **M-perf**. Still comfortably real-time in absolute terms.
+
+⚠ **The two `render_planned` rows are the ones a timer measures badly.** 3.1.3
+took that path from 1,121 to 33 bytes of never-freed arena per output sample
+(34x), and wall clock moved only 20.6 → 18.6 ms — a bump allocation is a pointer
+add. The metric that mattered is pinned in `tests/allocbudget.tcyr` as marginal
+arena bytes per sample, not here. Anything that trades memory for time needs the
+same treatment.
 
 ## History
 

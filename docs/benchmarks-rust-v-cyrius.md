@@ -1,8 +1,16 @@
 # Benchmarks: Rust vs Cyrius
 
-> svara v3.0.1 synthesis parity benchmark — the criterion benches in
+> svara **v3.0.1** synthesis parity benchmark — the criterion benches in
 > `rust-old/benches/benchmarks.rs` run against the CYRIUS port's hot-path benches
 > (`benches/hotpath.bcyr`), on the same machine, 2026-07-06.
+>
+> ⚠ **This is a dated head-to-head, not a live scoreboard.** The measurement is
+> preserved as taken; the Cyrius side has moved since. 3.1.0 cut the diphthong
+> 5.42 → 0.94 ms (below the Rust oracle's 1.09 ms) and 3.1.3 removed the
+> per-sample allocation. For current Cyrius figures see
+> [`benchmarks.md`](benchmarks.md) and `benches/history.csv`; re-running the Rust
+> side needs `rust-old/`, which is scheduled for retirement (roadmap 3.6.0), so
+> this table is likely to be the last of its kind.
 >
 > - **Rust**: criterion 0.5, `--release`. Deps from crates.io: hisab 1.2 (`num`,
 >   `calc`), naad 1. f32/f64 mixed, LLVM auto-vectorized.
@@ -118,11 +126,24 @@ unchanged. This is an algorithmic win the language-agnostic Rust path hasn't tak
 
 ### Roadmap
 
-Tracked as **M-perf** in [`development/roadmap.md`](development/roadmap.md): P0
-SIMD the formant bank (`f64v4` + FMA) and P0 control-rate glide coefficients, then
-P1 pool the per-note buffers, then the tract chain. Gate: tolerance `.tcyr` tests
-stay green; AVX2 path guarded by `simd_has_avx2()` with a byte-identical scalar
-fallback.
+Tracked in [`development/roadmap.md`](development/roadmap.md) 3.5.0. **The
+priorities in the original version of this section are out of date and inverted:**
+
+- ✅ **Control-rate glide coefficients — shipped 3.1.0.** The diphthong outlier is
+  gone (5.42 → 0.94 ms), now faster than the oracle.
+- ✅ **Per-sample allocation — removed 3.1.3.** Not a listed item at the time; it
+  turned out to matter more than SIMD, at 1,121 → 33 bytes of never-freed arena
+  per output sample.
+- ⚠ **SIMD the formant bank — DEFERRED, not P0.** A bit-identical `f64v4` AVX2
+  bank was prototyped and reverted: it bought **~5%**, because the loop is
+  memory-bound (the SOA state shuffle dominates), not compute-bound. The
+  bit-identical lever that attacks the real bottleneck is collapsing the
+  redundant per-slot input delay line — `x1`/`x2` are identical across all eight
+  slots because the input is shared.
+- ⏳ **Pool the per-note buffers** — still open.
+
+Gate: tolerance `.tcyr` tests stay green; any AVX2 path is `simd_has_avx2()`
+-guarded with a byte-identical scalar fallback.
 
 ### Reproduce
 
@@ -130,3 +151,7 @@ fallback.
 cd rust-old && cargo bench          # Rust baseline (crates.io hisab/naad)
 cyrius bench benches/hotpath.bcyr   # Cyrius
 ```
+
+⚠ The Rust half of that requires `rust-old/` and a cargo toolchain. When the
+oracle is retired (roadmap 3.6.0) it becomes
+`git show 3.3.0:rust-old/benches/benchmarks.rs`, and this table is the archive.

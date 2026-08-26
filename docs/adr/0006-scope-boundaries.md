@@ -1,12 +1,16 @@
-# ADR-004: Scope Boundaries
+# 0006 — Scope boundaries
 
-## Status
+**Status**: Accepted
+**Date**: 2026-03-27 (Rust v1.0.0); carried into the Cyrius port unchanged
 
-Accepted (v1.0.0)
+> Re-homed 2026-08-26 from `docs/architecture/` to `docs/adr/` as 0006 (was ADR-004, `docs/architecture/`).
+> These are DECISIONS, so `docs/adr/README.md`'s own scheme puts them here.
+> The decision is a domain one and survives the port; only Rust-specific
+> wording below was corrected.
 
 ## Context
 
-The AGNOS audio ecosystem has multiple crates handling different aspects of
+The AGNOS audio ecosystem has multiple components handling different aspects of
 sound. Clear boundaries prevent scope creep and duplication.
 
 ## Decision
@@ -21,10 +25,10 @@ sound. Clear boundaries prevent scope creep and duplication.
 - Coarticulation and phoneme sequencing
 - Voice profiles (speaker parameterization)
 - Spectral analysis utilities (FFT, formant estimation)
-- Bridge functions for upstream crate integration
+- Bridge functions for upstream component integration
 - LOD quality control for multi-voice scenarios
 
-### Not in svara (handled by sibling crates)
+### Not in svara (handled by sibling components)
 
 | Concern | Crate | Rationale |
 |---------|-------|-----------|
@@ -39,8 +43,8 @@ sound. Clear boundaries prevent scope creep and duplication.
 
 ### Bridge pattern
 
-svara provides dependency-free bridge functions in `bridge.rs` that convert
-upstream crate outputs into svara parameters. This keeps svara decoupled:
+svara provides dependency-free bridge functions in `src/bridge.cyr` (19 of them) that convert
+upstream component outputs into svara parameters. This keeps svara decoupled:
 
 - `bhava` arousal/valence -> Rd, breathiness, vibrato, jitter
 - `vansh` speech rate/accent -> duration scale, stress
@@ -51,6 +55,6 @@ upstream crate outputs into svara parameters. This keeps svara decoupled:
 ## Consequences
 
 - svara is focused and testable in isolation
-- Consumers wire crates together through bridges, not direct dependencies
+- Consumers wire components together through bridges, not direct dependencies
 - Adding multi-language support is svara's concern (phoneme inventory)
 - Adding emotion-to-voice mapping is a bridge concern, not a model concern

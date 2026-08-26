@@ -5,6 +5,25 @@
 
 ## Version
 
+**3.3.2** (2026-08-26) — **glottal restore is exact.** 3.3.0 documented a
+limitation that was not real: naad derives `#derive(accessors)` on
+`NoiseGenerator` and `Lfo`, and svara links against its bundle in one flat
+namespace, so the PRNG cells and LFO phase were reachable all along.
+`SvGlottalState` carries them now and the test asserts **identity** with
+breathiness and vibrato on, where it used to assert divergence. No naad change
+was needed. 828 assertions.
+
+**3.3.1** (2026-08-26) — **docs, CI, stale claims.** No source change. The
+finding with consequences: **CI ran four steps and none of the gate it
+documents** — install, deps, build, `cyrius test`, while `CONTRIBUTING.md` names
+`cyrius audit` as the pre-PR gate and this file documents eight. It now runs
+audit + fuzz + deny, asserts the toolchain matches the pin before `cyrius deps`,
+and fails if `dist/` is stale. Four Rust-era docs rewritten (`threat-model.md`
+asserted parameter-validation mitigations that 3.1.3 disproved, and is the v1.0
+audit's prerequisite); the four pre-port ADRs re-homed to `docs/adr/` as
+**0003–0006**; `.gitignore`'s Rust-era `*.csv` retired so `benches/history.csv`
+is trackable; `CLAUDE.md`'s mission statement written.
+
 **3.3.0** (2026-08-26) — **state companions.** The nine engine types ADR-0002
 excluded from direct derive each got a flat companion the derive *can* reach plus
 `save`/`restore`: `SvGlottalState`, `SvVocalTractState`, `SvKeypointState`,
@@ -131,7 +150,7 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L3 | sequence.rs | src/sequence.cyr | ✅ ported | 29 | PhonemeEvent/Sequence; coarticulation crossfade render + trajectory-planned render_planned; cluster compression |
 | L4 | pool.rs | src/pool.cyr | ✅ ported | 16 | SynthesisPool (pooled SynthesisContext + render_batch + counters) |
 | L4 | render.rs | src/render.cyr | ✅ ported | 16 | BatchRenderer / RenderOutput / RenderProgress; progress via callptr |
-| L4 | bridge.rs | src/bridge.cyr | ✅ ported | 37 | 18 scalar emotion/TTS/creature/acoustics/weather → synth-param maps |
+| L4 | bridge.rs | src/bridge.cyr | ✅ ported | 37 | 19 scalar emotion/TTS/creature/acoustics/weather → synth-param maps |
 
 **ALL 19 Rust modules ported (16 `.cyr` modules; dsp folded into error, math → ganita).
 634 assertions passing, all lint-clean.** The full library builds + links; the smoke binary
@@ -188,7 +207,8 @@ All green on the 6.5.35 pin:
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 826 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 828 assertions |
+| **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
@@ -202,17 +222,16 @@ svara defect, and the workaround was to gate on the individual tools. On 6.5.35
 it resolves deps first (`4 deps resolved`) and runs fmt · lint · docs · tests ·
 bench green. The per-tool commands still work and remain the finer-grained form.
 
-⚠ **CI runs almost none of this.** `.github/workflows/ci.yml` has four steps —
-install, `cyrius deps`, `cyrius build`, `cyrius test` — so fmt, lint, docs, fuzz,
-deny, bench and the aggregate `cyrius audit` run only on a developer's machine,
-and `release.yml` inherits the same thin gate. Tracked for 3.1.4 in
-[`roadmap.md`](roadmap.md).
+✅ **CI runs this gate as of 3.3.1.** `.github/workflows/ci.yml` runs
+`cyrius audit`, `cyrius fuzz` and `cyrius deny`, asserts the installed toolchain
+equals the manifest pin *before* `cyrius deps`, and fails if `dist/` is stale.
+Before 3.3.1 it ran install → deps → build → `cyrius test` and nothing else, so
+every other gate existed only on a developer's machine — and `release.yml`
+inherited that.
 
-`README.md` and `CONTRIBUTING.md` were rewritten for Cyrius on 2026-08-26. Four
-other docs were not — `docs/architecture/overview.md`,
-`docs/development/integration-guide.md`, `docs/guides/testing.md` and
-`docs/development/threat-model.md` are still pre-port Rust. Also tracked for
-3.1.4.
+All the pre-port Rust docs have now been swept: `README.md` / `CONTRIBUTING.md`
+(2026-08-26, by hand) and `architecture/overview.md`, `integration-guide.md`,
+`guides/testing.md`, `threat-model.md` (3.3.1).
 
 ⚠ The `cyrius fmt` / `cyrius doc` wrappers used to mangle their arguments; on
 this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout).
@@ -281,15 +300,22 @@ a nested struct pointer, a raw buffer, or a foreign naad handle. `save` flattens
 data). `SvFormantFilter` needs no companion of its own: its state is
 (formants, sample_rate) and `svara_tract_restore` rebuilds it.
 
-⚠ **Two things restore does not reproduce, both pinned by tests that assert the
-divergence exists rather than warning about it:** naad's `NoiseGenerator` cell
-and `Lfo` phase are internal to naad and cannot be read out (so a restored
-glottal source is bit-exact only on the deterministic path — breathiness and
-vibrato at 0), and filter delay lines are not state (Rust's `set_formants`
-discards them on every call too). `lip_prev` and `interaction_feedback`, which
-svara owns, *are* carried.
+⚠ **One thing restore does not reproduce, pinned by a test that asserts the
+divergence exists rather than warning about it:** filter delay lines are not
+state — Rust's `set_formants` discards them on every call too, so there is
+nothing there a caller could have relied on. `lip_prev` and
+`interaction_feedback`, which svara owns, *are* carried.
 
-Round-trip coverage in `tests/serde.tcyr` (135 assertions). The standard is
+✅ **naad's handle state IS carried, as of 3.3.2.** 3.3.0 shipped claiming the
+opposite. naad puts `#derive(accessors)` on `NoiseGenerator` and `Lfo`, and svara
+links against its bundle in one flat namespace, so the PRNG cells and the LFO
+phase were reachable all along — `svara_glottal_restore` is now exact with
+breathiness and vibrato on, and the test asserts identity where it used to assert
+divergence. **The lesson generalises: a foreign type lacks a CODEC, not
+necessarily accessors.** Check before concluding a handle is opaque. Still out of
+reach: state held in a buffer rather than a scalar (pink noise's octave array).
+
+Round-trip coverage in `tests/serde.tcyr` (137 assertions). The standard is
 **behavioural**: a restored sequence renders bit-identical audio, a restored
 context renders the same noise-driven fricative *and a fresh one is asserted not
 to*, a restored tract matches over 512 samples from a clean filter state.

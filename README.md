@@ -108,7 +108,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.1.2"
+tag = "3.3.0"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
@@ -198,7 +198,7 @@ An end-to-end consumer build against the bundle is still an open item (see
 Sibling projects that svara does *not* depend on are served through the dependency-free bridge
 functions in `src/bridge.cyr` — 19 scalar maps turning **bhava** affect, **vansh** speech rate,
 **prani** creature body size/age, **goonj** acoustics and **badal** weather into svara synthesis
-parameters. See [ADR-004](docs/architecture/adr-004-scope-boundaries.md) for the boundaries.
+parameters. See [ADR-0006](docs/adr/0006-scope-boundaries.md) for the boundaries.
 
 ## Contributing
 

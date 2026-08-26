@@ -129,14 +129,22 @@ fn svara_glottal_new(f0, sample_rate) {
 # the answer is this companion: every reconstructable scalar, plus the Rng's two
 # words so a restored source resumes the exact draw sequence.
 #
-# ⚠ WHAT RESTORE DOES NOT REPRODUCE, stated because it is easy to assume
-# otherwise: naad's NoiseGenerator cell and the Lfo phase are internal to naad
-# and cannot be read out. A restored source therefore reproduces the
-# DETERMINISTIC pulse train bit-for-bit -- which is the whole output when
-# breathiness is 0 and vibrato_rate is 0 -- but restarts the aspiration-noise and
-# vibrato streams from their construction state. Both cases are asserted in
-# tests/serde.tcyr, the second one specifically to prove the divergence is real
-# rather than a hypothetical caveat.
+# The two naad handles ARE captured. naad puts `#derive(accessors)` on both
+# `NoiseGenerator` and `Lfo`, and svara links against naad's bundle in one flat
+# namespace, so their state is reachable: `NoiseGenerator_rng` and `Lfo_rng`
+# return POINTERS to 8-byte PRNG cells (hence the load64), and `Lfo_phase` /
+# `Lfo_sh_value` are ordinary fields.
+#
+# ⚠ 3.3.0 shipped claiming this was impossible and that a restored source
+# restarts its aspiration and vibrato streams. That was wrong -- the accessors
+# were always there. 3.3.2 captures the state and the restore is now exact in
+# every configuration svara constructs; tests/serde.tcyr asserts identity with
+# breathiness AND vibrato on, where it previously asserted the divergence.
+#
+# ⚠ Complete for the generators svara BUILDS -- a WHITE NoiseGenerator, whose
+# entire state is that one cell, and a SINE Lfo. Pink noise keeps an octave
+# BUFFER (`NoiseGenerator_pink_octaves`, a pointer) that this does not carry; if
+# svara ever selects a non-white noise type, this must grow.
 #
 # lf_ta/lf_te/lf_ee are carried even though apply_rd() derives them from rd:
 # storing them restores the exact bits rather than re-deriving through
@@ -151,6 +159,7 @@ struct SvGlottalState {
     vibrato_rate: f64; vibrato_depth: f64; tilt_state: f64;
     phase: f64; current_period: f64; current_amplitude: f64;
     rng_state: i64; rng_inc: i64;
+    noise_cell: i64; lfo_phase: f64; lfo_sh_value: f64; lfo_rng_cell: i64;
 }
 
 # save -- snapshot a GlottalSource into its serializable form.
@@ -181,6 +190,12 @@ fn svara_glottal_save(self) {
     var r = SvGlottalSource_rng(self);
     SvGlottalState_set_rng_state(st, SvRng_state(r));
     SvGlottalState_set_rng_inc(st, SvRng_inc(r));
+    var nz = SvGlottalSource_aspiration_noise(self);
+    SvGlottalState_set_noise_cell(st, load64(NoiseGenerator_rng(nz)));
+    var lf = SvGlottalSource_vibrato_lfo(self);
+    SvGlottalState_set_lfo_phase(st, Lfo_phase(lf));
+    SvGlottalState_set_lfo_sh_value(st, Lfo_sh_value(lf));
+    SvGlottalState_set_lfo_rng_cell(st, load64(Lfo_rng(lf)));
     return st;
 }
 
@@ -215,6 +230,14 @@ fn svara_glottal_restore(st) {
     # Through set_vibrato so the naad Lfo's frequency and depth follow the fields
     # (it clamps, exactly as a live caller would go through it).
     svara_glottal_set_vibrato(g, SvGlottalState_vibrato_rate(st), SvGlottalState_vibrato_depth(st));
+    # ...then the naad handles' own state, AFTER set_vibrato, which would
+    # otherwise leave the Lfo at its construction phase.
+    var nz = SvGlottalSource_aspiration_noise(g);
+    store64(NoiseGenerator_rng(nz), SvGlottalState_noise_cell(st));
+    var lf = SvGlottalSource_vibrato_lfo(g);
+    Lfo_set_phase(lf, SvGlottalState_lfo_phase(st));
+    Lfo_set_sh_value(lf, SvGlottalState_lfo_sh_value(st));
+    store64(Lfo_rng(lf), SvGlottalState_lfo_rng_cell(st));
     return g;
 }
 

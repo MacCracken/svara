@@ -37,9 +37,20 @@ The 30 types: `SvaraError`, `Vowel`, `Formant`, `FormantFilter`, `VowelTarget`,
 **There is no skip policy to inherit.** Rust serialized *everything*, including
 live filter state, because it could: `VocalTract` holds a
 `naad::filter::BiquadFilter` (`rust-old/src/tract.rs:72`, `:94`) and that type is
-itself `Serialize` in the Rust naad. Cyrius naad exposes those filters as opaque
-handles with no JSON codec, so "serialize everything" is not portable. The
-policy has to be **decided here**, not transcribed.
+itself `Serialize` in the Rust naad. Cyrius naad exposes those filters as
+handles with no JSON codec of their own, so "serialize everything" is not
+portable. The policy has to be **decided here**, not transcribed.
+
+⚠ **Amended 3.3.2: "opaque" was too strong, and it cost a release.** naad puts
+`#derive(accessors)` on `NoiseGenerator`, `Lfo` and its other public structs, and
+svara links against naad's bundle in one flat namespace — so their state *is*
+reachable (`NoiseGenerator_rng` and `Lfo_rng` return pointers to 8-byte PRNG
+cells; `Lfo_phase` is an ordinary field). 3.3.0 shipped `SvGlottalState` claiming
+the aspiration and vibrato streams could not be carried across a restore, and
+3.3.2 carries them. **What a foreign type lacks is a codec, not accessors** —
+check for the accessors before concluding a handle is opaque. What remains
+genuinely out of reach is state held in a *buffer* rather than a scalar, such as
+pink noise's octave array.
 
 ### The toolchain reaches less than the changelog implies
 

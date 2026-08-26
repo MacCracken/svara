@@ -18,7 +18,18 @@
 
 ## Goal
 
-_TODO: one-or-two-sentence mission statement. What does svara OWN in the stack? Durable — doesn't change per release._
+svara owns **the voice itself** — turning a phoneme and a speaker's
+characteristics into audio samples. It is the source-filter synthesizer of the
+AGNOS audio stack: glottal excitation, formant filtering, the vocal tract, and
+the speech-science layer above them (a 101-phoneme inventory, coarticulation,
+prosody, trajectory planning).
+
+What svara deliberately does **not** own: text→phoneme conversion (vansh), audio
+I/O and mixing (dhvani), room acoustics (goonj), generic DSP primitives (naad),
+and affect modelling (bhava). It takes scalars in and returns samples — no I/O,
+no files, no network. Sibling components reach it through the 19 dependency-free
+bridge maps in `src/bridge.cyr` rather than by depending on each other. See
+[ADR-0006](docs/adr/0006-scope-boundaries.md).
 
 ## Current State
 

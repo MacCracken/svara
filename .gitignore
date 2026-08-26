@@ -1,10 +1,13 @@
+# Build output. `build/` is deliberately NOT ignored: the release workflow ships
+# build/<name> as an artifact, so it is tracked.
 /target
-rust-old/target/
-Cargo.lock
-**/*.rs.bk
 *.pdb
-/coverage/
-*.csv
+
+# The frozen Rust oracle's build tree (~3 GB). rust-old/ itself is tracked --
+# it is the parity oracle, see docs/development/roadmap.md 3.6.0.
+rust-old/target/
+
+# Editor / OS
 .DS_Store
 *.swp
 *.swo
@@ -12,3 +15,12 @@ Cargo.lock
 .idea/
 .vscode/
 .claude/
+
+# --- Retired 2026-08-26 (3.3.1), Rust-era rules that no longer apply ---
+# `*.csv`      shadowed benches/history.csv, so the benchmark history could never
+#              be committed -- which defeats the cross-commit regression tracking
+#              docs/benchmarks.md states as its purpose. That file is now tracked.
+# `Cargo.lock` rust-old/Cargo.lock is part of the frozen oracle and IS tracked;
+#              the rule only ever created confusion about that.
+# `**/*.rs.bk` rustfmt backup files; there is no rustfmt here.
+# `/coverage/` tarpaulin output; there is no coverage tooling here.

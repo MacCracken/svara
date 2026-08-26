@@ -1,8 +1,12 @@
-# ADR-003: Formant Data Source
+# 0005 — Formant data source
 
-## Status
+**Status**: Accepted
+**Date**: 2026-03-27 (Rust v1.0.0); carried into the Cyrius port unchanged
 
-Accepted (v1.0.0)
+> Re-homed 2026-08-26 from `docs/architecture/` to `docs/adr/` as 0005 (was ADR-003, `docs/architecture/`).
+> These are DECISIONS, so `docs/adr/README.md`'s own scheme puts them here.
+> The decision is a domain one and survives the port; only Rust-specific
+> wording below was corrected.
 
 ## Context
 

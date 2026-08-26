@@ -33,6 +33,20 @@ jobs:
             CYRIUS_VERSION="$CYRIUS_VERSION" sh
           echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
+      - name: Verify toolchain matches the pin
+        # The original failure mode here showed up two steps downstream as an
+        # opaque path error from `cyrius deps`. Assert it where it is
+        # diagnosable: the installed toolchain must BE the pinned one, and the
+        # stdlib snapshot it resolves against must exist. (hisab 2.11.2 added
+        # the same step after hitting exactly this.)
+        run: |
+          set -e
+          PIN="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
+          GOT="$(cyrius version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          [ "$GOT" = "$PIN" ] || { echo "toolchain $GOT != manifest pin $PIN"; exit 1; }
+          [ -d "$HOME/.cyrius/versions/$PIN/lib" ] || { echo "no stdlib snapshot at versions/$PIN/lib"; exit 1; }
+          echo "toolchain verified: $PIN"
+
       - name: Resolve dependencies
         run: cyrius deps
 
@@ -41,10 +55,33 @@ jobs:
           mkdir -p build
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
-      - name: Test
-        # v5.6.28: bare `cyrius test` picks up the [build].test entry
-        # AND auto-discovers tests/*.tcyr — avoids the previous
-        # `cyrius test src/test.cyr` form that hard-failed when the
-        # stub didn't exist (Issue 1) and also wouldn't ever exercise
-        # tests/${proj}.tcyr.
-        run: cyrius test
+      - name: Audit — fmt, lint, docs, tests, bench
+        # THE gate. CONTRIBUTING.md names `cyrius audit` as what a PR must pass
+        # and docs/development/state.md documents eight gates; before 3.3.1 none
+        # of fmt, lint, docs, fuzz, deny, bench or audit ran on any push or PR —
+        # the workflow built and tested and nothing else, so every other gate
+        # existed only on a developer's machine.
+        #
+        # `cyrius audit` was genuinely unusable until 6.5.35: it skipped
+        # dependency resolution before compiling its test and bench legs and so
+        # failed with spurious "undefined variable F64_ONE" on any project with
+        # git-dep bundles. That is fixed, and it exits 0 here.
+        run: cyrius audit
+
+      - name: Fuzz
+        run: cyrius fuzz
+
+      - name: Dependency policy
+        run: cyrius deny src/main.cyr
+
+      - name: Distlib is regenerable and current
+        # dist/svara.cyr is the artifact consumers actually compile. It is
+        # checked in, so it can drift from src/ silently — regenerate and fail
+        # if the tree is dirty.
+        run: |
+          set -e
+          cyrius distlib
+          git diff --exit-code -- dist/ || {
+              echo "dist/ is stale — run 'cyrius distlib' and commit the result"
+              exit 1
+          }

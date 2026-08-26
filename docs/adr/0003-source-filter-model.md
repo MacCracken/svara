@@ -1,8 +1,12 @@
-# ADR-001: Source-Filter Model Choice
+# 0003 — Source-filter model choice
 
-## Status
+**Status**: Accepted
+**Date**: 2026-03-27 (Rust v1.0.0); carried into the Cyrius port unchanged
 
-Accepted (v1.0.0)
+> Re-homed 2026-08-26 from `docs/architecture/` to `docs/adr/` as 0003 (was ADR-001, `docs/architecture/`).
+> These are DECISIONS, so `docs/adr/README.md`'s own scheme puts them here.
+> The decision is a domain one and survives the port; only Rust-specific
+> wording below was corrected.
 
 ## Context
 
@@ -37,7 +41,8 @@ interaction feedback.
 - **Scientific foundation**: Formant frequencies are well-documented (Hillenbrand
   et al. 1995, Peterson & Barney 1952). Reproducible and verifiable.
 - **Performance**: SOA biquad bank with fixed MAX_FORMANTS=8 enables SIMD
-  auto-vectorization. ~1,000x real-time at 44.1kHz.
+  auto-vectorization. (Rust-era figure. The Cyrius port emits scalar code and
+  measures ~40x real-time; see ../benchmarks.md.)
 - **LF model**: Widely used in speech research, single Rd parameter captures the
   entire pressed-to-breathy voice quality dimension.
 
