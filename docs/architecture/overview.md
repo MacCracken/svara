@@ -3,7 +3,7 @@
 > Rewritten 2026-08-26 for the Cyrius port. The pre-port version described a Rust
 > crate: a `math` module that does not exist, "coefficients stored as f32 for
 > processing" (the port is f64 throughout), compiler auto-vectorization, a
-> `no_std` section, and "~5,000× real-time" against a measured ~40×.
+> `no_std` section, and "~5,000× real-time" against a measured ~64×.
 
 ## Synthesis pipeline
 
@@ -35,8 +35,9 @@
 
 ## Module map
 
-16 `.cyr` modules. `dsp.rs` folded into `error.cyr`; `math.rs` maps to the
-`ganita` stdlib and has no module.
+17 library modules plus `main.cyr`, the smoke entry. `dsp.rs` folded into
+`error.cyr`; `math.rs` maps to the `ganita` stdlib and has no module; `logging`
+has no Rust counterpart beyond the `logging` Cargo feature.
 
 | Module | Purpose | Key types |
 |---|---|---|
@@ -55,7 +56,8 @@
 | `sequence` | Phoneme sequencing + coarticulation | `SvPhonemeSequence`, `SvPhonemeEvent` |
 | `pool` | Pooled synthesis context | `SvSynthesisPool` |
 | `render` | Batch rendering | `SvBatchRenderer`, `SvRenderOutput`, `SvRenderProgress` |
-| `bridge` | Scalar maps from sibling components | (free functions) |
+| `bridge` | 19 scalar maps from sibling components | (free functions) |
+| `logging` | sakshi tracing, `-D LOGGING` only | `svara_log_*`, `svara_span_*` |
 
 ## Naming
 
@@ -94,8 +96,12 @@ related allocation-failure discipline.
 
 **Cyrius emits scalar code.** There is no auto-vectorization. A bit-identical
 AVX2 formant bank was prototyped and reverted — it bought ~5%, because the loop
-is memory-bound (the SOA state shuffle dominates), not compute-bound. See
-`docs/development/roadmap.md` 3.5.0.
+is memory-bound (the SOA state shuffle dominates), not compute-bound. 3.5.0 then
+got **−6%** from the same insight without any SIMD, by collapsing the redundant
+per-slot input delay line: all eight biquads share one input, so `x1`/`x2` held
+identical values in every slot. Further SIMD work waits on Cyrius codegen that
+does not round-trip each `f64v4` op through memory (expected in a later 6.5.x).
+See [`../development/roadmap.md`](../development/roadmap.md).
 
 ## Precision and performance
 
@@ -104,11 +110,15 @@ is memory-bound (the SOA state shuffle dominates), not compute-bound. See
   f32 tolerance the Rust tests used.
 - **SOA bank**, `SVARA_MAX_FORMANTS = 8` fixed slots; unused slots hold zeroed
   coefficients and contribute nothing.
-- **Measured**: glottal ~82 ns/sample, formant ~179 ns, tract ~295 ns — a full
-  chain ≈ 0.56 µs/sample, about **40× real-time** at 44.1 kHz on one core
-  (x86_64, cycc 6.5.35). A same-machine head-to-head puts the per-DSP-unit gap
-  against the Rust at 10–38×; see
-  [`../benchmarks.md`](../benchmarks.md) and
+- **Measured**: glottal ~77 ns/sample, formant ~156 ns, tract ~275 ns; the full
+  glottal → tract chain **≈ 0.35 µs/sample**, about **64× real-time** at 44.1 kHz
+  on one core (x86_64, cycc 6.5.35).
+
+  ⚠ **The chain is measured end to end, not summed.** `tract process_sample`
+  already contains the formant bank, so adding the three per-unit rows
+  double-counts it — which is how this figure was computed until 3.5.3, and it
+  understated svara by ~1.6×. A same-machine head-to-head puts the per-DSP-unit
+  gap against the Rust at 10–38×; see [`../benchmarks.md`](../benchmarks.md) and
   [`../benchmarks-rust-v-cyrius.md`](../benchmarks-rust-v-cyrius.md).
 - **Tolerance parity, not bit-exact.** Transcendentals come from `ganita` and are
   not bit-identical across architectures, so the `.tcyr` suites assert within

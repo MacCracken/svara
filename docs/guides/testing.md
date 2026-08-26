@@ -15,10 +15,22 @@ cyrius deny src/main.cyr           # dependency policy
 cyrius bench                       # auto-discovers benches/*.bcyr
 ```
 
-`cyrius audit` is what CI runs and what `CONTRIBUTING.md` asks a PR to pass. It
-was unusable before toolchain 6.5.35 — it skipped dependency resolution before
-compiling its test and bench legs, so it failed with spurious
-"undefined variable F64_ONE" on any project with git-dep bundles. That is fixed.
+`cyrius audit` is what a PR must pass. It was unusable before toolchain 6.5.35 —
+it skipped dependency resolution before compiling its test and bench legs, so it
+failed with spurious "undefined variable F64_ONE" on any project with git-dep
+bundles. That is fixed.
+
+⚠ **Exiting 0 is necessary, not sufficient — two measured gaps.** It prints
+`scope: src`, so its fmt/lint/docs legs **never touch `tests/` or `benches/`**;
+a suite with five >120-char lines passed it clean. And `cyrius test` does not
+forward `-D`, so its tests leg only ever compiles the no-defines half of an
+`#ifdef`-gated feature. CI closes both — a tests/benches lint step and
+`scripts/check-logging.sh`. Filed upstream as
+`cyrius/docs/development/issues/2026-08-26-audit-scope-excludes-tests-and-defines.md`.
+
+```bash
+./scripts/check-logging.sh    # the -D LOGGING gate: builds + passes BOTH ways
+```
 
 Per-file tools, when you want one thing:
 
@@ -36,16 +48,21 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**20 suites, 826 assertions.** One `.tcyr` per module, plus four that are not
+**22 suites, 917 assertions.** One `.tcyr` per module, plus six that are not
 module ports:
 
 | Suite | What it is |
 |---|---|
 | `svara.tcyr` | smoke |
 | `error` `rng` `smooth` `lod` `formant` `spectral` `glottal` `tract` `voice` `phoneme` `prosody` `trajectory` `sequence` `pool` `render` `bridge` | per-module ports of the Rust `#[test]` blocks |
-| `serde.tcyr` | JSON round-trips — 135 assertions |
+| `serde.tcyr` | JSON round-trips — 137 assertions |
 | `hardening.tcyr` | adversarial input for the [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md) hazard class |
 | `allocbudget.tcyr` | `_into`-variant equivalence + the per-sample arena budget |
+| `oracle.tcyr` | scenarios the Rust asserted and the port did not — expectations re-derived from `rust-old/`, cited by line |
+| `logging.tcyr` | the `-D LOGGING` contract; run **both ways** by `scripts/check-logging.sh`, since `cyrius test` does not forward `-D` |
+
+⚠ Counts drift. `cyrius audit` prints the live figure; treat the numbers here as
+a shape, not a gate.
 
 ## How to write a test here
 
@@ -136,17 +153,29 @@ discover `tests/*.bcyr`.
 - **Performance change** — `./scripts/bench-history.sh` before and after, and
   state whether the metric is time or arena bytes.
 
-## Known coverage gaps
+## Coverage gaps — closed in 3.5.1
 
-Recorded rather than left implicit; all are scoped in
-[`../development/roadmap.md`](../development/roadmap.md) 3.6.0, to be closed while
-`rust-old/` is still readable:
+Five scenarios the Rust asserted and the port asserted nowhere were found by
+auditing `rust-old/`'s 213 tests against the Cyrius suites. They are closed in
+`tests/oracle.tcyr` (69 assertions, no defects found), with every expected value
+**re-derived from the Rust and cited by line** rather than taken from running
+svara — because after `rust-old/` is retired the only remaining source would be
+svara's own output, which would freeze any existing bug in as "correct".
 
-- `svara_tract_set_quality` appears in **no suite or bench** — every
-  quality-conditional branch runs Full-only under test.
-- Non-zero jitter/shimmer is never asserted to perturb (the glottal goldens set
-  both to 0 for determinism).
-- `svara_glottal_set_breathiness` is referenced in no suite.
-- No test feeds *synthesized speech* into the analyzer; `spectral.tcyr` uses
-  synthetic sines only.
-- Seven `bridge` maps are tested on neither side of the port.
+What they were, kept as the record of how a gap of this kind hides:
+
+- **`svara_tract_set_quality` appeared in no suite or bench at all**, so every
+  quality-conditional branch ran Full-only under test — an entire feature with no
+  evidence behind it.
+- Non-zero jitter/shimmer was never asserted to perturb (the glottal suite sets
+  both to 0 to keep its goldens deterministic).
+- `svara_glottal_set_breathiness` was referenced in no suite.
+- Nothing fed *synthesized speech* to the analyzer; `spectral.tcyr` used
+  synthetic sines only, so the one cross-module acoustic check was missing.
+- Seven `bridge` maps were tested on neither side of the port.
+
+The lesson generalises: **a suite that ports another suite inherits its blind
+spots.** The Rust's tests were the source for svara's, so anything the Rust
+under-tested, svara under-tested identically — and the module suites all looked
+healthy. Auditing coverage against the oracle, rather than counting assertions,
+is what surfaced it.

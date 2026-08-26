@@ -30,7 +30,7 @@ oracle. See [`docs/development/state.md`](docs/development/state.md) for current
   builders; a whisper..shout vocal-effort continuum
 - **Spectral analysis**: FFT-based spectrum, formant estimation, band energy, compensated RMS
 - **LOD**: Full / Reduced / Minimal quality levels that skip pipeline stages for background voices
-- **Performance**: ~40× real-time at 44.1 kHz on one core, f64 end-to-end — see
+- **Performance**: ~64× real-time at 44.1 kHz on one core, f64 end-to-end — see
   [`docs/benchmarks.md`](docs/benchmarks.md)
 
 ## Quick Start
@@ -89,8 +89,12 @@ For real-time use, `svara_synthctx_*` (a reusable tract + glottal + scratch buff
 ```sh
 cyrius deps                              # resolve dependencies into lib/
 cyrius build src/main.cyr build/svara    # compile the smoke entry
-cyrius tests tests                       # run the .tcyr suites
+cyrius audit                             # the gate: fmt · lint · docs · tests · bench
+./scripts/check-logging.sh               # the -D LOGGING gate: builds + passes both ways
 ```
+
+Five runnable programs live in [`examples/`](examples/) — start with
+[`examples/streaming.cyr`](examples/streaming.cyr) if you are writing an audio callback.
 
 `src/main.cyr` is a smoke entry that links every module and exercises the pipeline end to end —
 it is not the consumption path. Consumers pull the distlib bundle instead.
@@ -108,7 +112,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.3.0"
+tag = "3.5.2"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
@@ -148,11 +152,17 @@ for the full consumption map and the flat-namespace rename hazard.
 | [hisab](https://github.com/MacCracken/hisab) | `2.11.2` | `num_fft` + `num_neumaier_sum` (spectral), `calc_monotone_cubic` (prosody), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
 | [naad](https://github.com/MacCracken/naad) | `2.2.1` | biquads + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract), noise + LFO (glottal) |
 | [goonj](https://github.com/MacCracken/goonj) | `2.0.4` | nothing directly — the naad bundle references it, so it must resolve |
-| [sakshi](https://github.com/MacCracken/sakshi) | `2.4.11` | transitive via hisab; goonj's logging backend |
+| [sakshi](https://github.com/MacCracken/sakshi) | `2.4.11` | structured logging under `-D LOGGING` (`src/logging.cyr`); also transitive via hisab and goonj's backend |
 
-**No feature flags.** Cyrius has none, and the port collapsed the Rust CFG split: svara carries
-only the naad-backend path (naad's biquad / noise / LFO), with no internal fallback. See
-[`docs/development/state.md`](docs/development/state.md) "Port decisions".
+**No feature flags**, but one compile-time switch. Cyrius has no feature system, and the port
+collapsed the Rust CFG split: svara carries only the naad-backend path (naad's biquad / noise /
+LFO), with no internal fallback. The Rust's `logging` feature survives as **`-D LOGGING`**, which
+routes tracing through sakshi — off by default and compiled out entirely when off. `SVARA_LOG`
+picks the level; only four coarse entry points are instrumented, never per-sample.
+
+```sh
+cyrius build -D LOGGING src/main.cyr build/svara && SVARA_LOG=debug ./build/svara
+```
 
 ## Architecture
 
@@ -171,9 +181,13 @@ More in [`docs/architecture/`](docs/architecture/) and the ADRs under [`docs/adr
 
 ## Performance
 
-A full glottal → formant → tract per-sample chain runs ≈ 0.56 µs/sample on x86_64 — roughly
-**40× real-time at 44.1 kHz on one core**. Per-unit: glottal ~82 ns, formant bank ~179 ns, tract
-~295 ns per sample.
+A full glottal → tract per-sample chain runs **≈ 0.35 µs/sample** on x86_64 — roughly
+**64× real-time at 44.1 kHz on one core**, measured end to end rather than derived. Per-unit:
+glottal ~77 ns, formant bank ~156 ns, tract ~275 ns per sample.
+
+⚠ Those three do not add up to the chain: `tract process_sample` **already includes** the formant
+bank. Summing them double-counts it, which is how this figure was computed until 3.5.3 — it
+understated svara by ~1.6×.
 
 Cyrius emits **scalar** code; there is no auto-vectorization. A bit-identical `f64v4` (AVX2)
 version of the formant bank was prototyped in 3.1.0 and **reverted** — it passed tolerance but

@@ -9,6 +9,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.5.3] - 2026-08-26 — documentation sweep, and a performance figure that was wrong by 1.6×
+
+**Docs only; no source change.** Every document swept against the tree rather
+than against the last document that said it. The roadmap is now what is *still to
+do*, with the `rust-old/` lane explicitly **parked on dhvani**.
+
+### Fixed — svara is ~64× real-time, not ~40×
+
+⭐ **The headline performance figure has been wrong since 3.0.0, and it
+understated svara.** Every doc said "a full glottal → formant → tract chain ≈
+0.56 µs/sample, roughly 40× real-time", computed by adding three benchmark rows:
+glottal + formant + tract.
+
+**`tract process_sample` already contains the formant bank** — the tract calls
+`svara_formant_filter_process_sample` (`src/tract.cyr`). Summing them
+double-counts it.
+
+The chain is measured *directly* by `tract synthesize_into 1024`, which is
+glottal → tract per sample. The arithmetic settles it:
+
+| | ns/sample |
+|---|---|
+| glottal `next_sample` | 77 |
+| tract `process_sample` (contains the formant bank) | 275 |
+| **sum, no double count** | **352** |
+| **`tract synthesize_into`, measured end to end** | **351.5** |
+| the old summed figure (glottal + formant + tract) | 508 |
+
+Agreement to 0.5 ns. The correct figures are **≈ 0.35 µs/sample** and **≈ 64×
+real-time at 44.1 kHz on one core**. Corrected in `README.md`,
+`docs/benchmarks.md`, `docs/architecture/overview.md`, `docs/development/state.md`
+and ADR-0003's parenthetical, each now carrying the warning that the per-unit
+rows must not be added.
+
+### Changed — `SECURITY.md` was materially misleading
+
+It listed **"1.x: Yes"** and nothing else — inherited from the Rust crate, and
+still saying so three releases after the Cyrius port shipped, while **3.0.0–3.1.2
+carry five defects reachable through the public API**.
+
+Rewritten per-release, with those five named and given reproducers (SIGSEGV,
+three process aborts, a silent NaN), the later hardening in 3.2.0 / 3.3.0 / 3.5.2,
+what svara explicitly does *not* defend against (unbounded `duration`; `SvRng` is
+not cryptographic), and the supply-chain position. This is goonj's precedent: a
+supported-versions table that hides known-vulnerable releases is worse than none.
+
+### Changed — the roadmap is future-facing, and `rust-old/` is parked
+
+The open lanes had accumulated ✅ items until they read as history. They now
+contain only what is left:
+
+- **3.6.0 — hot-path memory and SIMD.** Work available now (pool the per-note
+  buffers). SIMD items wait on Cyrius codegen that does not round-trip each
+  `f64v4` op through memory — **expected in a later 6.5.x**, so they are marked
+  to revisit rather than attempt.
+- **3.7.0 — retire `rust-old/`** — ⛔ **parked on dhvani.** Everything svara can
+  do is done: the serde contract transcribed, the five oracle test gaps closed,
+  the five examples ported, the third quirk annotated, the NaN parity question
+  resolved, the recovery incantation verified. **The oracle stays until a
+  downstream consumer builds against `dist/svara.cyr`, and dhvani has not been
+  updated to the Cyrius svara yet.** That work is dhvani's, on dhvani's schedule;
+  naad's roadmap names svara as *its* consumer-green gate, so the same exercise
+  unblocks both.
+- **v1.0 — hardening.** All three items' prerequisites are now met.
+
+The shipped table is sorted ascending again (it had drifted as rows were
+prepended) and the header says plainly which lanes are open, which is parked, and
+why.
+
+### Changed — the rest of the sweep
+
+- **`docs/guides/testing.md`** listed five coverage gaps that 3.5.1 closed. They
+  are now recorded as *closed*, with the generalisable lesson kept: **a suite that
+  ports another suite inherits its blind spots** — the Rust's tests were the
+  source for svara's, so anything the Rust under-tested, svara under-tested
+  identically, and every module suite still looked healthy. It also now carries
+  the two `cyrius audit` coverage gaps.
+- **`docs/architecture/overview.md`** said "16 `.cyr` modules" and omitted
+  `logging` entirely (added 3.4.0). Now 17 + the smoke entry, with the row.
+- **`docs/guides/getting-started.md`** told a newcomer to "edit `src/main.cyr`",
+  which is the smoke entry, not where features go. Rewritten with the real
+  layout, the `[lib] modules` step, the distlib regeneration step, and the two
+  things that actually bite (the never-freeing allocator; error codes rather than
+  `Result`, with two different failure shapes).
+- **`sakshi` promoted from transitive to direct** in `dependency-watch.md` and
+  `README.md` — since 3.4.0 `dist/svara.deps` names it, because the bundle
+  carries `src/logging.cyr`.
+- **Consumer tag refreshed** to 3.5.2 in `README.md` and the integration guide;
+  benchmark table refreshed to current numbers with per-release deltas dropped
+  (`benches/history.csv` is the honest place for those); `CLAUDE.md`'s oracle
+  principle now says to cite a **tag**, not a bare path.
+
+### Notes
+
+- **Every relative link in every Markdown file was checked** and resolves.
+- Assertion, module, suite and bench counts re-derived from the tree rather than
+  copied forward. `docs/guides/testing.md` now says outright that counts drift
+  and `cyrius audit` prints the live figure.
+- `dist/svara.cyr` regenerated at v3.5.3 (no source change; the version stamp).
+
 ## [3.5.2] - 2026-08-26 — the oracle's preserve-first gate
 
 Everything roadmap 3.6.0 requires to exist **before** `rust-old/` can be deleted,

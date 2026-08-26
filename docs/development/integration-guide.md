@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.4.0"
+tag = "3.5.2"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -36,7 +36,7 @@ git = "https://github.com/MacCracken/goonj.git"
 tag = "2.0.4"
 modules = ["dist/goonj.cyr"]
 
-# 3.4.0: svara's bundle carries src/logging.cyr, so `dist/svara.deps` now names
+# Since 3.4.0 svara's bundle carries src/logging.cyr, so `dist/svara.deps` now names
 # sakshi. It is NOT a new dependency -- sakshi already arrived transitively via
 # hisab, which svara's bundle requires -- but it is now explicit, and declaring
 # it keeps resolution independent of hisab's own pin.

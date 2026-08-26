@@ -42,7 +42,7 @@ interaction feedback.
   et al. 1995, Peterson & Barney 1952). Reproducible and verifiable.
 - **Performance**: SOA biquad bank with fixed MAX_FORMANTS=8 enables SIMD
   auto-vectorization. (Rust-era figure. The Cyrius port emits scalar code and
-  measures ~40x real-time; see ../benchmarks.md.)
+  measures ~64x real-time; see ../benchmarks.md.)
 - **LF model**: Widely used in speech research, single Rd parameter captures the
   entire pressed-to-breathy voice quality dimension.
 

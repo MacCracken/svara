@@ -5,6 +5,17 @@
 
 ## Version
 
+**3.5.3** (2026-08-26) — **documentation sweep.** ⭐ The headline performance
+figure had been wrong since 3.0.0 and understated svara: every doc said
+"0.56 µs/sample, ~40× real-time", summed from glottal + formant + tract — but
+**`tract process_sample` already contains the formant bank**, so that
+double-counts it. Measured end to end by `tract synthesize_into`, the chain is
+**0.35 µs/sample, ~64× real-time** (and glottal + tract agrees to 0.5 ns).
+`SECURITY.md` still listed "1.x: Yes" while 3.0.0–3.1.2 carry five reachable
+defects; rewritten per-release with reproducers. Roadmap made future-facing with
+`rust-old/` **parked on dhvani**. Counts re-derived from the tree; every relative
+Markdown link verified.
+
 **3.5.2** (2026-08-26) — **the oracle's preserve-first gate.** Everything
 roadmap 3.6.0 needs before `rust-old/` can go, except consumer-green: five
 runnable `examples/` ported from `rust-old/examples/` (svara had **none**, and CI
@@ -210,14 +221,16 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-713 `.tcyr` assertions across 20 suites: error / rng / smooth / lod / formant /
+917 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
-pool / render / bridge / **serde** / **hardening** / **allocbudget** (+ the
-`svara.tcyr` smoke) — all passing, all lint-clean, zero build warnings. Run one
-suite: `cyrius test tests/<mod>.tcyr`; the whole tree recursively:
-`cyrius tests tests`.
+pool / render / bridge / **serde** / **hardening** / **allocbudget** /
+**oracle** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
+lint-clean, zero build warnings. Run one suite: `cyrius test tests/<mod>.tcyr`;
+the whole tree recursively: `cyrius tests tests`. `tests/logging.tcyr` needs
+`./scripts/check-logging.sh` to be exercised with logging ON (58 more
+assertions), because `cyrius test` does not forward `-D`.
 
-Two of them are not parity ports and exist for reasons worth knowing:
+Four of them are not parity ports and exist for reasons worth knowing:
 
 - **`hardening.tcyr` (45)** — adversarial inputs for the hazard class in
   [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). Its
@@ -226,6 +239,14 @@ Two of them are not parity ports and exist for reasons worth knowing:
   value, 3 process abort, 1 SIGSEGV, 1 hang) and 1 control that passes on both
   sides. Re-measure this whenever the group is extended — a group where every
   line flips is a group whose controls are not controls.
+- **`oracle.tcyr` (69)** — five scenarios the Rust asserted and the port
+  asserted nowhere, found by auditing `rust-old/`'s 213 tests against the Cyrius
+  suites. Every expected value is **re-derived from the Rust and cited by line**,
+  never taken from running svara. **A suite that ports another suite inherits its
+  blind spots** — `svara_tract_set_quality` appeared in no suite or bench at all.
+- **`logging.tcyr` (12 off / 58 on)** — the `-D LOGGING` contract. The OFF half
+  asserts the four instrumented entry points still behave identically, which is
+  what proves the `#ifdef` blocks in their return paths changed nothing.
 - **`allocbudget.tcyr` (34)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
@@ -239,7 +260,7 @@ Two of them are not parity ports and exist for reasons worth knowing:
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
 per-call clock overhead: glottal ~82 ns, formant ~179 ns, tract ~295 ns/sample —
-a full chain ≈ 0.56 µs/sample (~40× real-time at 44.1 kHz). Renders: `/a/`
+the full glottal → tract chain **≈ 0.35 µs/sample (~64× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
 ~874 µs, `/s/` ~461 µs, `/ai/` ~918 µs, 3-phoneme sequence ~3.37 ms,
 `render_planned` ~18.7 ms (~21.4 ms toned) (x86_64, 2026-08-26, cycc 6.5.35).
 
@@ -257,7 +278,7 @@ All green on the 6.5.35 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
+| docs | `cyrdoc --check <f>` | 0 undocumented (284 public fns across 18 modules) |
 | tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 917 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | ⚠ NOT covered by `cyrius audit`, whose scope is `src` |
@@ -422,9 +443,19 @@ incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded, ✅ CHANGELOG 
 this file.
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, organised by release rather
-than by milestone. Shipped through **3.4.0**; three lanes remain — **3.5.0**
-hot-path memory and SIMD, **3.6.0** retire `rust-old/`, then **v1.0** hardening.
-Do not duplicate that list here.
+than by milestone. Do not duplicate that list here. As of 3.5.3:
+
+- **3.6.0 — hot-path memory and SIMD.** Open, with work available now (pool the
+  per-note buffers). The SIMD items wait on Cyrius codegen that does not
+  round-trip each `f64v4` op through memory — expected in a later 6.5.x.
+- **3.7.0 — retire `rust-old/`.** ⛔ **Parked on dhvani.** Everything svara can do
+  is done (serde contract transcribed, oracle test gaps closed, examples ported,
+  quirks annotated, NaN question resolved, recovery incantation verified). The
+  oracle stays until a downstream consumer builds against `dist/svara.cyr`, and
+  dhvani has not been updated to the Cyrius svara yet. Both siblings hold on the
+  same gate.
+- **v1.0 — hardening.** Security audit doc; decide the three v2.0.1 quirks;
+  consumer-green.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

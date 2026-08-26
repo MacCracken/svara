@@ -15,11 +15,11 @@ Track upstream dependencies for updates, breaking renames, and compatibility.
 | [naad](https://github.com/MacCracken/naad) | 2.2.1 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
 | [goonj](https://github.com/MacCracken/goonj) | 2.0.4 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
 
-## Transitive
+## Direct as of 3.4.0
 
-| Dep | Pin | Arrives via |
-|-----|-----|-------------|
-| [sakshi](https://github.com/MacCracken/sakshi) | 2.4.11 | hisab (and goonj's logging backend) |
+| Dep | Pin | What svara uses |
+|-----|-----|---------------------|
+| [sakshi](https://github.com/MacCracken/sakshi) | 2.4.11 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
 
 Pins are chosen to match what the bundles themselves pin — naad 2.2.1 pins hisab
 2.11.2 and goonj 2.0.4; hisab 2.11.2 pins sakshi 2.4.11 — so a downstream consumer
@@ -66,9 +66,10 @@ svara's own definitions, and check every survivor against the *new* bundle. Filt
 the result by hand — bare names like `peak` and `rms` show up as matches while
 being local variables. Signatures matter too, not just presence.
 
-Then run the gate: `cyrius audit` (green as of the 6.5.35 pin), or the individual
-`cyrfmt --check` / `cyrlint` / `cyrdoc --check` / `cyrius tests tests` /
-`cyrius fuzz` / `cyrius deny src/main.cyr` / `cyrius bench`.
+Then run the gate: `cyrius audit` (green as of the 6.5.35 pin), plus the two
+things it does **not** cover — `./scripts/check-logging.sh` (it cannot pass `-D`)
+and a `cyrfmt`/`cyrlint` pass over `tests/` and `benches/` (its scope is `src`).
+Both run in CI.
 
 ## Security monitoring
 

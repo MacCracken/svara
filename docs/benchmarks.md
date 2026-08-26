@@ -37,26 +37,42 @@ The batch-timed figures themselves did not move when the instrument changed,
 because they never depended on the per-call floor — which is exactly why a stale
 comment here was harmless in effect and still worth deleting.
 
-## Results (x86_64, single core, 2026-08-26, cycc 6.5.35)
+## Results (x86_64, single core, 2026-08-26, cycc 6.5.35, svara 3.5.3)
 
-| Benchmark | Avg | vs 3.1.0 | Notes |
-|---|---|---|---|
-| glottal `next_sample` (Rosenberg) | ~82 ns | = | periodic pulse + jitter/shimmer |
-| glottal `next_sample` (whisper) | ~86 ns | +4% | noise-only excitation |
-| glottal `next_sample` (creaky) | ~102 ns | = | LF + irregular period timing |
-| formant filter `process_sample` | ~179 ns | +1% | 8× SOA bandpass bank + DC blocker |
-| tract `process_sample` (Full) | ~295 ns | = | filter + nasal + subglottal + lip + feedback |
-| formant filter `process_block` 1024 | ~194 µs | −3% | ~190 ns/sample amortized |
-| tract `synthesize_into` 1024 | ~377 µs | +2% | glottal → tract, ~368 ns/sample |
-| phoneme synth /a/ (vowel) | ~857 µs | −1% | 0.05 s render (~2205 samples) + alloc |
-| phoneme synth /s/ (fricative) | ~458 µs | −3% | noise excitation path |
-| phoneme synth /ai/ (diphthong) | ~921 µs | −2% | control-rate formant coeffs (3.1.0) |
-| sequence render (3 phonemes) | ~3.36 ms | −1% | per-phoneme synth + variable crossfade |
-| `render_planned` (3 phonemes) | ~18.7 ms | new | per-sample formant interpolation + tract re-target |
-| `render_planned` toned | ~21.6 ms | new | as above, plus a per-sample prosody contour lookup |
+| Benchmark | Avg | Notes |
+|---|---|---|
+| glottal `next_sample` (Rosenberg) | ~85 ns | periodic pulse + jitter/shimmer |
+| glottal `next_sample` (whisper) | ~81 ns | noise-only excitation |
+| glottal `next_sample` (creaky) | ~103 ns | LF + irregular period timing |
+| formant filter `process_sample` | ~170 ns | 8× SOA bandpass bank + DC blocker |
+| tract `process_sample` (Full) | ~285 ns | **includes the formant bank**, + nasal + subglottal + lip + feedback |
+| formant filter `process_block` 1024 | ~202 µs | ~197 ns/sample amortized |
+| tract `synthesize_into` 1024 | ~373 µs | **the full chain** — glottal → tract, ~364 ns/sample |
+| phoneme synth /a/ (vowel) | ~849 µs | 0.05 s render (~2205 samples) + alloc |
+| phoneme synth /s/ (fricative) | ~439 µs | noise excitation path |
+| phoneme synth /ai/ (diphthong) | ~897 µs | control-rate formant coefficients (3.1.0) |
+| sequence render (3 phonemes) | ~3.33 ms | per-phoneme synth + variable crossfade |
+| `render_planned` (3 phonemes) | ~18.4 ms | per-sample formant interpolation + tract re-target |
+| `render_planned` toned | ~21.5 ms | as above, plus a per-sample prosody contour lookup |
 
-A full glottal → formant → tract per-sample chain is ≈ 0.56 µs/sample, i.e.
-roughly **40× real-time** at 44.1 kHz on one core.
+Per-release deltas are not tracked in this table — `benches/history.csv` has one
+row per benchmark per run, which is the honest place for them. A single run on
+this host is not trustworthy on its own: an unrelated run showed
+`glottal next_sample` moving 79 → 121 ns on code that had not changed. **Compare
+by building both trees and interleaving the runs**, taking the minimum of each;
+that is how 3.5.0's −6% was established.
+
+A full glottal → tract per-sample chain is **≈ 0.35 µs/sample**, i.e. roughly
+**64× real-time** at 44.1 kHz on one core — measured end to end by
+`tract synthesize_into 1024`, not derived.
+
+⚠ **Do not add the per-unit rows together to get the chain cost.** `tract
+process_sample` **already contains** `formant filter process_sample` — the tract
+calls the formant filter (`src/tract.cyr`). Summing glottal + formant + tract
+double-counts the bank and was how this figure was computed until 3.5.3, which
+understated svara by ~1.6×. The chain is measured directly by
+`tract synthesize_into 1024` (glottal → tract, per sample); the sum
+glottal + tract agrees with it to within 1 ns.
 
 Every row is within a few percent of the 3.1.0 run — host noise, not a toolchain
 effect. The 6.4.13 → 6.5.35 bump changed the *instrument* (measured timer floor,
