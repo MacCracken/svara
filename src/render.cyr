@@ -202,5 +202,13 @@ fn svara_batch_render_with_progress(r, cb, user) {
 # render_all -- render synchronously, no progress callback.
 #must_use
 fn svara_batch_render_all(r) {
-    return svara_batch_render_with_progress(r, 0, 0);
+    #ifdef LOGGING
+    var _sp = svara_span_enter("batch_render_all");
+    #endif
+    var out = svara_batch_render_with_progress(r, 0, 0);
+    #ifdef LOGGING
+    svara_span_leave(_sp);
+    if (svara_is_err(out) == 1) { var _e = svara_log_err(out); }
+    #endif
+    return out;
 }

@@ -1522,18 +1522,46 @@ fn svara_synthctx_implosive(self, phoneme, voice, n) {
 # ================================================================
 #must_use
 fn svara_synthctx_synthesize(self, phoneme, voice, duration, nasal) {
-    if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
-    if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
+    # The two argument rejections below sit BEFORE the span: a call refused on
+    # its arguments did no work worth timing, and an error line says more than
+    # a zero-length span would.
+    if (f64_le(duration, 0) == 1) {
+        #ifdef LOGGING
+        var _d1 = svara_log_err(SVARA_ERR_INVALID_DURATION);
+        #endif
+        return SVARA_ERR_INVALID_DURATION;
+    }
+    if (svara_is_finite(duration) == 0) {
+        #ifdef LOGGING
+        var _d2 = svara_log_err(SVARA_ERR_INVALID_DURATION);
+        #endif
+        return SVARA_ERR_INVALID_DURATION;
+    }
     var n = svara_count_from_f64(f64_mul(duration, SvSynthCtx_sample_rate(self)));   # saturating
     if (n == 0) { return 0; }
+    #ifdef LOGGING
+    var _sp = svara_span_enter("synthctx_synthesize");
+    #endif
     var buf = svara_synthctx_ensure_buffer(self, n);
-    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    if (buf == 0) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        var _d3 = svara_log_err(SVARA_ERR_COMPUTATION);
+        #endif
+        return SVARA_ERR_COMPUTATION;
+    }
     svara_tract_reset(SvSynthCtx_tract(self));
 
     var g = SvSynthCtx_glottal(self);
     svara_glottal_set_model(g, SVARA_GLOTTAL_ROSENBERG);
     var fe = svara_glottal_set_f0(g, SvVoiceProfile_base_f0(voice));
-    if (svara_is_err(fe) == 1) { return fe; }
+    if (svara_is_err(fe) == 1) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        var _d4 = svara_log_err(fe);
+        #endif
+        return fe;
+    }
     svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
     svara_glottal_set_jitter(g, SvVoiceProfile_jitter(voice));
     svara_glottal_set_shimmer(g, SvVoiceProfile_shimmer(voice));
@@ -1566,7 +1594,16 @@ fn svara_synthctx_synthesize(self, phoneme, voice, duration, nasal) {
             svara_formant_zero_buf(buf, n);   # Silence class
         }
     }
-    if (svara_is_err(e) == 1) { return e; }
+    if (svara_is_err(e) == 1) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        var _d5 = svara_log_err(e);
+        #endif
+        return e;
+    }
     svara_ph_apply_envelope(buf, n);
+    #ifdef LOGGING
+    svara_span_leave(_sp);
+    #endif
     return n;
 }

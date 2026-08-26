@@ -86,10 +86,13 @@ Two formatter notes:
 - **Negative error codes, not `Result`.** Fallible functions return a negative `SVARA_ERR_*` from
   `src/error.cyr` (or a valid pointer / count on success); callers test with `svara_is_err` and
   name with `svara_err_name`. Never panic or abort in library code.
-- **No `println!`-style output from library code.** svara emits no logs today — diagnostics are
-  error codes only. Structured logging through **sakshi** is unimplemented and tracked as
-  **M-log** in [`docs/development/roadmap.md`](docs/development/roadmap.md); do not wire ad-hoc
-  printing in ahead of it.
+- **No ad-hoc printing from library code.** Diagnostics are error codes; anything else goes
+  through `src/logging.cyr`, which routes to **sakshi** and is compiled only under `-D LOGGING`.
+  Two rules: wrap every call site in `#ifdef LOGGING` so nothing is compiled in when logging is
+  off, and **never instrument the per-sample path** — `scripts/check-logging.sh` fails the build
+  if a `svara_log_*` or `svara_span_*` call appears in one of the per-sample functions. Spans use
+  the token form (`var t = svara_span_enter(..)` … `svara_span_leave(t)` before **every** return),
+  because a plain enter/exit pair leaks a span on each early return.
 - **f64 end-to-end.** The Rust was f32/f64 mixed; the port is f64 throughout (hisab and naad are
   f64-only). `SV_EPSILON` preserves the f32 tolerance the Rust tests used, promoted to f64.
 - Test after every change, not after the feature is "done". ONE change at a time — never bundle

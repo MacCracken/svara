@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.4.0] - 2026-08-26 — structured logging through sakshi
+
+**M-log.** svara emitted no diagnostics at all — errors were integer codes and
+nothing else. It now routes tracing through **sakshi**, the AGNOS structured
+logging substrate, so its spans nest inside a consumer's and correlate across
+the stack. This also completes the sakshi routing varna's own `logging.cyr`
+explicitly deferred, approximating it with a level-gated stderr writer.
+
+**Off by default, and compiled out entirely when off** — no log call, no runtime
+level check, no call frame. Suite **828 → 840 assertions** (21 suites), plus
+**58** more that only exist in the logging build.
+
+```sh
+cyrius build -D LOGGING src/main.cyr build/svara
+SVARA_LOG=debug ./build/svara
+```
+
+### Added — `src/logging.cyr`
+
+`svara_log_init()` reads `SVARA_LOG` (`off`/`fatal`/`error`/`warn`/`info`/
+`debug`/`trace`, default `info`); an unrecognised value falls back to `info`
+rather than silencing a program that asked for logs. Level-gated
+`svara_log_error`/`_warn`/`_info`/`_debug`/`_trace`, structured `svara_log_kv`,
+and `svara_log_err`, which binds a `SVARA_ERR_*` to the active span via
+`sakshi_err_at_span` — the span depth becomes the error's context, so a consumer
+can tell *which nesting level* failed.
+
+Instrumented: **four coarse entry points** — `svara_sequence_render`,
+`svara_batch_render_all`, `svara_synthctx_synthesize`, `svara_pool_render`.
+**Never per-sample**: a span costs two `clock_gettime` calls, which at 44.1 kHz
+would dominate the ~0.56 µs it takes to synthesize a sample.
+
+### Added — token-based spans, because every entry point has early returns
+
+⭐ **A plain `span_enter` / `span_exit` pair would leak a span on every error
+return**, and sakshi's stack is 16 deep — so a leak per failed render would
+slowly poison the log rather than fail loudly. `svara_synthctx_synthesize` alone
+has seven returns.
+
+`svara_span_enter` returns the depth to unwind *to*, and `svara_span_leave(token)`
+unwinds to it — correct even if an inner span leaked, and harmless called twice.
+
+Asserted, not assumed: **40 consecutive failing renders leave the span stack at
+depth 0**, which is well past the 16 that would overflow it. Each error exit is
+covered separately, including the pre-span argument rejections that correctly
+open no span at all.
+
+### Fixed — `SVARA_LOG=off` now means off, spans included
+
+⚠ **sakshi does not level-gate span events.** `_sk_emit_span` writes regardless
+of `sakshi_set_level`, because a span is structural rather than a log line. That
+is defensible in sakshi and wrong here: setting `off` still streamed every
+ENTER/EXIT pair. svara gates spans itself.
+
+Asserted with the ring buffer: a whole `sequence_render` at level `off` emits
+**zero** events, and the *same* render at `debug` emits some — so the silence is
+the level, not a broken sink.
+
+### Added — `scripts/check-logging.sh`, and CI runs it
+
+⚠ **`cyrius test` does not forward `-D`.** So `cyrius audit` only ever compiles
+the logging-OFF half, and without this script the entire `#ifdef LOGGING` half of
+the codebase — the module and the guarded blocks through four entry points —
+**would be built by nobody**.
+
+The script builds and runs both ways, requires both builds to emit no `warning:`
+at all, and asserts structurally that **no log or span call appears on the
+per-sample path** (`svara_glottal_next_sample`, `svara_tract_process_sample`,
+`svara_formant_bank_process`, …). That last check was verified to discriminate by
+injecting a `svara_log_trace` into `svara_formant_bank_process` and confirming it
+fails.
+
+### Notes
+
+- **`tests/logging.tcyr` is useful in both modes.** With logging off it asserts
+  the four instrumented entry points still behave exactly as before — which is
+  what proves the `#ifdef` blocks threaded through their return paths changed
+  nothing. Benchmarks agree: every row is within noise of 3.3.2, and the ten
+  render-path digests are still identical to 3.1.2.
+- ⚠ **`dist/svara.deps` now names sakshi**, because the bundle carries
+  `src/logging.cyr`. This is **not a new dependency** — sakshi already arrived
+  transitively through hisab, which svara's bundle requires — but it is now
+  explicit. `docs/development/integration-guide.md` shows the stanza.
+- **The lint rule I documented in 3.3.1 caught this release's own module**: the
+  header used the word "deferred" without a tracking pointer on the same line,
+  and `cyrlint` flagged it. Fixed by citing the roadmap where the word appears.
+- `dist/svara.cyr` regenerated at v3.4.0 (5,728 lines).
+
 ## [3.3.2] - 2026-08-26 — glottal restore is exact; a 3.3.0 limitation was self-inflicted
 
 ⭐ **3.3.0 shipped a documented limitation that was not real.** `SvGlottalState`

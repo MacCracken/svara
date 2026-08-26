@@ -19,6 +19,7 @@ output = "build/svara"
 [lib]
 modules = [
     "src/error.cyr",
+    "src/logging.cyr",
     "src/rng.cyr",
     "src/smooth.cyr",
     "src/lod.cyr",

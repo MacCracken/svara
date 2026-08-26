@@ -47,7 +47,9 @@ Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the r
 ```sh
 cyrius deps                              # resolve dependencies
 cyrius build src/main.cyr build/svara    # compile
+cyrius build -D LOGGING src/main.cyr build/svara   # with sakshi tracing (off by default)
 cyrius test                              # run tests/*.tcyr
+./scripts/check-logging.sh               # M-log gate: builds + passes BOTH ways
 ```
 
 ## Key Principles

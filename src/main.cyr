@@ -6,12 +6,20 @@
 # tests/*.tcyr; this entry is not what those suites include. Consumers pull the
 # `dist/svara.cyr` bundle instead (see cyrius.cyml [lib]).
 
+# sakshi is included ONLY under -D LOGGING. svara does not otherwise use it --
+# it reaches the dependency set transitively through hisab, whose own calls to it
+# are dead here -- so including it unconditionally would put ~76 unused public
+# functions in the flat namespace for nothing.
+#ifdef LOGGING
+include "lib/sakshi.cyr"
+#endif
 include "lib/hisab.cyr"
 include "lib/goonj.cyr"
 include "lib/naad.cyr"
 include "lib/hashmap.cyr"
 include "lib/bayan.cyr"
 include "src/error.cyr"
+include "src/logging.cyr"
 include "src/rng.cyr"
 include "src/smooth.cyr"
 include "src/lod.cyr"
@@ -30,6 +38,10 @@ include "src/bridge.cyr"
 
 # main -- smoke entry: exercise the full pipeline; 0 on success, nonzero on any failure.
 fn main() {
+    #ifdef LOGGING
+    svara_log_init();
+    svara_log_info("svara smoke starting");
+    #endif
     alloc_init();
 
     # Smoke: a valid sample rate passes, a bad one is rejected.

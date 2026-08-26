@@ -20,6 +20,7 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.4.0** | 2026-08-26 | **Structured logging (M-log).** sakshi tracing behind `-D LOGGING`, off by default and compiled out when off; four coarse entry points, never per-sample. Spans are token-based because every entry point has early returns. `scripts/check-logging.sh` builds and runs both ways — `cyrius test` does not forward `-D`, so `cyrius audit` only ever compiled the OFF half. |
 | **3.3.2** | 2026-08-26 | **Glottal restore is exact.** 3.3.0 documented a limitation that was not real — naad derives accessors on `NoiseGenerator` and `Lfo`, so their state was reachable all along. `SvGlottalState` now carries it; the test flipped from asserting divergence to asserting identity. Lesson recorded in ADR-0002: a foreign type lacks a **codec**, not accessors. |
 | **3.3.1** | 2026-08-26 | **Docs, CI, stale claims.** CI ran four steps and none of the gate it documents; it now runs `cyrius audit` + fuzz + deny, asserts the toolchain matches the pin, and checks `dist/` is current. Four Rust-era docs rewritten (incl. the threat model, which asserted mitigations 3.1.3 disproved); four pre-port ADRs re-homed as 0003–0006; `.gitignore` stopped hiding `benches/history.csv`. |
 | **3.3.0** | 2026-08-26 | **State companions.** The nine engine types ADR-0002 excluded from direct derive each got a flat companion + `save`/`restore`. Derived types 13 → 22, suite 745 → 826. Restore is measured behaviourally, and its two limits (naad's internal state; filter delay lines) are pinned by tests that assert the divergence exists. |
@@ -33,32 +34,6 @@ round-trip coverage (`tests/serde.tcyr`, 22 tests): `Formant`, `VowelTarget`,
 `VoiceOnsetTime`, `RenderProgress`. The static data tables stayed as embedded
 pure functions — a synth library shouldn't carry a runtime data file, and they
 were never serde in the Rust either. Container types are [3.2.0](#320--container-serde).
-
----
-
-## 3.4.0 — structured logging
-
-**M-log. Unblocked** — `lib/sakshi.cyr` is already vendored (transitively via
-hisab), so this is wiring, not a new dependency. svara currently emits no logs;
-diagnostics are error codes only (`error.cyr` + `svara_err_name`). It also
-completes the sakshi routing that varna's `logging.cyr` explicitly deferred.
-
-Plan (mirrors varna's `src/logging.cyr`):
-
-- [ ] `src/logging.cyr` gated behind `-D LOGGING`; **zero cost when off** (no log
-      calls compiled in). Off by default so the synthesis hot path stays
-      allocation-free.
-- [ ] Level-gated `svara_log_*` wrappers over sakshi's trace API; init reads a
-      `SVARA_LOG` level (default `info`).
-- [ ] sakshi spans on the coarse entry points for call-chain correlation —
-      `svara_sequence_render`, `svara_batch_render_all` / `_with_progress`,
-      `svara_synthctx_synthesize`, `svara_pool_render`. **Never per-sample.**
-- [ ] Tie errors to the active span via `sakshi_err_at_span(code, category)` so a
-      `SVARA_ERR_*` carries span context for dhvani / vansh.
-
-**Gate:** builds warning-free with **and** without `-D LOGGING`; no allocation or
-log call on the per-sample path; output correlates across the AGNOS stack (same
-substrate as varna and shabdakosh).
 
 ---
 
@@ -254,6 +229,33 @@ expectations **from `rust-old/`**, not from svara's own output — that is naad
 
 Kept because in all three the *plan* was wrong in a way worth remembering, not
 just because the work is done.
+
+## 3.4.0 — structured logging
+
+✅ **Shipped 2026-08-26.** M-log. svara emitted no diagnostics at all; it now
+routes tracing through sakshi, off by default behind `-D LOGGING` and compiled
+out entirely when off. Four coarse entry points instrumented — sequence render,
+batch render, synthesis-context render, pool render — **never per-sample**.
+
+Three things worth carrying forward:
+
+- **Spans are token-based, not paired.** Every instrumented entry point has early
+  returns (`svara_synthctx_synthesize` has seven), and a plain enter/exit pair
+  leaks a span on each of them. sakshi's stack is 16 deep, so leaks would poison
+  the log slowly rather than fail loudly. `svara_span_leave(token)` unwinds to a
+  recorded depth. Asserted with 40 consecutive failing renders.
+- ⚠ **sakshi does not level-gate span events** — `_sk_emit_span` writes
+  regardless of `sakshi_set_level`, because a span is structural rather than a
+  log line. svara gates them itself, or `SVARA_LOG=off` would still stream every
+  ENTER/EXIT pair.
+- ⚠ **`cyrius test` does not forward `-D`.** `cyrius audit` therefore only ever
+  compiles the logging-OFF half. `scripts/check-logging.sh` builds and runs both
+  ways and is wired into CI; without it the whole `#ifdef LOGGING` half of the
+  codebase would be built by nobody. It also asserts structurally that no log or
+  span call sits on the per-sample path — verified to discriminate by injecting
+  one and watching it fail.
+
+---
 
 ## 3.2.0 — container serde
 

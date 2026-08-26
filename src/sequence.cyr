@@ -257,9 +257,18 @@ fn svara_seq_crossfade(segments, cf_lengths) {
 # Returns a vec<f64> of samples, or a negative SVARA_ERR_*.
 #must_use
 fn svara_sequence_render(seq, voice, sample_rate) {
+    #ifdef LOGGING
+    var _sp = svara_span_enter("sequence_render");
+    #endif
     var events = SvPhonemeSequence_events(seq);
     var n = vec_len(events);
-    if (n == 0) { return vec_new(); }
+    if (n == 0) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        svara_log_debug("sequence_render: empty sequence");
+        #endif
+        return vec_new();
+    }
     var in_cluster = svara_seq_detect_clusters(events);
     var durs = svara_seq_durations(seq, in_cluster);
     var nasals = svara_detect_nasalization(svara_seq_phoneme_list(seq));
@@ -277,7 +286,13 @@ fn svara_sequence_render(seq, voice, sample_rate) {
         }
         var seg = svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, sample_rate,
           vec_get(durs, i), vec_get(nasals, i));
-        if (svara_is_err(seg) == 1) { return seg; }
+        if (svara_is_err(seg) == 1) {
+            #ifdef LOGGING
+            svara_span_leave(_sp);
+            var _e = svara_log_err(seg);
+            #endif
+            return seg;
+        }
         vec_push(segments, seg);
         i = i + 1;
     }
@@ -302,7 +317,11 @@ fn svara_sequence_render(seq, voice, sample_rate) {
         vec_push(cfs, cf_len);
         i = i + 1;
     }
-    return svara_seq_crossfade(segments, cfs);
+    var out = svara_seq_crossfade(segments, cfs);
+    #ifdef LOGGING
+    svara_span_leave(_sp);
+    #endif
+    return out;
 }
 
 # render_planned -- continuous trajectory-planned synthesis (per-sample formant

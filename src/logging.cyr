@@ -1,0 +1,159 @@
+# logging.cyr -- structured logging and tracing through sakshi.
+#
+# OFF BY DEFAULT. The whole module compiles only under `-D LOGGING`, and every
+# call site in svara is `#ifdef`-guarded, so with logging off there is no log
+# call in the binary at all -- not a runtime level check, not a call frame.
+# That matters here because the alternative would put a branch on the
+# per-sample synthesis path, which is the one thing this module must never do.
+#
+#   cyrius build -D LOGGING src/main.cyr build/svara
+#
+# Ports rust-old's `logging` feature (tracing + tracing-subscriber). It also
+# completes the sakshi routing that varna deferred (see docs/development/roadmap.md
+# M-log): varna's own `src/logging.cyr` approximated it with a level-gated stderr
+# writer; svara routes to sakshi proper so spans correlate across the AGNOS stack.
+#
+# WHAT IS INSTRUMENTED: the four coarse entry points -- sequence render, batch
+# render, synthesis-context render, pool render. **Never per-sample.** A span
+# costs two `clock_gettime` calls, which at 44.1 kHz would dominate the ~0.56 us
+# it takes to synthesize a sample.
+#
+# Requires (from the build/test unit): stdlib string (strlen/streq), io
+# (getenv), and `lib/sakshi.cyr` -- which svara does NOT otherwise include, so
+# the include is `#ifdef`-guarded in the entry files too.
+
+#ifdef LOGGING
+
+# SVARA_LOG is read once at init. sakshi's levels run FATAL=0 .. TRACE=5, so a
+# higher number is more verbose and "off" is below fatal.
+var SVARA_LOG_OFF = 0 - 1;
+
+# ⚠ sakshi does NOT level-gate span events -- `_sk_emit_span` writes regardless
+# of `sakshi_set_level`, because a span is structural rather than a log line.
+# That is defensible in sakshi and wrong for svara: `SVARA_LOG=off` must mean
+# off, not "off except for the ENTER/EXIT pairs". So svara gates spans itself,
+# on this flag. Default 1, so a caller who never calls svara_log_init() still
+# gets spans at sakshi's own default.
+var _svara_spans_on = 1;
+
+# level_from_name -- map a level name to a sakshi SK_* level, or SVARA_LOG_OFF.
+# An unrecognised name yields SK_INFO rather than failing: a bad SVARA_LOG value
+# should not silence a program that asked for logging.
+#must_use
+fn svara_log_level_from_name(name) {
+    if (streq(name, "off") == 1) { return SVARA_LOG_OFF; }
+    if (streq(name, "fatal") == 1) { return SK_FATAL; }
+    if (streq(name, "error") == 1) { return SK_ERROR; }
+    if (streq(name, "warn") == 1) { return SK_WARN; }
+    if (streq(name, "info") == 1) { return SK_INFO; }
+    if (streq(name, "debug") == 1) { return SK_DEBUG; }
+    if (streq(name, "trace") == 1) { return SK_TRACE; }
+    return SK_INFO;
+}
+
+# init_with_level -- start logging at an explicit level name. Returns the
+# resolved sakshi level.
+fn svara_log_init_with_level(name) {
+    var lvl = svara_log_level_from_name(name);
+    if (lvl == SVARA_LOG_OFF) {
+        # below FATAL: nothing sakshi emits can pass -- and spans off, since
+        # sakshi would otherwise keep writing them.
+        sakshi_set_level(SK_FATAL - 1);
+        _svara_spans_on = 0;
+        return SVARA_LOG_OFF;
+    }
+    sakshi_set_level(lvl);
+    _svara_spans_on = 1;
+    return lvl;
+}
+
+# init -- start logging at the level named by the SVARA_LOG environment
+# variable, defaulting to `info` when it is unset or empty. Output goes to
+# sakshi's current target (stderr by default); a consumer that wants a file, a
+# ring buffer or UDP calls sakshi's own `sakshi_output_*` before this.
+fn svara_log_init() {
+    var env = getenv("SVARA_LOG");
+    if (env == 0) { return svara_log_init_with_level("info"); }
+    if (strlen(env) == 0) { return svara_log_init_with_level("info"); }
+    return svara_log_init_with_level(env);
+}
+
+# level -- the active sakshi level.
+#must_use
+fn svara_log_level() { return sakshi_get_level(); }
+
+# ---- emit ------------------------------------------------------------------
+# Each takes a cstring and measures it, so call sites read as plain text.
+
+# error -- something the caller asked for could not be done.
+fn svara_log_error(msg) { return sakshi_error(msg, strlen(msg)); }
+# warn -- svara carried on, but the result may not be what was wanted.
+fn svara_log_warn(msg) { return sakshi_warn(msg, strlen(msg)); }
+# info -- a coarse lifecycle event. The default level.
+fn svara_log_info(msg) { return sakshi_info(msg, strlen(msg)); }
+# debug -- detail useful when a render looks wrong. Off by default.
+fn svara_log_debug(msg) { return sakshi_debug(msg, strlen(msg)); }
+# trace -- per-phoneme detail. Never per-sample; see the header note.
+fn svara_log_trace(msg) { return sakshi_trace(msg, strlen(msg)); }
+
+# log_kv -- one structured key/value pair at `level`, for the numbers worth
+# correlating downstream (sample counts, phoneme ids, durations).
+fn svara_log_kv(level, msg, key, val) {
+    return sakshi_log_kv(level, msg, strlen(msg), key, strlen(key), val, strlen(val));
+}
+
+# ---- spans -----------------------------------------------------------------
+# svara's span discipline is TOKEN-BASED, not paired-call-based, because every
+# instrumented entry point has several early returns and a plain
+# enter/exit pair would leak a span on each of them. sakshi's stack is 16 deep
+# and warns once when it overflows, so a leak per failed render would be a slow
+# poisoning of the log rather than a loud failure.
+#
+#   var tok = svara_span_enter("name");
+#   ... any number of early returns, each preceded by svara_span_leave(tok) ...
+#
+# `leave` unwinds to the recorded depth, so it is correct even if an inner span
+# was itself leaked, and harmless if called twice.
+
+# span_enter -- open a span and return the depth to unwind back to.
+#must_use
+fn svara_span_enter(name) {
+    var depth = sakshi_span_depth();
+    if (_svara_spans_on == 0) { return depth; }
+    sakshi_span_enter(name, strlen(name));
+    return depth;
+}
+
+# span_leave -- close spans until the depth recorded by `span_enter` is reached.
+fn svara_span_leave(token) {
+    while (sakshi_span_depth() > token) {
+        var elapsed = sakshi_span_exit();
+        if (elapsed < 0) { return 0; }
+    }
+    return 0;
+}
+
+# span_depth -- current nesting depth (0 when balanced). Exposed so tests can
+# assert balance across success AND error paths, which is the property that
+# makes token-based unwinding worth having.
+#must_use
+fn svara_span_depth() { return sakshi_span_depth(); }
+
+# spans_enabled -- 1 unless the level is `off`. Exposed for the same reason.
+#must_use
+fn svara_spans_enabled() { return _svara_spans_on; }
+
+# ---- errors ----------------------------------------------------------------
+
+# log_err -- record a negative SVARA_ERR_* against the active span and return
+# sakshi's packed error value. The span depth becomes the error's context, so a
+# downstream consumer (dhvani / vansh) can tell which nesting level failed.
+fn svara_log_err(code) {
+    svara_log_error(svara_err_name(code));
+    return sakshi_err_at_span(0 - code, SVARA_LOG_ERR_CATEGORY);
+}
+
+# svara's category in sakshi's shared error space.
+var SVARA_LOG_ERR_CATEGORY = 0x5356;   # 'SV'
+
+#endif

@@ -74,6 +74,14 @@ jobs:
       - name: Dependency policy
         run: cyrius deny src/main.cyr
 
+      - name: Logging gate — builds and passes with AND without -D LOGGING
+        # `cyrius test` does not forward `-D`, so `cyrius audit` above only ever
+        # compiles the logging-OFF half. Without this step the entire
+        # `#ifdef LOGGING` half of the codebase would be built by nobody.
+        # The script also asserts structurally that no log or span call sits on
+        # the per-sample synthesis path.
+        run: ./scripts/check-logging.sh
+
       - name: Distlib is regenerable and current
         # dist/svara.cyr is the artifact consumers actually compile. It is
         # checked in, so it can drift from src/ silently — regenerate and fail

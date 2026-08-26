@@ -1,0 +1,233 @@
+# logging.tcyr -- the M-log contract, asserted in BOTH build modes.
+#
+# `cyrius test` does not forward `-D`, so this suite cannot be run with logging
+# on by the ordinary runner. ./scripts/check-logging.sh builds and runs it both
+# ways, and CI calls that. Under `cyrius tests tests` only the OFF half runs,
+# which is still worth having: it is what proves the `#ifdef` blocks threaded
+# through the four instrumented entry points did not change their behaviour.
+#
+# Include order: sakshi (LOGGING only) -> hisab -> goonj -> naad -> error ->
+# logging -> ... -> render.
+
+#ifdef LOGGING
+include "lib/sakshi.cyr"
+#endif
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+
+#must_use
+fn lg_seq(voice) {
+    var s = svara_sequence_new();
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.03, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.03, SVARA_STRESS_UNSTRESSED));
+    return s;
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+
+    # ================================================================
+    test_group("instrumented entry points behave identically either way");
+    # ================================================================
+    # These four carry #ifdef blocks through their return paths. Run each in
+    # whichever mode this binary was built in and assert the ordinary contract.
+    var seq = lg_seq(voice);
+    var audio = svara_sequence_render(seq, voice, SR);
+    assert_eq(svara_is_err(audio), 0, "sequence_render succeeds");
+    assert_eq(vec_len(audio) > 0, 1, "sequence_render produced samples");
+    var empty = svara_sequence_render(svara_sequence_new(), voice, SR);
+    assert_eq(svara_is_err(empty), 0, "sequence_render on an empty sequence is not an error");
+    assert_eq(vec_len(empty), 0, "and returns no samples");
+
+    var ctx = svara_synthctx_new(voice, SR);
+    assert_eq(svara_is_err(ctx), 0, "synthctx constructs");
+    var cn = svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_A, voice, 0.02, 0);
+    assert_eq(cn > 0, 1, "synthctx_synthesize renders");
+    assert_eq(svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_A, voice, 0, 0),
+      SVARA_ERR_INVALID_DURATION, "synthctx_synthesize rejects a zero duration");
+
+    var pool = svara_pool_new(voice, SR);
+    assert_eq(svara_is_err(pool), 0, "pool constructs");
+    assert_eq(svara_pool_render(pool, SVARA_PH_VOWEL_A, voice, 0.02) > 0, 1, "pool_render renders");
+
+    var br = svara_batch_new(voice, SR);
+    svara_batch_push(br, SVARA_PH_VOWEL_A, 0.02, SVARA_STRESS_PRIMARY);
+    var out = svara_batch_render_all(br);
+    assert_eq(svara_is_err(out), 0, "batch_render_all succeeds");
+    assert_eq(vec_len(SvRenderOutput_samples(out)) > 0, 1, "batch_render_all produced samples");
+
+    #ifndef LOGGING
+    # ================================================================
+    test_group("logging is compiled out");
+    # ================================================================
+    # There is nothing to call: src/logging.cyr is entirely inside #ifdef
+    # LOGGING and lib/sakshi.cyr is not even included. Asserting that is what
+    # this half is for -- if the module ever leaks out of its guard, the
+    # not-defined branch below stops compiling and this suite fails loudly.
+    assert_eq(1, 1, "built without -D LOGGING: no log call is in this binary");
+    #endif
+
+    #ifdef LOGGING
+    # ================================================================
+    test_group("level names map to sakshi levels");
+    # ================================================================
+    assert_eq(svara_log_level_from_name("fatal"), SK_FATAL, "fatal");
+    assert_eq(svara_log_level_from_name("error"), SK_ERROR, "error");
+    assert_eq(svara_log_level_from_name("warn"), SK_WARN, "warn");
+    assert_eq(svara_log_level_from_name("info"), SK_INFO, "info");
+    assert_eq(svara_log_level_from_name("debug"), SK_DEBUG, "debug");
+    assert_eq(svara_log_level_from_name("trace"), SK_TRACE, "trace");
+    assert_eq(svara_log_level_from_name("off"), SVARA_LOG_OFF, "off");
+    # An unrecognised SVARA_LOG must not silence a program that asked for logs.
+    assert_eq(svara_log_level_from_name("banana"), SK_INFO, "an unknown name falls back to info");
+    assert_eq(svara_log_init_with_level("debug"), SK_DEBUG, "init_with_level returns the level");
+    assert_eq(svara_log_level(), SK_DEBUG, "and sakshi agrees");
+
+    # ================================================================
+    test_group("events actually reach the sink");
+    # ================================================================
+    # Route sakshi to its ring buffer so emission can be COUNTED, not assumed.
+    sakshi_output_buffer();
+    sakshi_ring_clear();
+    assert_eq(sakshi_ring_event_count(), 0, "control: the ring starts empty");
+    svara_log_info("logging test marker");
+    assert_eq(sakshi_ring_event_count() > 0, 1, "an info line reaches the ring");
+
+    sakshi_ring_clear();
+    svara_log_kv(SK_DEBUG, "rendered", "samples", "441");
+    assert_eq(sakshi_ring_event_count() > 0, 1, "a structured kv pair reaches the ring");
+
+    # Level gating must actually suppress, not just tag.
+    sakshi_ring_clear();
+    var lvl = svara_log_init_with_level("error");
+    assert_eq(lvl, SK_ERROR, "control: level is now error");
+    svara_log_debug("this must be suppressed");
+    assert_eq(sakshi_ring_event_count(), 0, "a debug line below the threshold emits nothing");
+    svara_log_error("this must pass");
+    assert_eq(sakshi_ring_event_count() > 0, 1, "control: an error line at the threshold does emit");
+    var back = svara_log_init_with_level("debug");
+    assert_eq(back, SK_DEBUG, "control: restored to debug");
+
+    # ================================================================
+    test_group("`off` means off, spans included");
+    # ================================================================
+    # sakshi does NOT level-gate span events -- _sk_emit_span writes regardless
+    # of sakshi_set_level, because a span is structural rather than a log line.
+    # svara gates them itself, or SVARA_LOG=off would still stream ENTER/EXIT.
+    assert_eq(svara_spans_enabled(), 1, "control: spans are on at debug");
+    var off = svara_log_init_with_level("off");
+    assert_eq(off, SVARA_LOG_OFF, "control: level is off");
+    assert_eq(svara_spans_enabled(), 0, "off disables spans too");
+    sakshi_ring_clear();
+    var a_off = svara_sequence_render(lg_seq(voice), voice, SR);
+    assert_eq(svara_is_err(a_off), 0, "control: the render still succeeded");
+    assert_eq(vec_len(a_off) > 0, 1, "control: and still produced samples");
+    assert_eq(sakshi_ring_event_count(), 0, "a whole render emits NOTHING at level off");
+    assert_eq(svara_span_depth(), 0, "and the span stack is still balanced");
+    var on = svara_log_init_with_level("debug");
+    assert_eq(on, SK_DEBUG, "control: restored to debug");
+    assert_eq(svara_spans_enabled(), 1, "control: spans back on");
+    sakshi_ring_clear();
+    var a_on = svara_sequence_render(lg_seq(voice), voice, SR);
+    assert_eq(svara_is_err(a_on), 0, "control: render ok");
+    assert_eq(sakshi_ring_event_count() > 0, 1,
+      "control: the SAME render at debug DOES emit -- so the silence above was the level");
+
+    # ================================================================
+    test_group("spans balance on the SUCCESS path");
+    # ================================================================
+    assert_eq(svara_span_depth(), 0, "control: depth starts at 0");
+    sakshi_ring_clear();
+    var a2 = svara_sequence_render(lg_seq(voice), voice, SR);
+    assert_eq(svara_is_err(a2), 0, "control: the render succeeded");
+    assert_eq(svara_span_depth(), 0, "sequence_render leaves the span stack balanced");
+    assert_eq(sakshi_ring_event_count() > 0, 1, "control: it emitted span events");
+
+    var p2 = svara_pool_new(voice, SR);
+    assert_eq(svara_pool_render(p2, SVARA_PH_VOWEL_A, voice, 0.02) > 0, 1, "control: pool render ok");
+    assert_eq(svara_span_depth(), 0, "nested pool_render -> synthctx spans balance");
+
+    # ================================================================
+    test_group("spans balance on the ERROR paths -- the reason for tokens");
+    # ================================================================
+    # A plain enter/exit pair leaks a span on every early return, and sakshi's
+    # stack is 16 deep. Each of these takes a DIFFERENT error exit.
+    var bad_voice = svara_voice_new_male();
+    SvVoiceProfile_set_base_f0(bad_voice, f64_from(5));   # below the [20,2000] range
+    var c2 = svara_synthctx_new(voice, SR);
+    var fe = svara_synthctx_synthesize(c2, SVARA_PH_VOWEL_A, bad_voice, 0.02, 0);
+    assert_eq(fe, SVARA_ERR_INVALID_PITCH, "control: the f0 path really did fail");
+    assert_eq(svara_span_depth(), 0, "the mid-span f0 failure still unwinds");
+
+    assert_eq(svara_synthctx_synthesize(c2, SVARA_PH_VOWEL_A, voice, 0, 0),
+      SVARA_ERR_INVALID_DURATION, "control: the pre-span rejection still fails");
+    assert_eq(svara_span_depth(), 0, "a pre-span rejection opens no span at all");
+
+    var p3 = svara_pool_new(bad_voice, SR);
+    if (svara_is_err(p3) == 0) {
+        assert_eq(svara_is_err(svara_pool_render(p3, SVARA_PH_VOWEL_A, bad_voice, 0.02)), 1,
+          "control: pool render fails with a bad voice");
+    }
+    assert_eq(svara_span_depth(), 0, "pool_render's error exit unwinds too");
+
+    # Run enough failures to overflow a 16-deep stack if any of them leaked.
+    var li = 0;
+    while (li < 40) {
+        var r = svara_synthctx_synthesize(c2, SVARA_PH_VOWEL_A, bad_voice, 0.02, 0);
+        if (svara_is_err(r) == 0) { assert_eq(0, 1, "control: this loop must be failing"); }
+        li = li + 1;
+    }
+    assert_eq(svara_span_depth(), 0, "40 consecutive failures do not fill the 16-deep span stack");
+
+    # ================================================================
+    test_group("span_leave unwinds a leaked inner span");
+    # ================================================================
+    var tok = svara_span_enter("outer");
+    assert_eq(svara_span_depth(), 1, "control: one span open");
+    var inner = svara_span_enter("inner");
+    assert_eq(svara_span_depth(), 2, "control: two spans open");
+    svara_span_leave(tok);   # never closed `inner` -- leave must reclaim it
+    assert_eq(svara_span_depth(), 0, "leave() unwinds to the token, inner span included");
+    svara_span_leave(tok);
+    assert_eq(svara_span_depth(), 0, "a second leave() is harmless");
+
+    # ================================================================
+    test_group("errors bind to the active span");
+    # ================================================================
+    var packed = svara_log_err(SVARA_ERR_INVALID_PITCH);
+    assert_eq(sakshi_err_code(packed), 0 - SVARA_ERR_INVALID_PITCH, "the SVARA_ERR_* code round-trips");
+    assert_eq(sakshi_err_category(packed), SVARA_LOG_ERR_CATEGORY, "tagged with svara's category");
+    var t3 = svara_span_enter("depth-probe");
+    var deep = svara_log_err(SVARA_ERR_COMPUTATION);
+    assert_eq(sakshi_err_context(deep) > sakshi_err_context(packed), 1,
+      "the packed context carries the span depth, so a consumer can tell where it failed");
+    svara_span_leave(t3);
+    sakshi_set_output(SK_OUT_STDERR);
+    #endif
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

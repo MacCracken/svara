@@ -5,6 +5,21 @@
 
 ## Version
 
+**3.4.0** (2026-08-26) — **structured logging (M-log).** svara emitted no
+diagnostics at all; it now routes tracing through **sakshi**, off by default
+behind `-D LOGGING` and **compiled out entirely** when off — no log call, no
+runtime level check, no call frame. Four coarse entry points instrumented
+(sequence render, batch render, synthesis-context render, pool render);
+**never per-sample**, asserted structurally by `scripts/check-logging.sh`.
+Spans are **token-based** — `svara_span_leave(token)` unwinds to a recorded
+depth — because every instrumented entry point has early returns and a plain
+enter/exit pair would leak a span on each, against a 16-deep stack. Two
+gotchas found and handled: **sakshi does not level-gate span events** (so
+`SVARA_LOG=off` would otherwise still stream ENTER/EXIT), and **`cyrius test`
+does not forward `-D`** (so `cyrius audit` only ever compiles the OFF half —
+hence the script, wired into CI). 840 assertions / 21 suites, plus 58 that
+exist only in the logging build.
+
 **3.3.2** (2026-08-26) — **glottal restore is exact.** 3.3.0 documented a
 limitation that was not real: naad derives `#derive(accessors)` on
 `NoiseGenerator` and `Lfo`, and svara links against its bundle in one flat
@@ -207,7 +222,8 @@ All green on the 6.5.35 pin:
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 828 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 21/21 suites, 840 assertions |
+| **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
 | **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
@@ -358,10 +374,10 @@ verified against 3.1.2 across ten render paths, ✅ two new suites + ADR-0001,
 incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded, ✅ CHANGELOG +
 this file.
 
-**Sequencing lives in [`roadmap.md`](roadmap.md)**, which is organised by release
-rather than by milestone: 3.1.4 (docs, CI, stale claims) → 3.2.0 (container
-serde) → 3.3.0 (structured logging) → 3.4.0 (hot-path memory and SIMD) → 3.5.0
-(retire `rust-old/`) → v1.0 (hardening). Do not duplicate that list here.
+**Sequencing lives in [`roadmap.md`](roadmap.md)**, organised by release rather
+than by milestone. Shipped through **3.4.0**; three lanes remain — **3.5.0**
+hot-path memory and SIMD, **3.6.0** retire `rust-old/`, then **v1.0** hardening.
+Do not duplicate that list here.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

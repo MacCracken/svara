@@ -83,10 +83,22 @@ fn svara_pool_with_capacity(voice, sample_rate, max_duration) {
 # sample count (samples in svara_pool_buffer) or a neg error. Tracks diagnostics.
 #must_use
 fn svara_pool_render_nasalized(p, phoneme, voice, duration, nasal) {
+    #ifdef LOGGING
+    var _sp = svara_span_enter("pool_render");
+    #endif
     var n = svara_synthctx_synthesize(SvSynthesisPool_ctx(p), phoneme, voice, duration, nasal);
-    if (svara_is_err(n) == 1) { return n; }
+    if (svara_is_err(n) == 1) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        var _e = svara_log_err(n);
+        #endif
+        return n;
+    }
     SvSynthesisPool_set_render_count(p, SvSynthesisPool_render_count(p) + 1);
     if (n > SvSynthesisPool_peak_samples(p)) { SvSynthesisPool_set_peak_samples(p, n); }
+    #ifdef LOGGING
+    svara_span_leave(_sp);
+    #endif
     return n;
 }
 

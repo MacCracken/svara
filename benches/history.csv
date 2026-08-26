@@ -71,3 +71,16 @@ timestamp,git_rev,benchmark,avg_us
 2026-08-26T19:35:14Z,55cd532,sequence render 3 phonemes,3377.000
 2026-08-26T19:35:14Z,55cd532,sequence render_planned 3 phonemes,18846.000
 2026-08-26T19:35:14Z,55cd532,sequence render_planned toned,21736.000
+2026-08-26T21:25:36Z,00ae955,glottal next_sample (Rosenberg),0.079
+2026-08-26T21:25:36Z,00ae955,glottal next_sample (whisper),0.082
+2026-08-26T21:25:36Z,00ae955,glottal next_sample (creaky),0.102
+2026-08-26T21:25:36Z,00ae955,formant filter process_sample,0.180
+2026-08-26T21:25:36Z,00ae955,tract process_sample (Full),0.297
+2026-08-26T21:25:36Z,00ae955,formant filter process_block 1024,193.828
+2026-08-26T21:25:36Z,00ae955,tract synthesize_into 1024,380.709
+2026-08-26T21:25:36Z,00ae955,phoneme synth /a/ (vowel),871.845
+2026-08-26T21:25:36Z,00ae955,phoneme synth /s/ (fricative),454.271
+2026-08-26T21:25:36Z,00ae955,phoneme synth /ai/ (diphthong),916.147
+2026-08-26T21:25:36Z,00ae955,sequence render 3 phonemes,3391.000
+2026-08-26T21:25:36Z,00ae955,sequence render_planned 3 phonemes,18908.000
+2026-08-26T21:25:36Z,00ae955,sequence render_planned toned,21971.000

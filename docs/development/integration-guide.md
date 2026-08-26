@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.3.0"
+tag = "3.4.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -35,14 +35,41 @@ modules = ["dist/naad.cyr"]
 git = "https://github.com/MacCracken/goonj.git"
 tag = "2.0.4"
 modules = ["dist/goonj.cyr"]
+
+# 3.4.0: svara's bundle carries src/logging.cyr, so `dist/svara.deps` now names
+# sakshi. It is NOT a new dependency -- sakshi already arrived transitively via
+# hisab, which svara's bundle requires -- but it is now explicit, and declaring
+# it keeps resolution independent of hisab's own pin.
+[deps.sakshi]
+git = "https://github.com/MacCracken/sakshi.git"
+tag = "2.4.11"
+modules = ["dist/sakshi.cyr"]
 ```
 
 `dist/svara.deps` lists the stdlib leaves the bundle needs; `cyrius deps` reads
 it. **Include order matters** — hisab → goonj → naad → svara.
 
-**There are no feature flags.** Cyrius has none. svara carries only the
-naad-backend path; the Rust's `std` / `naad-backend` / `logging` features are
-gone, and structured logging is unimplemented (roadmap M-log).
+**There are no feature flags**, but there is one compile-time switch.
+Cyrius has no feature system, so the Rust's `std` / `naad-backend` features are
+gone — svara carries only the naad-backend path. The Rust's `logging` feature
+survives as `-D LOGGING`:
+
+```sh
+cyrius build -D LOGGING src/main.cyr build/myapp
+```
+
+Off by default and **compiled out entirely** when off — no log call, no runtime
+level check, no call frame. On, svara routes to **sakshi**, so its spans nest
+inside yours and correlate across the AGNOS stack. `SVARA_LOG` selects the level
+(`off`/`fatal`/`error`/`warn`/`info`/`debug`/`trace`, default `info`); `off`
+silences span events too, which sakshi alone would not do. Call
+`svara_log_init()` once at startup, and `sakshi_output_*` first if you want a
+sink other than stderr.
+
+Only four coarse entry points are instrumented — sequence render, batch render,
+synthesis-context render, pool render. **Never per-sample**: a span costs two
+`clock_gettime` calls, which at 44.1 kHz would dominate the ~0.56 µs it takes to
+synthesize a sample. `scripts/check-logging.sh` asserts that structurally.
 
 ## Errors: codes, not exceptions
 
@@ -175,9 +202,10 @@ Three things to know before relying on it:
 - **`restore` validates.** A state that has been through JSON is
   externally-authored data, so an out-of-range `f0` or a bad sample rate comes
   back as an error, not a broken object.
-- **Restore does not reproduce naad's internal state or filter delay lines.** A
-  restored glottal source is bit-exact on the deterministic path (breathiness and
-  vibrato at 0); with breathiness the aspiration stream restarts. Both limits are
+- **Restore does not reproduce filter delay lines**, deliberately: Rust's
+  `set_formants` discards them on every call too, so there is nothing there to
+  preserve. Everything else — including naad's noise and LFO state, as of 3.3.2 —
+  is carried, so a restored glottal source is bit-exact. Both limits are
   measured, not assumed — see
   [ADR-0002](../adr/0002-serialization-boundary.md).
 
