@@ -66,8 +66,9 @@ Treat these as standing conventions, checked in review and in new code.
 
    A raw `f64_to` is permitted **only** where both operands are in-tree
    constants or already-bounded counts, and the call site must say so in a
-   comment. Three such sites remain (the VOT fractions in `phoneme.cyr`, the
-   crossfade fraction in `sequence.cyr`); each carries that note.
+   comment. Four such calls remain — the three VOT fractions at
+   `src/phoneme.cyr:714-716` and the crossfade fraction at
+   `src/sequence.cyr:296` — each covered by that note.
 
 2. **Saturate at the source, not at each use.** `svara_spectrum_frequency_bin`
    returns a non-negative bin, exactly as Rust's `-> usize` does. That makes the

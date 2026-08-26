@@ -175,12 +175,17 @@ svara defect, and the workaround was to gate on the individual tools. On 6.5.35
 it resolves deps first (`4 deps resolved`) and runs fmt · lint · docs · tests ·
 bench green. The per-tool commands still work and remain the finer-grained form.
 
-⚠ **`CONTRIBUTING.md` documents none of this** — it is still the pre-port Rust
-file (`cargo fmt --check`, `cargo clippy`, `cargo audit`, `cargo deny`, "Rust
-1.89+"). So is `README.md` ("Formant and vocal synthesis for Rust", crates.io
-links for hisab / naad, a `use svara::prelude::*` example, Cargo feature flags,
-"48 phonemes" where the port ships 101). Both survived the port untouched and are
-out of scope for 3.1.2; they need their own doc sweep.
+⚠ **CI runs almost none of this.** `.github/workflows/ci.yml` has four steps —
+install, `cyrius deps`, `cyrius build`, `cyrius test` — so fmt, lint, docs, fuzz,
+deny, bench and the aggregate `cyrius audit` run only on a developer's machine,
+and `release.yml` inherits the same thin gate. Tracked for 3.1.4 in
+[`roadmap.md`](roadmap.md).
+
+`README.md` and `CONTRIBUTING.md` were rewritten for Cyrius on 2026-08-26. Four
+other docs were not — `docs/architecture/overview.md`,
+`docs/development/integration-guide.md`, `docs/guides/testing.md` and
+`docs/development/threat-model.md` are still pre-port Rust. Also tracked for
+3.1.4.
 
 ⚠ The `cyrius fmt` / `cyrius doc` wrappers used to mangle their arguments; on
 this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout).
@@ -252,7 +257,7 @@ overwritten before it is read — so all seven are `#[serde(skip)]`-equivalent a
 must be rebuilt on load, exactly as the Rust port convention says for transient
 runtime state and dep handles.
 
-## Next — post-3.1.3
+## Next
 
 3.1.3 is release-ready: ✅ five reachable defects fixed and pinned, ✅ per-sample
 allocation removed from the render loop (34× / 13×), ✅ bit-for-bit parity
@@ -261,32 +266,23 @@ verified against 3.1.2 across ten render paths, ✅ two new suites + ADR-0001,
 incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded, ✅ CHANGELOG +
 this file.
 
-Open follow-ups, none of them 3.1.3 blockers:
+**Sequencing lives in [`roadmap.md`](roadmap.md)**, which is organised by release
+rather than by milestone: 3.1.4 (docs, CI, stale claims) → 3.2.0 (container
+serde) → 3.3.0 (structured logging) → 3.4.0 (hot-path memory and SIMD) → 3.5.0
+(retire `rust-old/`) → v1.0 (hardening). Do not duplicate that list here.
 
-0. **The rest of the sweep's residue**, in descending value:
-   - **`svara_ph_buf_to_vec` doubles from empty**, so every render leaves roughly
-     one dead copy of its own output in the arena (~16 of the remaining 33
-     bytes/sample). Fixing it here means reaching into `lib/vec.cyr`'s header
-     layout; the right fix is a `vec_with_capacity` upstream in the stdlib.
-   - **hisab `calc_monotone_cubic` allocates three internal arrays per call**
-     (~80 bytes), which is the entire remaining cost of the toned render path.
-     Upstream: an `_into` form, or coefficients computed once per contour.
-   - **`svara_formant_validate` accepts a NaN formant frequency**, faithfully —
-     Rust's `f.frequency <= 0.0 || f.frequency >= nyquist` does too. Tightening
-     it is a deliberate divergence and needs its own ADR.
+Two things about the current state that the roadmap depends on and that are
+easy to get wrong:
 
-
-1. **M2 — container serde** (🟢 **unblocked** as of the 6.4.11–6.4.13 array-typed
-   struct-field work, carried by the 6.5.35 pin). Add `#derive(Serialize)` + a
-   roundtrip `.tcyr` to each container type. No hand-written codecs — that was
-   explicitly rejected as throwaway. See [`roadmap.md`](roadmap.md) M2.
-2. **Consumer smoke** — build dhvani / vansh against `dist/svara.cyr` end-to-end.
-   Now more valuable than before: naad 2.2.1's own release notes list
-   consumer-green (dhvani / svara) as its last open gate, and this bump is svara's
-   half of it.
-3. **Security audit** — `docs/audit/YYYY-MM-DD-audit.md` for a v1.0 hardening pass.
-4. **CI hardening (optional)** — add a *"toolchain matches the pin"* step to both
-   workflows, as hisab 2.11.2 did. svara already installs via the canonical
-   `scripts/install.sh` (so the CVE-21 checksum / CVE-13 signature verification is
-   in place); what is missing is asserting `cyrius version` equals the manifest pin
-   *before* `cyrius deps` fails two steps later with a path error.
+- **`cyrlint`'s "0 untracked deferrals" is accurate and nearly meaningless as a
+  completeness signal.** It scans only `.cyr` sources — never Markdown — matches
+  twelve literal terms, and counts one "tracked" if the *same line* also contains
+  `CHANGELOG`, `roadmap`, `docs/`, `issue`, `See `, `v6.` or `v5.`. That is a
+  substring test, not a check that the roadmap says anything. Most of svara's
+  real deferral language (`not started`, `not wired`, `blocked on`, `upstream`,
+  `known limitation`, `P1`/`P2`) is invisible to it.
+- **The `rust-old/` port is complete** — a name-by-name sweep of every Rust `pub`
+  item found zero missing counterparts, and enum parity is exact on all ten enums
+  including `Phoneme` at 101/101. What holds the directory in the tree is the
+  work that still *reads* it, not a gap in the port. See
+  [`roadmap.md`](roadmap.md) 3.5.0.
