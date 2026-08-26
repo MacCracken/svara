@@ -36,6 +36,60 @@ var SV_EPSILON = 0x3E80000000000000;   # f32::EPSILON = 2^-23 ~ 1.192e-7
 var SV_POS_INF = 0x7FF0000000000000;   # +inf
 var SV_NEG_INF = 0xFFF0000000000000;   # -inf
 
+# ================================================================
+# Sample-count conversion + allocation guards.
+#
+# TWO Rust guarantees have no Cyrius equivalent, and dropping them silently is
+# the hazard class this block exists to close (goonj ADR-0002 names it; svara
+# carried four instances of it through 3.1.2):
+#
+#  1. Rust's float -> int `as` casts SATURATE (since 1.45): NaN -> 0, negative
+#     -> 0, overflow -> MAX. Cyrius `f64_to` does NOT -- it returns INT64_MIN
+#     for NaN, +/-inf and anything outside i64, and otherwise truncates toward
+#     zero. So the Rust idiom `let n = (duration * sample_rate) as usize;` ports
+#     to a line that looks right and yields INT64_MIN for a NaN sample rate.
+#  2. `usize` cannot be negative, so Rust writes a bounds check as a SINGLE
+#     upper-bound test. In signed i64 that keeps only half the bound.
+#
+# Never call `f64_to` on an unbounded value: bound it in f64 first.
+# ================================================================
+
+# Largest f64 sample buffer `alloc` can serve: ALLOC_MAX (2 GiB) / 8 bytes.
+# ~101 minutes of mono audio at 44.1 kHz -- past this a single buffer cannot
+# exist, whatever the caller asked for.
+var SV_MAX_SAMPLES = 268435456;
+
+# count_from_f64 -- f64 -> a non-negative count or index, reproducing Rust's
+# saturating `as usize`. NaN, negatives and zero give 0 (callers treat 0 as
+# "empty result", exactly as Rust does). Anything at or past SV_MAX_SAMPLES
+# gives SV_MAX_SAMPLES + 1, which svara_alloc_samples rejects and which no
+# in-range index test can accept. Use it for every f64 -> count/index cast:
+# sample counts, sample offsets, and spectrum bin indices alike.
+#
+# DIVERGENCE (deliberate): Rust saturates an overflowing count to usize::MAX and
+# then aborts inside the allocator. svara returns an error instead -- strictly
+# stricter than the oracle, and the alternative is a null write.
+#must_use
+fn svara_count_from_f64(x) {
+    var cap = f64_from(SV_MAX_SAMPLES);
+    if (f64_ge(x, cap) == 1) { return SV_MAX_SAMPLES + 1; }
+    if (f64_gt(x, 0) == 1) { return f64_to(x); }
+    return 0;
+}
+
+# alloc_samples -- an `n`-slot f64 buffer, or 0 if `n` is not a usable count.
+#
+# `alloc` RETURNS 0 on failure (size <= 0, size > ALLOC_MAX, or mmap refusal) --
+# it does not abort. Every caller must test the result: the next store64 through
+# a 0 writes to address 0 and upward. `n * 8` is checked against SV_MAX_SAMPLES
+# BEFORE the multiply so the product cannot wrap past its own cap.
+#must_use
+fn svara_alloc_samples(n) {
+    if (n <= 0) { return 0; }
+    if (n > SV_MAX_SAMPLES) { return 0; }
+    return alloc(n * 8);
+}
+
 # 1 if `code` is an error (negative), 0 otherwise.
 #must_use
 fn svara_is_err(code) {

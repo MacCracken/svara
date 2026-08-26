@@ -5,6 +5,19 @@
 
 ## Version
 
+**3.1.3** (2026-08-26) — **P1 audit sweep.** Five defects reachable through the
+public API with no unsafe usage by the caller, all confirmed by running them
+rather than reasoned about: a **SIGSEGV** (`alloc` returns 0 on failure and svara
+wrote through it — `synthesize(vowel, 44100, 6100 s)` was the reproducer), three
+**process aborts** (a negative spectrum bin reaching `vec_get`, from `f64_to`
+emitting INT64_MIN where Rust's `as usize` saturates), a **silent NaN** (an
+inverted range test accepted a NaN f0 that Rust rejects), a constructor that
+returned an error code *as a pointer*, and an **infinite loop** in `next_pow2`.
+Plus the per-sample allocation in `render_planned`: **1,121 → 33 bytes/sample**
+untoned, **1,505 → 113** toned, into an arena that never frees. Output is
+**bit-for-bit identical** across ten render paths. 634 → **713 assertions** / 20
+suites. See [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md).
+
 **3.1.2** (2026-08-26) — toolchain + dependency catch-up. Cyrius pin
 **6.4.13 → 6.5.35** (109 releases), and every dependency to its current tag:
 hisab **2.6.7 → 2.11.2**, naad **2.1.1 → 2.2.1**, goonj **2.0.0 → 2.0.4**,
@@ -100,23 +113,44 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-634 `.tcyr` assertions across 18 suites: error / rng / smooth / lod / formant /
+713 `.tcyr` assertions across 20 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
-pool / render / bridge / **serde** (+ the `svara.tcyr` smoke) — all passing,
-all lint-clean, zero build warnings. Run one suite: `cyrius test tests/<mod>.tcyr`;
-the whole tree recursively: `cyrius tests tests`.
+pool / render / bridge / **serde** / **hardening** / **allocbudget** (+ the
+`svara.tcyr` smoke) — all passing, all lint-clean, zero build warnings. Run one
+suite: `cyrius test tests/<mod>.tcyr`; the whole tree recursively:
+`cyrius tests tests`.
+
+Two of them are not parity ports and exist for reasons worth knowing:
+
+- **`hardening.tcyr` (45)** — adversarial inputs for the hazard class in
+  [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). Its
+  discrimination is **measured, not asserted**: ten public-API probes re-run
+  against a 3.1.2 checkout on the same toolchain give **9 failures** (4 wrong
+  value, 3 process abort, 1 SIGSEGV, 1 hang) and 1 control that passes on both
+  sides. Re-measure this whenever the group is extended — a group where every
+  line flips is a group whose controls are not controls.
+- **`allocbudget.tcyr` (34)** — each `_into` variant compared **bit for bit**
+  against the allocating function it replaced (exact `assert_eq` on raw f64
+  patterns, not tolerances: same arithmetic, same order, so it holds on every
+  arch — unlike a stored golden digest, which transcendentals make
+  arch-specific). Plus the marginal-bytes-per-sample budget, each bound paired
+  with a control proving the measurement is not reading zero.
 
 ## Benchmarks
 
-11 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
+13 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
 per-call clock overhead: glottal ~82 ns, formant ~179 ns, tract ~295 ns/sample —
 a full chain ≈ 0.56 µs/sample (~40× real-time at 44.1 kHz). Renders: `/a/`
-~857 µs, `/s/` ~458 µs, `/ai/` ~921 µs, 3-phoneme sequence ~3.36 ms
-(x86_64, 2026-08-26, cycc 6.5.35). Every row is within a few percent of the
-3.1.0 run — the 6.5.35 instrument change did not move svara's numbers because
-the per-sample benches already used `bench_run_batch1/2`.
+~874 µs, `/s/` ~461 µs, `/ai/` ~918 µs, 3-phoneme sequence ~3.37 ms,
+`render_planned` ~18.7 ms (~21.4 ms toned) (x86_64, 2026-08-26, cycc 6.5.35).
+
+⚠ **The allocation budget is deliberately NOT benchmarked.** A bump allocation is
+a pointer add, so removing 1.1 KB of it per sample moved `render_planned` only
+20.6 → 18.6 ms — the cost that mattered was *arena bytes*, which a timer cannot
+see. It is pinned in `allocbudget.tcyr` instead. Anything that trades memory for
+time in this codebase needs the same treatment.
 
 ## Quality gate
 
@@ -124,10 +158,10 @@ All green on the 6.5.35 pin:
 
 | Gate | Command | Result |
 |---|---|---|
-| fmt | `cyrfmt --check <f>` | clean (38 files) |
+| fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (243 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 18/18 suites, 634 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (252 public fns across 17 modules) |
+| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 713 assertions |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
@@ -207,17 +241,40 @@ GlottalSource) could not derive until Cyrius gained array-typed struct fields.
 in three rounds: `Vec<T>` handle fields (parse + layout + access), then `#derive`
 Serialize/Deserialize for `Vec<primitive>`, then for `Vec<#derive-struct>`. The
 6.5.35 pin carries all three. M2 is unblocked and deliberately **not** started in
-3.1.2 — it is its own milestone, and the standing rule holds: add the derive plus
-a roundtrip `.tcyr` per container type, **no hand-written codecs**.
+3.1.2 or 3.1.3 — it is its own milestone, and the standing rule holds: add the
+derive plus a roundtrip `.tcyr` per container type, **no hand-written codecs**.
 
-## Next — post-3.1.2
+⚠ **M2 now has scratch fields to skip.** 3.1.3 added reusable buffers to four
+structs to get the allocation out of the render loop: `SvFormantBank.coeff`,
+`SvVocalTract.scratch_formants`, `SvTrajectoryPlanner.scratch_a`/`scratch_b`, and
+`SvProsodyContour.xs`/`ys`/`buf_cap`. **None of them is state** — every one is
+overwritten before it is read — so all seven are `#[serde(skip)]`-equivalent and
+must be rebuilt on load, exactly as the Rust port convention says for transient
+runtime state and dep handles.
 
-3.1.2 is release-ready: ✅ toolchain + dependency catch-up, ✅ distlib regenerated
-(`dist/svara.cyr`, 4,543 lines at v3.1.2, `.deps` sidecar now 16 stdlib leaves),
-✅ full gate incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded,
-✅ CHANGELOG (3.1.2 and the retroactive 3.1.1) + this file.
+## Next — post-3.1.3
 
-Open follow-ups, none of them 3.1.2 blockers:
+3.1.3 is release-ready: ✅ five reachable defects fixed and pinned, ✅ per-sample
+allocation removed from the render loop (34× / 13×), ✅ bit-for-bit parity
+verified against 3.1.2 across ten render paths, ✅ two new suites + ADR-0001,
+✅ distlib regenerated (`dist/svara.cyr`, 4,950 lines at v3.1.3), ✅ full gate
+incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded, ✅ CHANGELOG +
+this file.
+
+Open follow-ups, none of them 3.1.3 blockers:
+
+0. **The rest of the sweep's residue**, in descending value:
+   - **`svara_ph_buf_to_vec` doubles from empty**, so every render leaves roughly
+     one dead copy of its own output in the arena (~16 of the remaining 33
+     bytes/sample). Fixing it here means reaching into `lib/vec.cyr`'s header
+     layout; the right fix is a `vec_with_capacity` upstream in the stdlib.
+   - **hisab `calc_monotone_cubic` allocates three internal arrays per call**
+     (~80 bytes), which is the entire remaining cost of the toned render path.
+     Upstream: an `_into` form, or coefficients computed once per contour.
+   - **`svara_formant_validate` accepts a NaN formant frequency**, faithfully —
+     Rust's `f.frequency <= 0.0 || f.frequency >= nyquist` does too. Tightening
+     it is a deliberate divergence and needs its own ADR.
+
 
 1. **M2 — container serde** (🟢 **unblocked** as of the 6.4.11–6.4.13 array-typed
    struct-field work, carried by the 6.5.35 pin). Add `#derive(Serialize)` + a

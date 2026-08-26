@@ -38,13 +38,26 @@ fn svara_nasal_place_antiformant_frequency(place) {
 
 # VocalTract -- formant bank + nasal/subglottal biquads + lip radiation + gain.
 #derive(accessors)
+# `scratch_formants` is a five-slot SvFormant vec owned by the tract, so
+# set_formants_from_target can refresh the bank without allocating. See the note
+# on svara_tract_set_formants.
 struct SvVocalTract {
     filter; nasal_coupling; nasal_antiformant; lip_prev; lip_radiation;
     interaction_strength; interaction_feedback; subglottal_coupling;
-    subglottal_filter; gain; quality; sample_rate;
+    subglottal_filter; gain; quality; sample_rate; scratch_formants;
 }
 
-# new -- default neutral vowel (schwa), Full quality. `0` reads as +0.0.
+# new -- default neutral vowel (schwa), Full quality. Returns a tract pointer,
+# or a negative SVARA_ERR_* if even the fallback filter cannot be built (a
+# non-positive or non-finite sample_rate is the only way that happens).
+# `0` reads as +0.0.
+#
+# Rust's `VocalTract::new` returns `Self` and ends the fallback with
+# `.expect("fallback formant filter must succeed")` -- it PANICS. The port had
+# neither: it stored the negative error code in the `filter` field and handed
+# back a tract that looked valid, so the first process_sample dereferenced a
+# small negative address. Reporting the error is the code/sentinel equivalent of
+# the panic, and every caller checks it.
 #must_use
 fn svara_tract_new(sample_rate) {
     var target = svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA);
@@ -55,9 +68,11 @@ fn svara_tract_new(sample_rate) {
         vec_push(fb, svara_formant_new(f64_from(500), f64_from(100), F64_ONE));
         filter = svara_formant_filter_new(fb, sample_rate);
     }
+    if (svara_is_err(filter) == 1) { return filter; }
 
     var self = alloc(sizeof(SvVocalTract));
     SvVocalTract_set_filter(self, filter);
+    SvVocalTract_set_scratch_formants(self, svara_formant_scratch_vec());
     SvVocalTract_set_nasal_coupling(self, svara_smooth_new(0, sample_rate));
     var nasal_q = f64_div(f64_from(SV_T_NASAL_FREQ_NEUTRAL), f64_from(SV_T_NASAL_BW));   # 2.5
     SvVocalTract_set_nasal_antiformant(self,
@@ -77,17 +92,30 @@ fn svara_tract_new(sample_rate) {
 
 # ---- configuration --------------------------------------------------------
 # set_formants -- rebuild the formant bank; returns SVARA_ERR_NONE or an error.
+#
+# Rust is `self.filter = FormantFilter::new(formants, self.sample_rate)?`, which
+# discards the delay lines; svara_formant_filter_rebuild reproduces that state
+# exactly while REUSING the filter's storage. That matters because the
+# trajectory-planned render path calls this once per output sample and the bump
+# allocator never frees: the old build-and-discard form spent 736 bytes of arena
+# per sample, so a minute of speech needed gigabytes that were never released.
 #must_use
 fn svara_tract_set_formants(self, formants) {
+    var cur = SvVocalTract_filter(self);
+    if (cur != 0) { return svara_formant_filter_rebuild(cur, formants); }
     var f = svara_formant_filter_new(formants, SvVocalTract_sample_rate(self));
     if (svara_is_err(f) == 1) { return f; }
     SvVocalTract_set_filter(self, f);
     return SVARA_ERR_NONE;
 }
 
+# set_formants_from_target -- as above, from a VowelTarget. Fills the tract's
+# own five-slot scratch rather than allocating a fresh formant vec per call.
 #must_use
 fn svara_tract_set_formants_from_target(self, target) {
-    return svara_tract_set_formants(self, svara_vowel_target_to_formants(target));
+    var scratch = SvVocalTract_scratch_formants(self);
+    svara_vowel_target_to_formants_into(target, scratch);
+    return svara_tract_set_formants(self, scratch);
 }
 
 #must_use
@@ -187,10 +215,13 @@ fn svara_tract_synthesize_into(self, glottal, output, n) {
     }
 }
 
-# synthesize -- allocate an n-slot f64 buffer and fill it.
+# synthesize -- allocate an n-slot f64 buffer and fill it. Returns the buffer,
+# or 0 if `n` is not an allocatable sample count (see svara_alloc_samples): the
+# caller MUST test for 0 -- writing through it would store to address 0.
 #must_use
 fn svara_tract_synthesize(self, glottal, n) {
-    var out = alloc(n * 8);
+    var out = svara_alloc_samples(n);
+    if (out == 0) { return 0; }
     svara_tract_synthesize_into(self, glottal, out, n);
     return out;
 }

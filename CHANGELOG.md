@@ -9,6 +9,195 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.1.3] - 2026-08-26 — P1 audit: five reachable defects, and the leak in the render loop
+
+An adversarial-input and allocation sweep of the whole public surface. **Five
+defects reachable through the public API with no unsafe usage by the caller** —
+one SIGSEGV, three process aborts, one silent NaN — plus the per-sample
+allocation that made the trajectory-planned render path scale in gigabytes.
+
+Suite **634 → 713 assertions** across 20 suites. `cyrius audit` exits 0; fuzz and
+deny clean. **Every render path is bit-for-bit identical to 3.1.2** — ten
+representative renders, digest-compared across the two trees.
+
+### Fixed — SIGSEGV: `alloc` failure was never checked
+
+`lib/alloc.cyr`'s `alloc` **returns 0** on failure (`size <= 0`, `size >
+ALLOC_MAX` = 2 GiB, or mmap refusal). It does not abort, the way Rust's
+allocator does — so the Rust code had nothing to check and the port carried no
+check over. Every size-driven allocation in svara wrote through the returned
+pointer on the very next line.
+
+⭐ **`svara_phoneme_synthesize(VowelA, voice, 44100.0, 6100.0)` segfaulted.**
+6100 seconds is 269,010,000 samples → 2,152,080,000 bytes, just past `ALLOC_MAX`;
+`alloc` returned 0 and `svara_formant_zero_buf` then stored to address 0 and
+upward. Confirmed as signal 11, not inferred. It now returns
+`SVARA_ERR_COMPUTATION`.
+
+- New `svara_alloc_samples(n)` in `src/error.cyr` — bounds `n` against
+  `SV_MAX_SAMPLES` **before** the `* 8`, so the product cannot wrap past its own
+  cap, and returns 0 for anything unusable. **19 allocation sites** — 12 in
+  `phoneme.cyr`, 3 in `spectral.cyr`, 2 in `prosody.cyr`, 1 each in
+  `sequence.cyr` and `tract.cyr` — now route through it and check the result.
+- `svara_tract_synthesize` returns 0 rather than a buffer it could not allocate;
+  its three callers check.
+- `svara_synthctx_ensure_buffer` no longer stores a null over a working buffer on
+  a failed grow — that would have poisoned every later call on the context.
+
+### Fixed — `f64_to` does not saturate, and the sentinel reached sample counts
+
+Rust's float → int `as` casts saturate (NaN → 0, negative → 0, overflow → MAX).
+Cyrius `f64_to` returns **`INT64_MIN`** for NaN, `±inf` and anything outside
+`i64` — measured on this toolchain, not assumed. So the ported line
+`let n = (duration * sample_rate) as usize;` yielded `INT64_MIN` wherever Rust
+yielded 0 or a cap.
+
+- New `svara_count_from_f64(x)` reproduces Rust's saturating `as usize`.
+  **Eleven cast sites** now use it (sample counts, sample offsets, nasalization
+  onsets, spectrum bin indices, the crossfade floor, the pool pre-warm).
+- ⭐ **A NaN sample rate now returns an empty vec, as Rust does.** Rust checks
+  only `sample_rate <= 0.0` there, which is false for NaN, so the cast saturates
+  to 0 and `synthesize_phoneme` returns `Ok(Vec::new())`. svara returned
+  `INT64_MIN` and carried on. Parity restored, and pinned.
+- Three raw `f64_to` calls remain, all provably bounded (the VOT fractions are
+  in-tree constants, the crossfade fraction is built from in-tree coarticulation
+  constants). Each now says so at the call site.
+
+### Fixed — process abort: a negative spectrum bin reached `vec_get`
+
+Rust's `Spectrum::frequency_bin` returns `usize`, so a negative or NaN frequency
+— or a zero `freq_resolution`, which makes the quotient `±inf` — saturates to 0.
+The three callers can then test only the *upper* bound, and Rust's do. Ported to
+signed `i64` that is half a bound, and `f64_to`'s `INT64_MIN` went straight
+through it into `vec_get`, which aborts.
+
+⭐ `svara_spectrum_magnitude_at`, `svara_spectrum_band_energy` and
+`svara_spectrum_peak_in_range` **killed the process** on any negative or NaN
+frequency argument. Fixed at the source: `svara_spectrum_frequency_bin` now
+saturates, so all three callers' single bound is a complete bound again.
+
+### Fixed — silent NaN: an inverted range test accepted a NaN f0
+
+Rust writes `if !(20.0..=2000.0).contains(&f0) { reject }`. `contains` is
+`20.0 <= f0 && f0 <= 2000.0`, **false for NaN** — so Rust *rejects* a NaN f0.
+The port split it into two one-sided rejections (`f0 < 20`, `f0 > 2000`), and
+`f64_lt`/`f64_gt` are both false for NaN, which inverts the meaning.
+
+⭐ `svara_glottal_new` and `svara_glottal_set_f0` **accepted NaN**, stored it,
+returned `SVARA_ERR_NONE`, and every sample derived from it came out NaN. Both
+now go through `svara_f0_in_range`, which tests the range positively so NaN falls
+through to the reject.
+
+### Fixed — a constructor that reported success by handing back an error code
+
+`svara_tract_new` builds a formant filter, retries with a single-500 Hz fallback,
+and — before this release — stored whatever came back in the `filter` field. On a
+non-positive or non-finite sample rate **both attempts fail**, so it stored the
+negative error code as a pointer and returned a tract that looked valid; the
+first `process_sample` dereferenced a small negative address.
+
+Rust's `VocalTract::new` returns `Self` and ends that fallback with
+`.expect("fallback formant filter must succeed")` — it panics. The port had
+neither the panic nor a check. `svara_tract_new` now returns the error, and all
+**13 call sites** check it.
+
+### Fixed — infinite loop in `svara_next_pow2`
+
+`p = p * 2` wraps negative past 2^62 and `p < n` then stays true forever, so an
+input above that hung the process. It now reports 0 and `svara_spectral_analyze`
+rejects it.
+
+### Changed — the render loop stopped allocating per sample
+
+Cyrius's bump allocator **never frees**, so an allocation inside a per-sample
+loop is not a performance nuisance, it is an unbounded leak.
+
+⭐ **`svara_sequence_render_planned` spent 1,121 bytes of arena per output sample
+untoned and 1,505 toned** — measured as the marginal cost of doubling the
+duration, so the fixed setup cancels. A minute of speech at 44.1 kHz therefore
+needed ~3 GB (untoned) or ~4 GB (toned) that was never released.
+
+| | 3.1.2 | 3.1.3 | |
+|---|---|---|---|
+| untoned | 1,121 B/sample | **33 B/sample** | 34× |
+| toned | 1,505 B/sample | **113 B/sample** | 13× |
+
+What remains is the output buffer plus the vec it is copied into (8 bytes each
+per sample); the per-sample synthesis work itself now allocates nothing. The
+toned path additionally pays ~80 B/sample to hisab's `calc_monotone_cubic`,
+which allocates three internal arrays per call — upstream, not svara's.
+
+Where it went, per sample, measured call by call:
+
+- **`svara_tract_set_formants`: 736 B → 0.** It called `svara_formant_filter_new`
+  and discarded the previous filter. New `svara_formant_filter_rebuild` puts the
+  filter into *exactly* the state `new` would have produced — every slot zeroed,
+  delay lines cleared, DC blocker reset — while reusing the storage. That
+  discard-the-state behaviour is Rust's (`self.filter = FormantFilter::new(..)?`)
+  and is preserved deliberately, not "fixed"; only the allocation is saved.
+  Validation runs before any mutation, so a rejected call leaves the filter
+  untouched, as Rust's `?` does.
+- **`svara_vowel_target_to_formants`: 272 B → 0.** New
+  `svara_vowel_target_to_formants_into` overwrites five reusable `SvFormant`
+  structs owned by the tract.
+- **`svara_trajectory_formants_at`: 80–240 B → 0.** New
+  `svara_trajectory_formants_at_into`, with the two Catmull-Rom intermediates in
+  planner-owned scratch targets.
+- **`svara_tone_to_contour`: 240 B → 0.** It was rebuilt every sample from a
+  value — the event's tone — that only changes at a phoneme boundary. Now built
+  once per event, before the loop.
+- **`svara_prosody_f0_at`: 144 B → 80 B.** The two f64 buffers hisab needs are
+  now contour-owned. They are **refilled on every call, never cached**, so a
+  caller mutating a point through `f0_points` cannot read a stale value; only the
+  allocation is reused. The residual 80 B is inside `calc_monotone_cubic`.
+- **`svara_formant_bank_update`: 32 B → 0.** The coefficient scratch is
+  bank-owned.
+
+CPU time improved too, though that was not the point: **render_planned
+20.638 → 18.598 ms** (−10%) and **toned 25.271 → 21.520 ms** (−15%) for the same
+three-phoneme sequence.
+
+### Added — two suites, and the ADR that names the class
+
+- **`tests/hardening.tcyr` (45 assertions)** — every defect above, pinned.
+  ⚠ **Discrimination measured, not asserted.** Ten of its probes were re-run
+  against a 3.1.2 checkout on the same toolchain: **9 of 10 fail there** — four
+  by wrong value, three by process abort (`vec: index < 0`), one by SIGSEGV, one
+  by hang — and the tenth is the control, which passes on both sides. A group
+  where every line flipped would mean the controls were not controls.
+- **`tests/allocbudget.tcyr` (34 assertions)** — pins the two properties the
+  allocation work rests on. Each `_into` variant is compared **bit for bit**
+  against the allocating function it replaced (exact `assert_eq` on raw f64
+  patterns, not tolerances — the two paths run the same arithmetic in the same
+  order, so this holds on every architecture, unlike a stored golden digest).
+  The budget itself is asserted as marginal bytes per sample, each bound paired
+  with a control proving the measurement is not reading zero.
+- **[ADR-0001](docs/adr/0001-signed-index-and-float-conversion-hazards.md)** —
+  the hazard class, its four mechanisms, and the five standing conventions.
+  Written because goonj recorded the same two root causes independently, and
+  because its 2.0.2 release swept two modules for exactly this and missed a
+  third: an unnamed class does not get swept completely.
+
+### Notes
+
+- **Bit-for-bit parity verified directly.** Ten renders — vowel, diphthong,
+  fricative, plosive, nasal, crossfade sequence, planned sequence untoned and
+  toned, nasalized vowel, female-voice diphthong — were FNV-1a digested over
+  their raw f64 sample patterns and compared between a 3.1.2 tree and this one.
+  All ten digests match, and the lengths match.
+- **Two `benchmarks` added** for `render_planned` (untoned and toned), a major
+  public path that had no coverage. The allocation budget is *not* benchmarked —
+  a bump allocation is nearly free in CPU time and would not show up — it is
+  pinned as a test instead.
+- **Preserved deliberately, not overlooked**: `svara_formant_validate` accepts a
+  NaN formant frequency, because Rust's
+  `f.frequency <= 0.0 || f.frequency >= nyquist` accepts it too. Annotated in
+  `src/formant.cyr` rather than quietly tightened — the parity bar is "matches
+  what Rust did", and diverging needs an ADR.
+- **Known residual**: `svara_ph_buf_to_vec` builds its result with `vec_push`
+  from empty, so the vec's doubling leaves roughly one dead copy of the output in
+  the arena. Pre-sizing it would mean reaching into `lib/vec.cyr`'s header
+  layout; the right fix is a `vec_with_capacity` upstream.
 ## [3.1.2] - 2026-08-26 — toolchain + dependency catch-up
 
 Maintenance release. Bumps the Cyrius pin **6.4.13 → 6.5.35** (109 toolchain

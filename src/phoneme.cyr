@@ -651,6 +651,7 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n) {
     vec_push(formants, svara_formant_new(SvVowelTarget_f4(target), SvVowelTarget_b4(target), load64(amps + 24)));
     vec_push(formants, svara_formant_new(SvVowelTarget_f5(target), SvVowelTarget_b5(target), load64(amps + 32)));
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants(tract, formants);
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
@@ -659,6 +660,7 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n) {
     # not applied to the glottal source here (the one-pole tilt filter would
     # sap signal energy). Consumers apply it in post if desired.
     var buf = svara_tract_synthesize(tract, glottal, n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_ph_apply_envelope(buf, n);
     return buf;
 }
@@ -670,7 +672,9 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n) {
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     var tract = svara_tract_new(sample_rate);
-    var buf = alloc(n * 8);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     # Control-rate formant coefficients: re-solving the biquad bank from the
     # interpolated target on EVERY sample (the faithful-but-slow port) dominated
     # the diphthong cost. The glide target moves smoothly, so recomputing at a
@@ -698,11 +702,15 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n) {
 
 #must_use
 fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n) {
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
     var noise = svara_rng_new(17);
     var vot = svara_vot_for_plosive(phoneme);
     var nf = f64_from(n);
+    # Raw f64_to is safe here and only here: `vot` comes from svara_vot_for_plosive,
+    # whose fractions are in-tree constants in [0, 1], and `n` is already bounded by
+    # svara_count_from_f64 at the public entry. Nothing caller-supplied reaches this cast.
     var closure_end = f64_to(f64_mul(SvVOT_closure_fraction(vot), nf));
     var burst_end = closure_end + f64_to(f64_max(f64_mul(SvVOT_burst_fraction(vot), nf), F64_ONE));
     var aspiration_end = burst_end + f64_to(f64_mul(SvVOT_aspiration_fraction(vot), nf));
@@ -740,6 +748,7 @@ fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n) {
             if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
             svara_glottal_set_breathiness(glottal, SV_PH_030);
             var tract = svara_tract_new(sample_rate);
+            if (svara_is_err(tract) == 1) { return tract; }
             var e = svara_tract_set_formants_from_target(tract, target);
             if (svara_is_err(e) == 1) { return e; }
             var m = voice_start;
@@ -767,11 +776,13 @@ fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n) {
     var noise = svara_rng_new(31);
     var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), sample_rate);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     if (svara_phoneme_is_voiced(phoneme) == 1) {
         var glottal = svara_voice_create_glottal_source(voice, sample_rate);
         if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
         var tract = svara_tract_new(sample_rate);
+        if (svara_is_err(tract) == 1) { return tract; }
         var e = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(e) == 1) { return e; }
         var i = 0;
@@ -799,6 +810,7 @@ fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n) {
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_coupling(tract, SV_PH_08);
@@ -808,6 +820,7 @@ fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n) {
     elif (phoneme == SVARA_PH_NASAL_NG) { place = SVARA_NASAL_VELAR; }
     svara_tract_set_nasal_place(tract, place);
     var buf = svara_tract_synthesize(tract, glottal, n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_ph_apply_envelope(buf, n);
     return buf;
 }
@@ -819,9 +832,11 @@ fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n) {
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     svara_glottal_set_breathiness(glottal, f64_max(SvVoiceProfile_breathiness(voice), SV_PH_R01));
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     var buf = svara_tract_synthesize(tract, glottal, n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     var i = 0;
     while (i < n) { store64(buf + i * 8, f64_mul(load64(buf + i * 8), SV_PH_R07)); i = i + 1; }
     svara_ph_apply_envelope(buf, n);
@@ -830,7 +845,8 @@ fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n) {
 
 #must_use
 fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n) {
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
     var noise = svara_rng_new(23);
     var closure_end = n / 4;
@@ -851,6 +867,7 @@ fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n) {
         var glottal = svara_voice_create_glottal_source(voice, sample_rate);
         if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
         var tract = svara_tract_new(sample_rate);
+        if (svara_is_err(tract) == 1) { return tract; }
         var e = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(e) == 1) { return e; }
         var m = burst_end;
@@ -876,6 +893,7 @@ fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n) {
 fn svara_ph_synth_trill(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
@@ -883,7 +901,8 @@ fn svara_ph_synth_trill(phoneme, voice, sample_rate, n) {
     var trill_rate = f64_from(25);
     if (phoneme == SVARA_PH_TRILL_UVULAR) { trill_rate = f64_from(20); }
     elif (phoneme == SVARA_PH_TRILL_BILABIAL) { trill_rate = f64_from(15); }
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     var i = 0;
     while (i < n) {
         var s = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
@@ -902,7 +921,8 @@ fn svara_ph_synth_click(phoneme, voice, sample_rate, n) {
     var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     var noise = svara_rng_new(41);
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
     var burst_start = n * 6 / 10;
     var burst_len = n - burst_start;
@@ -928,7 +948,8 @@ fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n) {
     var noise = svara_rng_new(43);
     var is_fric = 0;
     if ((phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_EJECTIVE_CH)) { is_fric = 1; }
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
     var closure_end = n * 4 / 10;
     var burst_end = closure_end + n * 2 / 10;
@@ -974,12 +995,14 @@ fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n) {
 fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     svara_glottal_set_creaky(glottal, F64_HALF);
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
     var closure_end = n / 3;
     var i = closure_end;
@@ -997,12 +1020,15 @@ fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n) {
 fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
-    var onset_sample = f64_to(f64_mul(SvNasalization_onset(nasal), f64_from(n)));
+    # `nasal` is caller-supplied, so onset can be NaN or huge -- saturate as
+    # Rust's `as usize` does rather than letting f64_to emit INT64_MIN.
+    var onset_sample = svara_count_from_f64(f64_mul(SvNasalization_onset(nasal), f64_from(n)));
     var ramp_len = n - onset_sample;
     if (ramp_len < 1) { ramp_len = 1; }
     var is_diph = 0;
@@ -1011,7 +1037,8 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal) {
         is_diph = 1;
         endt = svara_voice_apply_formant_scale(voice, svara_ph_diphthong_end_target(phoneme));
     }
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     var i = 0;
     while (i < n) {
         if (is_diph == 1) {
@@ -1034,7 +1061,8 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal) {
 #must_use
 fn svara_ph_synth_dispatch(phoneme, voice, sample_rate, n) {
     if (phoneme == SVARA_PH_SILENCE) {
-        var z = alloc(n * 8);
+        var z = svara_alloc_samples(n);
+        if (z == 0) { return SVARA_ERR_COMPUTATION; }
         svara_formant_zero_buf(z, n);
         return z;
     }
@@ -1053,7 +1081,8 @@ fn svara_ph_synth_dispatch(phoneme, voice, sample_rate, n) {
     if (c == SVARA_CLASS_EJECTIVE) { return svara_ph_synth_ejective(phoneme, voice, sample_rate, n); }
     if (c == SVARA_CLASS_IMPLOSIVE) { return svara_ph_synth_implosive(phoneme, voice, sample_rate, n); }
     # Silence class
-    var z2 = alloc(n * 8);
+    var z2 = svara_alloc_samples(n);
+    if (z2 == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(z2, n);
     return z2;
 }
@@ -1067,7 +1096,10 @@ fn svara_phoneme_synthesize(phoneme, voice, sample_rate, duration) {
     if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
     if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
     if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_ARTICULATION; }
-    var n = f64_to(f64_mul(duration, sample_rate));
+    # Rust checks only `sample_rate <= 0.0` here, so a NaN or +inf rate reaches
+    # the cast; `as usize` saturates it (NaN -> 0 -> empty vec). svara_count_from_f64
+    # reproduces that -- a bare f64_to would yield INT64_MIN. See error.cyr.
+    var n = svara_count_from_f64(f64_mul(duration, sample_rate));
     if (n == 0) { return vec_new(); }
     var data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n);
     if (svara_is_err(data) == 1) { return data; }
@@ -1083,7 +1115,7 @@ fn svara_phoneme_synthesize_nasalized(phoneme, voice, sample_rate, duration, nas
     if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
     if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
     if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_ARTICULATION; }
-    var n = f64_to(f64_mul(duration, sample_rate));
+    var n = svara_count_from_f64(f64_mul(duration, sample_rate));   # saturating, see error.cyr
     if (n == 0) { return vec_new(); }
     var c = svara_phoneme_class(phoneme);
     var is_vowel_like = 0;
@@ -1113,8 +1145,10 @@ struct SvSynthCtx { tract; glottal; noise; fric_filter; buffer; buffer_cap; samp
 fn svara_synthctx_new(voice, sample_rate) {
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var self = alloc(sizeof(SvSynthCtx));
-    SvSynthCtx_set_tract(self, svara_tract_new(sample_rate));
+    SvSynthCtx_set_tract(self, tract);
     SvSynthCtx_set_glottal(self, glottal);
     SvSynthCtx_set_noise(self, svara_rng_new(17));
     SvSynthCtx_set_fric_filter(self, 0);
@@ -1133,7 +1167,11 @@ fn svara_synthctx_buffer(self) { return SvSynthCtx_buffer(self); }
 #must_use
 fn svara_synthctx_ensure_buffer(self, n) {
     if (SvSynthCtx_buffer_cap(self) < n) {
-        SvSynthCtx_set_buffer(self, alloc(n * 8));
+        # On failure leave the existing buffer and capacity in place and report
+        # 0 -- storing the null would poison every later call on this context.
+        var grown = svara_alloc_samples(n);
+        if (grown == 0) { return 0; }
+        SvSynthCtx_set_buffer(self, grown);
         SvSynthCtx_set_buffer_cap(self, n);
     }
     return SvSynthCtx_buffer(self);
@@ -1160,7 +1198,7 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
     if (nasal != 0) {
         use_nasal = 1;
         svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
-        onset = f64_to(f64_mul(SvNasalization_onset(nasal), f64_from(n)));
+        onset = svara_count_from_f64(f64_mul(SvNasalization_onset(nasal), f64_from(n)));   # saturating
         ramp = n - onset;
         if (ramp < 1) { ramp = 1; }
     }
@@ -1443,9 +1481,10 @@ fn svara_synthctx_implosive(self, phoneme, voice, n) {
 fn svara_synthctx_synthesize(self, phoneme, voice, duration, nasal) {
     if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
     if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
-    var n = f64_to(f64_mul(duration, SvSynthCtx_sample_rate(self)));
+    var n = svara_count_from_f64(f64_mul(duration, SvSynthCtx_sample_rate(self)));   # saturating
     if (n == 0) { return 0; }
     var buf = svara_synthctx_ensure_buffer(self, n);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_tract_reset(SvSynthCtx_tract(self));
 
     var g = SvSynthCtx_glottal(self);

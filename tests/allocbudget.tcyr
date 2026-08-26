@@ -1,0 +1,273 @@
+# allocbudget.tcyr -- pins the two properties the 3.1.3 allocation work relies on.
+#
+# 1. EQUIVALENCE. Each `_into` variant must produce bit-identical values to the
+#    allocating function it replaced. These comparisons are exact (assert_eq on
+#    raw f64 bit patterns), not tolerance-based, because the two paths run the
+#    SAME arithmetic in the same order -- only the destination differs. They hold
+#    on every architecture for that reason, unlike a stored golden digest.
+#
+# 2. BUDGET. Cyrius's bump allocator NEVER frees, so an allocation inside a
+#    per-sample loop is not a performance nuisance, it is an unbounded leak:
+#    before 3.1.3 the trajectory-planned render spent ~1.1 KB of arena per output
+#    sample, so a minute of speech needed gigabytes that were never released.
+#    The budget is measured as the MARGINAL cost of doubling the duration, which
+#    cancels the fixed setup, and each assertion is paired with a control proving
+#    the measurement is not reading zero.
+#
+# Include order: hisab -> goonj -> naad -> error -> rng -> smooth -> lod ->
+# formant -> spectral -> glottal -> tract -> voice -> phoneme -> prosody ->
+# trajectory -> sequence.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+
+# 1 iff two VowelTargets agree in all ten components, bit for bit.
+#must_use
+fn vt_same(a, b) {
+    if (SvVowelTarget_f1(a) != SvVowelTarget_f1(b)) { return 0; }
+    if (SvVowelTarget_f2(a) != SvVowelTarget_f2(b)) { return 0; }
+    if (SvVowelTarget_f3(a) != SvVowelTarget_f3(b)) { return 0; }
+    if (SvVowelTarget_f4(a) != SvVowelTarget_f4(b)) { return 0; }
+    if (SvVowelTarget_f5(a) != SvVowelTarget_f5(b)) { return 0; }
+    if (SvVowelTarget_b1(a) != SvVowelTarget_b1(b)) { return 0; }
+    if (SvVowelTarget_b2(a) != SvVowelTarget_b2(b)) { return 0; }
+    if (SvVowelTarget_b3(a) != SvVowelTarget_b3(b)) { return 0; }
+    if (SvVowelTarget_b4(a) != SvVowelTarget_b4(b)) { return 0; }
+    if (SvVowelTarget_b5(a) != SvVowelTarget_b5(b)) { return 0; }
+    return 1;
+}
+
+# 1 iff two Formant vecs agree in all three components of all five slots.
+#must_use
+fn fv_same(a, b) {
+    if (vec_len(a) != vec_len(b)) { return 0; }
+    var i = 0;
+    while (i < vec_len(a)) {
+        var x = vec_get(a, i);
+        var y = vec_get(b, i);
+        if (SvFormant_frequency(x) != SvFormant_frequency(y)) { return 0; }
+        if (SvFormant_bandwidth(x) != SvFormant_bandwidth(y)) { return 0; }
+        if (SvFormant_amplitude(x) != SvFormant_amplitude(y)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 1 iff two f64 sample vecs are bit-for-bit equal.
+#must_use
+fn samples_same(a, b) {
+    if (vec_len(a) != vec_len(b)) { return 0; }
+    var i = 0;
+    while (i < vec_len(a)) {
+        if (vec_get(a, i) != vec_get(b, i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+#must_use
+fn mk_seq(dur, toned) {
+    var s = svara_sequence_new();
+    if (toned == 1) {
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, dur,
+            SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, dur,
+            SVARA_STRESS_SECONDARY, SVARA_TONE_FALLING));
+    } else {
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, dur, SVARA_STRESS_PRIMARY));
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, dur, SVARA_STRESS_SECONDARY));
+    }
+    return s;
+}
+
+# marginal arena bytes per extra output sample, doubling the duration so the
+# fixed per-render setup cancels.
+#must_use
+fn marginal_bytes(toned) {
+    var voice = svara_voice_new_male();
+    var s1 = mk_seq(f64_div(F64_ONE, f64_from(10)), toned);
+    var s2 = mk_seq(f64_div(F64_ONE, f64_from(5)), toned);
+    var a = alloc_used();
+    var r1 = svara_sequence_render_planned(s1, voice, SR);
+    var b = alloc_used();
+    var r2 = svara_sequence_render_planned(s2, voice, SR);
+    var c = alloc_used();
+    return ((c - b) - (b - a)) / (vec_len(r2) - vec_len(r1));
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+
+    # ================================================================
+    test_group("interpolate_into matches interpolate exactly");
+    # ================================================================
+    var va = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+    var vi = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+    var third = f64_div(F64_ONE, f64_from(3));
+    var scratch = svara_vowel_target_new(0, 0, 0, 0, 0);
+    svara_vowel_target_interpolate_into(va, vi, third, scratch);
+    assert_eq(vt_same(scratch, svara_vowel_target_interpolate(va, vi, third)), 1, "t = 1/3");
+    svara_vowel_target_interpolate_into(va, vi, 0, scratch);
+    assert_eq(vt_same(scratch, svara_vowel_target_interpolate(va, vi, 0)), 1, "t = 0");
+    svara_vowel_target_interpolate_into(va, vi, F64_ONE, scratch);
+    assert_eq(vt_same(scratch, svara_vowel_target_interpolate(va, vi, F64_ONE)), 1, "t = 1");
+    # CONTROL: vt_same is not a tautology -- two different targets must differ.
+    assert_eq(vt_same(va, vi), 0, "control: /a/ and /i/ are not the same target");
+
+    # ================================================================
+    test_group("copy_into and to_formants_into match their originals");
+    # ================================================================
+    svara_vowel_target_copy_into(vi, scratch);
+    assert_eq(vt_same(scratch, vi), 1, "copy_into reproduces the source");
+    var fscratch = svara_formant_scratch_vec();
+    assert_eq(vec_len(fscratch), 5, "scratch vec holds five slots");
+    svara_vowel_target_to_formants_into(va, fscratch);
+    assert_eq(fv_same(fscratch, svara_vowel_target_to_formants(va)), 1, "to_formants_into matches /a/");
+    svara_vowel_target_to_formants_into(vi, fscratch);
+    assert_eq(fv_same(fscratch, svara_vowel_target_to_formants(vi)), 1, "to_formants_into matches /i/");
+    # CONTROL: fv_same distinguishes different vowels.
+    assert_eq(fv_same(svara_vowel_target_to_formants(va), svara_vowel_target_to_formants(vi)), 0,
+      "control: /a/ and /i/ formants differ");
+
+    # ================================================================
+    test_group("catmull_rom_into and formants_at_into match their originals");
+    # ================================================================
+    var pl = vec_new();
+    vec_push(pl, SVARA_PH_VOWEL_A);
+    vec_push(pl, SVARA_PH_VOWEL_I);
+    vec_push(pl, SVARA_PH_VOWEL_U);
+    var durs = vec_new();
+    var dd = f64_div(F64_ONE, f64_from(10));
+    vec_push(durs, dd); vec_push(durs, dd); vec_push(durs, dd);
+    var plan = svara_trajectory_plan(pl, durs, voice, SR);
+
+    var vu = svara_vowel_target_from_vowel(SVARA_VOWEL_U);
+    var vo = svara_vowel_target_from_vowel(SVARA_VOWEL_O);
+    svara_catmull_rom_vowel_into(va, vi, vu, vo, third, scratch);
+    assert_eq(vt_same(scratch, svara_catmull_rom_vowel(va, vi, vu, vo, third)), 1, "catmull_rom_into matches");
+
+    # Sweep the whole plan so every branch of formants_at is exercised: the
+    # early/late linear-ease arms and the interior Catmull-Rom arm.
+    var mismatches = 0;
+    var compared = 0;
+    var si = 0;
+    while (si < 13000) {
+        svara_trajectory_formants_at_into(plan, si, scratch);
+        if (vt_same(scratch, svara_trajectory_formants_at(plan, si)) == 0) { mismatches = mismatches + 1; }
+        compared = compared + 1;
+        si = si + 251;
+    }
+    assert_eq(mismatches, 0, "formants_at_into matches formants_at across the plan");
+    # CONTROL: the sweep actually ran, so `mismatches == 0` is not vacuous.
+    assert_eq(compared, 52, "control: 52 positions were compared");
+    # CONTROL: the sweep saw genuinely different targets, not one repeated value.
+    var first = svara_trajectory_formants_at(plan, 0);
+    var last = svara_trajectory_formants_at(plan, 12000);
+    assert_eq(vt_same(first, last), 0, "control: the trajectory actually moves");
+
+    # ================================================================
+    test_group("filter rebuild reproduces a freshly built filter");
+    # ================================================================
+    # svara_formant_filter_rebuild must leave the filter in exactly the state
+    # svara_formant_filter_new would have produced -- Rust's set_formants assigns
+    # a brand-new FormantFilter, discarding the delay lines. Compared at the
+    # FILTER level, which is what changed; the surrounding tract state
+    # (lip_prev, interaction feedback, the two naad biquads, the smoothed
+    # params) is deliberately NOT reset by set_formants in Rust either.
+    var fa = svara_vowel_target_to_formants(va);
+    var fi = svara_vowel_target_to_formants(vi);
+    var warm = svara_formant_filter_new(fa, SR);
+    assert_eq(svara_is_err(warm), 0, "control: filter constructs");
+    var wi = 0;
+    while (wi < 500) {
+        var junk = svara_formant_filter_process_sample(warm, svara_rng_next_f32(svara_rng_new(wi + 1)));
+        wi = wi + 1;
+    }
+    assert_eq(svara_formant_filter_rebuild(warm, fi), SVARA_ERR_NONE, "rebuild on a warm filter succeeds");
+    var fresh = svara_formant_filter_new(fi, SR);
+    assert_eq(svara_is_err(fresh), 0, "control: fresh filter constructs");
+
+    var diffs = 0;
+    var loud = 0;
+    var ci = 0;
+    while (ci < 256) {
+        var drive = svara_traj_cr(0, F64_ONE, 0, f64_neg(F64_ONE), f64_div(f64_from(ci), f64_from(256)));
+        var sw = svara_formant_filter_process_sample(warm, drive);
+        var sf = svara_formant_filter_process_sample(fresh, drive);
+        if (sw != sf) { diffs = diffs + 1; }
+        if (f64_gt(f64_abs(sf), SV_EPSILON) == 1) { loud = loud + 1; }
+        ci = ci + 1;
+    }
+    assert_eq(diffs, 0, "rebuilt filter is bit-identical to a fresh one (state discarded)");
+    # CONTROL: the comparison sees real signal, not two silent buffers.
+    assert_eq(loud > 0, 1, "control: the filter emits non-silence");
+    assert_eq(svara_formant_filter_num_formants(warm), 5, "rebuild sets the active count");
+
+    # A rejected rebuild must leave the filter untouched, as Rust's `?` does.
+    var bad = vec_new();
+    vec_push(bad, svara_formant_new(f64_neg(f64_from(100)), f64_from(50), F64_ONE));
+    assert_eq(svara_formant_filter_rebuild(fresh, bad), SVARA_ERR_INVALID_FORMANT, "invalid formants rejected");
+    assert_eq(svara_formant_filter_num_formants(fresh), 5, "a rejected rebuild does not change the count");
+    var after = svara_formant_filter_process_sample(fresh, F64_ONE);
+    assert_eq(svara_is_finite(after), 1, "filter still usable after a rejected rebuild");
+
+    # And the tract wrapper still reports errors the same way.
+    var tk = svara_tract_new(SR);
+    assert_eq(svara_is_err(tk), 0, "control: tract constructs");
+    assert_eq(svara_tract_set_formants(tk, bad), SVARA_ERR_INVALID_FORMANT, "tract rejects invalid formants");
+    assert_eq(svara_is_finite(svara_tract_process_sample(tk, F64_ONE)), 1, "tract usable after rejection");
+
+    # ================================================================
+    test_group("render_planned allocates per sample only for its output");
+    # ================================================================
+    # 3.1.2 measured 1121 (untoned) and 1505 (toned) bytes per sample here.
+    # What remains is the output buffer plus the vec it is copied into; the
+    # per-sample synthesis work itself allocates nothing.
+    var untoned = marginal_bytes(0);
+    assert_eq(untoned > 0, 1, "control: the budget measurement reads a real number");
+    assert_eq(untoned < 64, 1, "untoned render stays under 64 bytes per sample");
+    var toned = marginal_bytes(1);
+    assert_eq(toned > 0, 1, "control: the toned budget reads a real number");
+    # The toned path additionally pays for hisab's calc_monotone_cubic, which
+    # allocates three internal arrays per call (~80 bytes); that is upstream.
+    assert_eq(toned < 192, 1, "toned render stays under 192 bytes per sample");
+    assert_eq(toned > untoned, 1, "control: the tone path costs more than the untoned one");
+
+    # ================================================================
+    test_group("render output is unchanged by the reuse");
+    # ================================================================
+    # Same sequence, same seed-free deterministic path, rendered twice.
+    var sq = mk_seq(f64_div(F64_ONE, f64_from(10)), 0);
+    var o1 = svara_sequence_render_planned(sq, voice, SR);
+    var o2 = svara_sequence_render_planned(sq, voice, SR);
+    assert_eq(samples_same(o1, o2), 1, "render_planned is deterministic across calls");
+    assert_eq(vec_len(o1) > 0, 1, "control: the render produced samples");
+    var sqt = mk_seq(f64_div(F64_ONE, f64_from(10)), 1);
+    var t1 = svara_sequence_render_planned(sqt, voice, SR);
+    var t2 = svara_sequence_render_planned(sqt, voice, SR);
+    assert_eq(samples_same(t1, t2), 1, "toned render_planned is deterministic across calls");
+    assert_eq(samples_same(o1, t1), 0, "control: the toned render differs from the untoned one");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

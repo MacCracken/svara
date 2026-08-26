@@ -23,12 +23,17 @@ fn svara_keypoint_new(time, target, resistance) {
 }
 
 #derive(accessors)
-struct SvTrajectoryPlanner { keypoints; total_samples; }
+# `scratch_a`/`scratch_b` hold the linear and Catmull-Rom intermediates for
+# svara_trajectory_formants_at_into, so the per-sample render path can ask for
+# an interpolated target without allocating three of them per sample.
+struct SvTrajectoryPlanner { keypoints; total_samples; scratch_a; scratch_b; }
 
 # plan -- build a trajectory from parallel phonemes (vec<int>) + durations (vec<f64>).
 #must_use
 fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     var self = alloc(sizeof(SvTrajectoryPlanner));
+    SvTrajectoryPlanner_set_scratch_a(self, svara_vowel_target_new(0, 0, 0, 0, 0));
+    SvTrajectoryPlanner_set_scratch_b(self, svara_vowel_target_new(0, 0, 0, 0, 0));
     var kps = vec_new();
     var np = vec_len(phonemes);
     if (np == 0) {
@@ -43,7 +48,7 @@ fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     var offset = 0;
     var i = 0;
     while (i < np) {
-        offset = offset + f64_to(f64_mul(vec_get(durations, i), sample_rate));
+        offset = offset + svara_count_from_f64(f64_mul(vec_get(durations, i), sample_rate));
         vec_push(boundaries, offset);
         i = i + 1;
     }
@@ -126,6 +131,91 @@ fn svara_catmull_rom_vowel(p0, p1, p2, p3, t) {
       svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1), SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t),
       svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1), SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t),
       svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1), SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
+}
+
+# catmull_rom_vowel_into -- svara_catmull_rom_vowel writing into an existing
+# target. Identical arithmetic, component for component.
+fn svara_catmull_rom_vowel_into(p0, p1, p2, p3, t, out) {
+    SvVowelTarget_set_f1(out, svara_traj_cr(SvVowelTarget_f1(p0), SvVowelTarget_f1(p1),
+        SvVowelTarget_f1(p2), SvVowelTarget_f1(p3), t));
+    SvVowelTarget_set_f2(out, svara_traj_cr(SvVowelTarget_f2(p0), SvVowelTarget_f2(p1),
+        SvVowelTarget_f2(p2), SvVowelTarget_f2(p3), t));
+    SvVowelTarget_set_f3(out, svara_traj_cr(SvVowelTarget_f3(p0), SvVowelTarget_f3(p1),
+        SvVowelTarget_f3(p2), SvVowelTarget_f3(p3), t));
+    SvVowelTarget_set_f4(out, svara_traj_cr(SvVowelTarget_f4(p0), SvVowelTarget_f4(p1),
+        SvVowelTarget_f4(p2), SvVowelTarget_f4(p3), t));
+    SvVowelTarget_set_f5(out, svara_traj_cr(SvVowelTarget_f5(p0), SvVowelTarget_f5(p1),
+        SvVowelTarget_f5(p2), SvVowelTarget_f5(p3), t));
+    SvVowelTarget_set_b1(out, svara_traj_cr(SvVowelTarget_b1(p0), SvVowelTarget_b1(p1),
+        SvVowelTarget_b1(p2), SvVowelTarget_b1(p3), t));
+    SvVowelTarget_set_b2(out, svara_traj_cr(SvVowelTarget_b2(p0), SvVowelTarget_b2(p1),
+        SvVowelTarget_b2(p2), SvVowelTarget_b2(p3), t));
+    SvVowelTarget_set_b3(out, svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1),
+        SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t));
+    SvVowelTarget_set_b4(out, svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1),
+        SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t));
+    SvVowelTarget_set_b5(out, svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1),
+        SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
+}
+
+# formants_at_into -- svara_trajectory_formants_at writing into `out` instead of
+# allocating. Same branches, same arithmetic; the two intermediates live in the
+# planner's scratch targets. The render path calls this once per output sample,
+# and the allocating form spent 80-240 bytes of never-freed arena each time.
+fn svara_trajectory_formants_at_into(self, sample, out) {
+    var kps = SvTrajectoryPlanner_keypoints(self);
+    var n = vec_len(kps);
+    if (n == 0) {
+        SvVowelTarget_set_f1(out, f64_from(500));
+        SvVowelTarget_set_f2(out, f64_from(1500));
+        SvVowelTarget_set_f3(out, f64_from(2500));
+        SvVowelTarget_set_f4(out, f64_from(3300));
+        SvVowelTarget_set_f5(out, f64_from(3750));
+        # must match svara_vowel_target_new's default bandwidths exactly
+        SvVowelTarget_set_b1(out, f64_from(60));
+        SvVowelTarget_set_b2(out, f64_from(80));
+        SvVowelTarget_set_b3(out, f64_from(100));
+        SvVowelTarget_set_b4(out, f64_from(120));
+        SvVowelTarget_set_b5(out, f64_from(140));
+        return 0;
+    }
+    if (n == 1) {
+        svara_vowel_target_copy_into(SvFormantKeypoint_target(vec_get(kps, 0)), out);
+        return 0;
+    }
+
+    var seg = svara_trajectory_find_segment(self, sample);
+    var k0 = vec_get(kps, seg);
+    var seg1 = seg + 1;
+    if (seg1 > n - 1) { seg1 = n - 1; }
+    var k1 = vec_get(kps, seg1);
+
+    var span = SvFormantKeypoint_time(k1) - SvFormantKeypoint_time(k0);
+    if (span < 1) { span = 1; }
+    var d = sample - SvFormantKeypoint_time(k0);
+    if (d < 0) { d = 0; }
+    var t = f64_clamp(f64_div(f64_from(d), f64_from(span)), 0, F64_ONE);
+
+    if ((seg > 0) & ((seg + 2) < n)) {
+        var km1 = vec_get(kps, seg - 1);
+        var k2 = vec_get(kps, seg + 2);
+        var outer = f64_mul(f64_add(SvFormantKeypoint_resistance(km1), SvFormantKeypoint_resistance(k2)), F64_HALF);
+        var catmull_weight = f64_sub(F64_ONE, outer);
+        if (f64_gt(catmull_weight, 0.05) == 1) {
+            var linear = SvTrajectoryPlanner_scratch_a(self);
+            var catmull = SvTrajectoryPlanner_scratch_b(self);
+            svara_vowel_target_interpolate_into(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1),
+              t, linear);
+            svara_catmull_rom_vowel_into(SvFormantKeypoint_target(km1), SvFormantKeypoint_target(k0),
+              SvFormantKeypoint_target(k1), SvFormantKeypoint_target(k2), t, catmull);
+            svara_vowel_target_interpolate_into(linear, catmull, catmull_weight, out);
+            return 0;
+        }
+    }
+    var t_smooth = ease_in_out_smooth(t);
+    svara_vowel_target_interpolate_into(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1),
+      t_smooth, out);
+    return 0;
 }
 
 # formants_at -- interpolated VowelTarget at a sample position.

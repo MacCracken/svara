@@ -24,7 +24,13 @@ struct SvSpectrum { magnitudes; freq_resolution; sample_rate; }
 #must_use
 fn svara_next_pow2(n) {
     var p = 1;
-    while (p < n) { p = p * 2; }
+    # `p * 2` wraps to a negative once it passes 2^62, and `p < n` then stays
+    # true forever. Stop at the largest representable power of two and report
+    # it as 0 -- the caller rejects that rather than spinning.
+    while (p < n) {
+        if (p >= 4611686018427387904) { return 0; }   # 2^62: the next double overflows
+        p = p * 2;
+    }
     return p;
 }
 
@@ -36,10 +42,17 @@ fn svara_spectrum_bin_frequency(self, bin) {
 }
 
 # frequency_bin -- nearest bin index to a frequency: ((freq/res)+0.5) truncated.
+#
+# Rust returns `usize`, so a negative or NaN frequency -- or a zero
+# freq_resolution, which makes the quotient +/-inf -- saturates to 0 there. A
+# bare f64_to yields INT64_MIN instead, and every caller below tests only the
+# UPPER bound (as Rust can, on a usize), so that index reached vec_get and
+# aborted the process. Saturate here, at the source, so the callers' single
+# bound is a complete bound again.
 #inline
 #must_use
 fn svara_spectrum_frequency_bin(self, freq) {
-    return f64_to(f64_add(f64_div(freq, SvSpectrum_freq_resolution(self)), F64_HALF));
+    return svara_count_from_f64(f64_add(f64_div(freq, SvSpectrum_freq_resolution(self)), F64_HALF));
 }
 
 # magnitude_at -- magnitude at the bin nearest `freq` (0.0 if out of range).
@@ -79,7 +92,8 @@ fn svara_spectrum_peak_in_range(self, lo_hz, hi_hz, out) {
 fn svara_spectral_sum_squares(mags, lo, hi) {
     var n = hi - lo;
     if (n <= 0) { return 0; }
-    var buf = alloc(n * 8);
+    var buf = svara_alloc_samples(n);
+    if (buf == 0) { return 0; }
     var i = 0;
     while (i < n) {
         var m = vec_get(mags, lo + i);
@@ -128,8 +142,10 @@ fn svara_spectrum_estimate_formants(self, max_formants) {
     var threshold = f64_mul(max_mag, SV_TENTH);
 
     # collect local maxima into parallel freq/mag buffers
-    var pf = alloc(len * 8);
-    var pm = alloc(len * 8);
+    var pf = svara_alloc_samples(len);
+    var pm = svara_alloc_samples(len);
+    if (pf == 0) { return result; }
+    if (pm == 0) { return result; }
     var pc = 0;
     var i = 1;
     while (i < len - 1) {
@@ -202,7 +218,11 @@ fn svara_spectral_analyze(samples, sample_rate) {
     if (len == 0) { return SVARA_ERR_COMPUTATION; }
 
     var fft_size = svara_next_pow2(len);
+    if (fft_size <= 0) { return SVARA_ERR_COMPUTATION; }
+    # HComplex is 16 bytes, so the usable ceiling is half SV_MAX_SAMPLES.
+    if (fft_size > SV_MAX_SAMPLES / 2) { return SVARA_ERR_COMPUTATION; }
     var data = alloc(fft_size * 16);
+    if (data == 0) { return SVARA_ERR_COMPUTATION; }
 
     # window the first `len` samples into re; zero the imaginary parts + padding.
     var n = f64_from(len);

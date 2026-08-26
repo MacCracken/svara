@@ -122,8 +122,8 @@ AGNOS stack (same sakshi substrate as varna and shabdakosh).
 
 ### M-perf — synthesis SIMD + hot-path optimization — P1 (in progress)
 
-**Control-rate glides shipped in 3.1.0; SIMD investigated + deferred; buffer
-pooling + memory-traffic work remain.** A same-machine Rust-vs-Cyrius run
+**Control-rate glides shipped in 3.1.0; the render loop stopped allocating in
+3.1.3; SIMD investigated + deferred; memory-traffic work remains.** A same-machine Rust-vs-Cyrius run
 ([`../benchmarks-rust-v-cyrius.md`](../benchmarks-rust-v-cyrius.md)) put the real
 per-DSP-unit gap at **10–38×**: formant bank 38×, vocal tract 19×, glottal 15×,
 vowel 10×. Optimize the synthesis hot path WITHOUT breaking tolerance parity
@@ -133,13 +133,33 @@ vowel 10×. Optimize the synthesis hot path WITHOUT breaking tolerance parity
   (`svara_ph_synth_diphthong`, `phoneme.cyr`). Was re-solving the whole biquad bank
   from the interpolated target on *every* sample (the ~5.4 ms `/ai/` outlier); now
   recomputes at a control rate of 64 samples (~1.45 ms) and holds between. Result:
-  **5.42 ms → 0.94 ms (5.8×)**, tolerance suite unchanged (652/0). The diphthong
+  **5.42 ms → 0.94 ms (5.8×)**, tolerance suite unchanged (634/0). The diphthong
   now matches a steady vowel and beats the Rust oracle (1.09 ms, still per-sample).
+
+- **✅ DONE (3.1.3) — no allocation on the per-sample render path.**
+  `svara_sequence_render_planned` spent **1,121 bytes of arena per output sample**
+  untoned and **1,505 toned**, into a bump allocator that never frees — a minute
+  of speech needed ~3–4 GB it could not release. Now **33 / 113 B per sample**
+  (34× / 13×), of which 16 is the output itself. The five sources, each measured:
+  `svara_tract_set_formants` 736 → 0 (rebuild in place, same discard-the-state
+  semantics as Rust's `self.filter = FormantFilter::new(..)?`),
+  `svara_vowel_target_to_formants` 272 → 0, `svara_trajectory_formants_at`
+  80–240 → 0, `svara_tone_to_contour` 240 → 0 (hoisted out of the loop — it was
+  rebuilt every sample from the event's tone, which only changes at a boundary),
+  `svara_prosody_f0_at` 144 → 80, `svara_formant_bank_update` 32 → 0. Output is
+  bit-for-bit identical across ten render paths; the budget is pinned in
+  `tests/allocbudget.tcyr`. CPU fell 10–15% as a side effect, which is *not* the
+  metric — see the warning in [`state.md`](state.md#benchmarks).
+
+  Residue, both upstream: `svara_ph_buf_to_vec` doubles its result vec from empty
+  (~16 B/sample of dead copies; needs a stdlib `vec_with_capacity`), and hisab's
+  `calc_monotone_cubic` allocates three internal arrays per call (the whole
+  remaining 80 B of the toned path).
 
 - **⚠ DEFERRED — SIMD the formant biquad bank** (`svara_formant_bank_process`).
   Prototyped a bit-identical `f64v4` (AVX2) version of the 8-slot SOA bank (two
   4-lane groups, scalar op order, `simd_has_avx2()`-guarded fallback). It passed
-  tolerance (652/0) but bought only **~5%**: the per-sample loop is **memory-bound**,
+  tolerance (634/0) but bought only **~5%**: the per-sample loop is **memory-bound**,
   not compute-bound — the SOA *state shuffle* (~28 `load64`/`store64` per group) and
   the vector-op call overhead dominate, and the ptr/value `f64v4` API can't keep
   lane state in registers across samples. Reverted (also avoids a `simd` dep + a
@@ -158,7 +178,9 @@ vowel 10×. Optimize the synthesis hot path WITHOUT breaking tolerance parity
   `pool.cyr` exists but is **not wired into the render path**. Reuse a per-render
   scratch arena for the transient sample / `Formant` vecs instead of allocating per
   phoneme — removes the "+alloc" overhead that shows in every `synthesize_phoneme` and
-  compounds across `svara_sequence_render`.
+  compounds across `svara_sequence_render`. 3.1.3 did this for the *per-sample*
+  path; this item is the remaining *per-note* one, and the same measurement
+  method applies (marginal arena bytes, not wall clock).
 
 - **P1 — FMA + block audit.** Ensure every biquad/mix inner loop uses fused
   multiply-add (`f64v4_fmadd`) and that the glottal→tract→formant chain runs in blocks

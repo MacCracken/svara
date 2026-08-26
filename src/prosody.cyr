@@ -37,8 +37,13 @@ fn svara_pt_time(p) { return load64(p); }
 #must_use
 fn svara_pt_value(p) { return load64(p + 8); }
 
+# `xs`/`ys`/`buf_cap` are a contour-owned scratch pair for f0_at_internal, which
+# has to hand hisab two contiguous f64 buffers. They are REFILLED on every call,
+# never cached, so a caller mutating a point through f0_points cannot read a
+# stale value; only the allocation is reused. The render path calls f0_at once
+# per output sample and the bump allocator never frees.
 #derive(accessors)
-struct SvProsodyContour { f0_points; duration_scale; amplitude_scale; }
+struct SvProsodyContour { f0_points; duration_scale; amplitude_scale; xs; ys; buf_cap; }
 
 # selection sort a vec of point pointers by ascending time.
 fn svara_prosody_sort_points(v) {
@@ -69,8 +74,17 @@ fn svara_prosody_f0_at_internal(self, t) {
     if (n == 0) { return F64_ONE; }
     if (n == 1) { return svara_pt_value(vec_get(pts, 0)); }
     var tc = f64_clamp(t, 0, F64_ONE);
-    var xs = alloc(n * 8);
-    var ys = alloc(n * 8);
+    if (SvProsodyContour_buf_cap(self) < n) {
+        var nxs = svara_alloc_samples(n);
+        if (nxs == 0) { return F64_ONE; }
+        var nys = svara_alloc_samples(n);
+        if (nys == 0) { return F64_ONE; }
+        SvProsodyContour_set_xs(self, nxs);
+        SvProsodyContour_set_ys(self, nys);
+        SvProsodyContour_set_buf_cap(self, n);
+    }
+    var xs = SvProsodyContour_xs(self);
+    var ys = SvProsodyContour_ys(self);
     var i = 0;
     while (i < n) {
         var p = vec_get(pts, i);
@@ -162,6 +176,9 @@ fn svara_prosody_make(pts, dur, amp) {
     SvProsodyContour_set_f0_points(c, pts);
     SvProsodyContour_set_duration_scale(c, dur);
     SvProsodyContour_set_amplitude_scale(c, amp);
+    SvProsodyContour_set_xs(c, 0);
+    SvProsodyContour_set_ys(c, 0);
+    SvProsodyContour_set_buf_cap(c, 0);
     return c;
 }
 

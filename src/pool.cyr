@@ -29,7 +29,7 @@ fn svara_pool_new(voice, sample_rate) {
 fn svara_pool_with_capacity(voice, sample_rate, max_duration) {
     var p = svara_pool_new(voice, sample_rate);
     if (svara_is_err(p) == 1) { return p; }
-    var warm = f64_to(f64_mul(max_duration, sample_rate));
+    var warm = svara_count_from_f64(f64_mul(max_duration, sample_rate));   # saturating, see error.cyr
     if (warm > 0) {
         var r = svara_synthctx_synthesize(SvSynthesisPool_ctx(p), SVARA_PH_SILENCE, voice, max_duration, 0);
         if (svara_is_err(r) == 1) { return r; }

@@ -1,0 +1,171 @@
+# hardening.tcyr -- adversarial-input tests for the hazard class named in
+# docs/adr/0001-signed-index-and-float-conversion-hazards.md.
+#
+# Rust encodes two guarantees Cyrius has no equivalent for, and the port dropped
+# both silently because the ported line LOOKS correct:
+#   1. float -> int `as` casts SATURATE (NaN -> 0, negative -> 0, overflow -> MAX);
+#      Cyrius `f64_to` returns INT64_MIN for all three.
+#   2. `usize` cannot be negative, so Rust writes a bounds check as a SINGLE
+#      upper-bound test; in signed i64 that is only half a bound.
+# Plus one inverted range test (`!(a..=b).contains(&x)` is TRUE for NaN, so Rust
+# REJECTS NaN; two one-sided rejections ACCEPT it) and the fact that `alloc`
+# RETURNS 0 on failure rather than aborting.
+#
+# Every assertion here failed -- by SIGSEGV, by process abort, or by returning
+# the wrong value -- on 3.1.2. Controls are marked; they pass on both sides and
+# exist so a group where everything flipped can be told from one that is
+# measuring something real.
+#
+# Include order: hisab -> goonj -> naad -> error -> rng -> smooth -> lod ->
+# formant -> spectral -> glottal -> tract -> voice -> phoneme -> prosody ->
+# trajectory -> sequence.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+
+#must_use
+fn hd_nan() { return f64_div(0, 0); }
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+    var nan = hd_nan();
+
+    # ================================================================
+    test_group("f64 -> count saturates like Rust's `as usize`");
+    # ================================================================
+    # A bare f64_to returns INT64_MIN for every one of these.
+    assert_eq(svara_count_from_f64(nan), 0, "NaN -> 0");
+    assert_eq(svara_count_from_f64(SV_POS_INF), SV_MAX_SAMPLES + 1, "+inf -> over cap");
+    assert_eq(svara_count_from_f64(SV_NEG_INF), 0, "-inf -> 0");
+    assert_eq(svara_count_from_f64(f64_neg(f64_from(5))), 0, "negative -> 0");
+    assert_eq(svara_count_from_f64(f64_from(0)), 0, "zero -> 0");
+    # CONTROL: an ordinary count is unchanged and truncates toward zero.
+    assert_eq(svara_count_from_f64(f64_from(4410)), 4410, "control: 4410 -> 4410");
+    assert_eq(svara_count_from_f64(f64_add(f64_from(9), F64_HALF)), 9, "control: 9.5 truncates to 9");
+
+    # ================================================================
+    test_group("alloc failure is reported, never written through");
+    # ================================================================
+    assert_eq(svara_alloc_samples(0), 0, "n = 0 rejected");
+    assert_eq(svara_alloc_samples(0 - 1), 0, "n < 0 rejected");
+    assert_eq(svara_alloc_samples(SV_MAX_SAMPLES + 1), 0, "n past the cap rejected");
+    # CONTROL: a normal request still succeeds, so the guard is not rejecting everything.
+    assert_eq(svara_alloc_samples(64) != 0, 1, "control: n = 64 allocates");
+
+    # ================================================================
+    test_group("synthesize_phoneme survives adversarial sizes");
+    # ================================================================
+    # 6100 s at 44.1 kHz is 269,010,000 samples -> 2,152,080,000 bytes, past
+    # ALLOC_MAX. alloc returned 0 and the next store64 wrote to address 0:
+    # this call SIGSEGV'd on 3.1.2.
+    var big = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, f64_from(6100));
+    assert_eq(svara_is_err(big), 1, "oversized duration returns an error, not a segfault");
+    assert_eq(big, SVARA_ERR_COMPUTATION, "and the error is COMPUTATION");
+
+    # Rust checks only `sample_rate <= 0.0` here, so NaN reaches the cast and
+    # `as usize` makes it 0 -> Ok(Vec::new()). Parity, restored.
+    var nanr = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, nan, F64_ONE);
+    assert_eq(svara_is_err(nanr), 0, "NaN sample rate is not an error (Rust parity)");
+    assert_eq(vec_len(nanr), 0, "NaN sample rate yields an empty vec (Rust parity)");
+
+    # +inf reaches glottal construction, which rejects a non-finite rate.
+    var infr = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SV_POS_INF, F64_ONE);
+    assert_eq(svara_is_err(infr), 1, "+inf sample rate returns an error, not a segfault");
+
+    # CONTROL: an ordinary render still produces the expected sample count.
+    var okr = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, f64_div(F64_ONE, f64_from(10)));
+    assert_eq(svara_is_err(okr), 0, "control: 0.1 s render succeeds");
+    assert_eq(vec_len(okr), 4410, "control: 0.1 s at 44100 is 4410 samples");
+
+    # ================================================================
+    test_group("NaN f0 is rejected, as Rust's !(20..=2000).contains does");
+    # ================================================================
+    assert_eq(svara_glottal_new(nan, SR), SVARA_ERR_INVALID_PITCH, "new() rejects NaN f0");
+    var g = svara_glottal_new(f64_from(120), SR);
+    assert_eq(svara_is_err(g), 0, "control: 120 Hz constructs");
+    assert_eq(svara_glottal_set_f0(g, nan), SVARA_ERR_INVALID_PITCH, "set_f0 rejects NaN");
+    # The stored f0 must be untouched by the rejected call.
+    assert_eq(svara_glottal_f0(g), f64_from(120), "rejected set_f0 leaves f0 alone");
+    # CONTROLS: the ordinary range behaviour is unchanged.
+    assert_eq(svara_glottal_set_f0(g, f64_from(200)), SVARA_ERR_NONE, "control: 200 Hz accepted");
+    assert_eq(svara_glottal_set_f0(g, f64_from(19)), SVARA_ERR_INVALID_PITCH, "control: 19 Hz rejected");
+    assert_eq(svara_glottal_set_f0(g, f64_from(2001)), SVARA_ERR_INVALID_PITCH, "control: 2001 Hz rejected");
+    assert_eq(svara_glottal_set_f0(g, f64_from(20)), SVARA_ERR_NONE, "control: 20 Hz is inclusive");
+    assert_eq(svara_glottal_set_f0(g, f64_from(2000)), SVARA_ERR_NONE, "control: 2000 Hz is inclusive");
+    assert_eq(svara_f0_in_range(nan), 0, "f0_in_range(NaN) is 0");
+
+    # ================================================================
+    test_group("spectrum bin indices cannot go negative");
+    # ================================================================
+    var samples = vec_new();
+    var si = 0;
+    while (si < 512) {
+        vec_push(samples, f64_sin(f64_div(f64_mul(F64_TAU, f64_from(si)), f64_from(64))));
+        si = si + 1;
+    }
+    var spec = svara_spectral_analyze(samples, SR);
+    assert_eq(svara_is_err(spec), 0, "control: analyze succeeds on a 512-sample sine");
+
+    var neg_hz = f64_neg(f64_from(1000));
+    # f64_to gave INT64_MIN, which then reached vec_get and killed the process.
+    assert_eq(svara_spectrum_frequency_bin(spec, neg_hz), 0, "negative Hz -> bin 0");
+    assert_eq(svara_spectrum_frequency_bin(spec, nan), 0, "NaN Hz -> bin 0");
+    assert_eq(svara_spectrum_frequency_bin(spec, SV_NEG_INF), 0, "-inf Hz -> bin 0");
+    # CONTROL: a real frequency still maps to a sensible bin.
+    assert_eq(svara_spectrum_frequency_bin(spec, f64_from(0)) , 0, "control: 0 Hz -> bin 0");
+    assert_eq(svara_spectrum_frequency_bin(spec, SR) > 0, 1, "control: a positive Hz gives a positive bin");
+
+    # These three all aborted the process on 3.1.2 (vec: index < 0).
+    var m = svara_spectrum_magnitude_at(spec, neg_hz);
+    assert_eq(svara_is_finite(m), 1, "magnitude_at(negative Hz) returns a finite value");
+    var be = svara_spectrum_band_energy(spec, neg_hz, f64_from(500));
+    assert_eq(svara_is_finite(be), 1, "band_energy(negative lo) returns a finite value");
+    var pk = alloc(16);
+    var found = svara_spectrum_peak_in_range(spec, neg_hz, f64_from(500), pk);
+    assert_eq(found, 1, "peak_in_range(negative lo) finds a peak instead of aborting");
+    assert_eq(svara_is_finite(load64(pk)), 1, "and writes a finite frequency");
+
+    # ================================================================
+    test_group("next_pow2 terminates on an unrepresentable input");
+    # ================================================================
+    # `p * 2` wraps negative past 2^62 and `p < n` then stays true forever.
+    assert_eq(svara_next_pow2(4611686018427387905), 0, "past 2^62 reports 0 instead of spinning");
+    # CONTROLS.
+    assert_eq(svara_next_pow2(512), 512, "control: 512 is already a power of two");
+    assert_eq(svara_next_pow2(513), 1024, "control: 513 -> 1024");
+    assert_eq(svara_next_pow2(1), 1, "control: 1 -> 1");
+
+    # ================================================================
+    test_group("caller-supplied nasalization onset saturates");
+    # ================================================================
+    var nz = svara_nasalization_for_nasal(SVARA_PH_NASAL_N);
+    assert_eq(nz != 0, 1, "control: /n/ yields a Nasalization");
+    SvNasalization_set_onset(nz, nan);
+    var nr = svara_phoneme_synthesize_nasalized(SVARA_PH_VOWEL_A, voice, SR,
+      f64_div(F64_ONE, f64_from(100)), nz);
+    assert_eq(svara_is_err(nr), 0, "NaN onset does not error");
+    assert_eq(vec_len(nr), 441, "NaN onset still renders the full duration");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

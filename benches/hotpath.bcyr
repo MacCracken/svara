@@ -33,6 +33,7 @@ var _tract = 0;
 var _tract_g = 0;
 var _voice = 0;
 var _seq = 0;
+var _seq_toned = 0;
 var _sr = 0;
 var _dur = 0;
 var _blk_in = 0;
@@ -46,6 +47,8 @@ fn b_ph_vowel() { return svara_phoneme_synthesize(SVARA_PH_VOWEL_A, _voice, _sr,
 fn b_ph_fric() { return svara_phoneme_synthesize(SVARA_PH_FRIC_S, _voice, _sr, _dur); }
 fn b_ph_diph() { return svara_phoneme_synthesize(SVARA_PH_DIPH_AI, _voice, _sr, _dur); }
 fn b_seq() { return svara_sequence_render(_seq, _voice, _sr); }
+fn b_seq_planned() { return svara_sequence_render_planned(_seq, _voice, _sr); }
+fn b_seq_planned_toned() { return svara_sequence_render_planned(_seq_toned, _voice, _sr); }
 
 fn bench(name, fp, n) {
     var b = bench_new(name);
@@ -103,6 +106,13 @@ fn main() {
     svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.06, SVARA_STRESS_PRIMARY));
     svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED));
     svara_sequence_push(_seq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_PRIMARY));
+    _seq_toned = svara_sequence_new();
+    svara_sequence_push(_seq_toned,
+      svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0.06, SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+    svara_sequence_push(_seq_toned,
+      svara_phoneme_event_with_tone(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED, SVARA_TONE_FALLING));
+    svara_sequence_push(_seq_toned,
+      svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_PRIMARY, SVARA_TONE_DIPPING));
 
     # per-sample (batch-timed: 200 rounds x 1000 = 200000 ops each)
     bench1("glottal next_sample (Rosenberg)", &svara_glottal_next_sample, _glottal, 1000, 200);
@@ -122,6 +132,12 @@ fn main() {
 
     # sequence render (3 phonemes, crossfaded)
     bench("sequence render 3 phonemes", &b_seq, 100);
+    # trajectory-planned render: per-sample formant interpolation + tract retarget.
+    # This is the path 3.1.3 took from ~1.1 KB to ~33 B of arena per sample; the
+    # allocation budget itself is pinned in tests/allocbudget.tcyr, since a bump
+    # allocation is nearly free in CPU time and would not show up here.
+    bench("sequence render_planned 3 phonemes", &b_seq_planned, 100);
+    bench("sequence render_planned toned", &b_seq_planned_toned, 100);
     return 0;
 }
 

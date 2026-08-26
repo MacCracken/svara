@@ -279,7 +279,9 @@ fn svara_sequence_render(seq, voice, sample_rate) {
     }
 
     var cfs = vec_new();
-    var min_cf = f64_to(f64_mul(SvPhonemeSequence_transition_window(seq), sample_rate));
+    # transition_window is caller-set (floored at 0.001 but not capped above),
+    # so saturate as Rust's `as usize` does instead of emitting INT64_MIN.
+    var min_cf = svara_count_from_f64(f64_mul(SvPhonemeSequence_transition_window(seq), sample_rate));
     i = 0;
     while (i < n - 1) {
         var rl = svara_phoneme_coarticulation_resistance(SvPhonemeEvent_phoneme(vec_get(events, i)));
@@ -289,6 +291,8 @@ fn svara_sequence_render(seq, voice, sample_rate) {
         var sl = vec_len(vec_get(segments, i));
         var sl2 = vec_len(vec_get(segments, i + 1));
         if (sl2 < sl) { sl = sl2; }
+        # `frac` is built from in-tree coarticulation constants and `sl` is a vec
+        # length, so this cast is bounded on both sides -- no saturation needed.
         var cf_len = f64_to(f64_mul(frac, f64_from(sl)));
         if (cf_len < min_cf) { cf_len = min_cf; }
         vec_push(cfs, cf_len);
@@ -320,7 +324,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
     var offset = 0;
     var bi = 0;
     while (bi < n) {
-        offset = offset + f64_to(f64_mul(vec_get(durs, bi), sample_rate));
+        offset = offset + svara_count_from_f64(f64_mul(vec_get(durs, bi), sample_rate));
         vec_push(boundaries, offset);
         bi = bi + 1;
     }
@@ -328,20 +332,37 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
     var noise = svara_rng_new(17);
-    var out = alloc(total * 8);
+    var out = svara_alloc_samples(total);
+    if (out == 0) { return SVARA_ERR_COMPUTATION; }
+
+    # One contour per event, built once. This used to be rebuilt inside the
+    # per-sample loop from a value (the event's tone) that only changes at a
+    # phoneme boundary -- 240 bytes of never-freed arena per output sample.
+    # one reusable interpolated target for the whole render
+    var target = svara_vowel_target_new(0, 0, 0, 0, 0);
+
+    var contours = vec_new();
+    var ci = 0;
+    while (ci < n) {
+        var tv = SvPhonemeEvent_tone(vec_get(events, ci));
+        if (tv == SVARA_TONE_NONE) { vec_push(contours, 0); }
+        else { vec_push(contours, svara_tone_to_contour(tv)); }
+        ci = ci + 1;
+    }
 
     var idx = 0;
     var s = 0;
     while (s < total) {
         while (((idx + 1) < n) & (s >= vec_get(boundaries, idx + 1))) { idx = idx + 1; }
         var phoneme = SvPhonemeEvent_phoneme(vec_get(events, idx));
-        var target = svara_trajectory_formants_at(plan, s);
+        svara_trajectory_formants_at_into(plan, s, target);
 
         var nasal = vec_get(nasals, idx);
         if (nasal != 0) {
             var seg_span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
-            var onset_off = f64_to(f64_mul(f64_from(seg_span), SvNasalization_onset(nasal)));
+            var onset_off = svara_count_from_f64(f64_mul(f64_from(seg_span), SvNasalization_onset(nasal)));
             var nasal_onset = vec_get(boundaries, idx) + onset_off;
             if (s >= nasal_onset) {
                 var nasal_len = vec_get(boundaries, idx + 1) - nasal_onset;
@@ -366,8 +387,8 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         if (st == SVARA_STRESS_PRIMARY) { base_f0 = f64_mul(base_f0, 1.10); }
         elif (st == SVARA_STRESS_SECONDARY) { base_f0 = f64_mul(base_f0, 1.05); }
         var effective_f0 = base_f0;
-        if (SvPhonemeEvent_tone(ev) != SVARA_TONE_NONE) {
-            var contour = svara_tone_to_contour(SvPhonemeEvent_tone(ev));
+        var contour = vec_get(contours, idx);
+        if (contour != 0) {
             var seg_start = vec_get(boundaries, idx);
             var seg_len = vec_get(boundaries, idx + 1) - seg_start;
             if (seg_len < 1) { seg_len = 1; }

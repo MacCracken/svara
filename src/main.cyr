@@ -87,6 +87,10 @@ fn main() {
     }
     # Smoke: pipe the glottal source through a vocal tract (/a/).
     var vt = svara_tract_new(f64_from(44100));
+    if (svara_is_err(vt) == 1) {
+        println("svara: tract construction failed");
+        return 1;
+    }
     if (svara_is_err(svara_tract_set_vowel(vt, SVARA_VOWEL_A)) == 1) {
         println("svara: tract set_vowel failed");
         return 1;
