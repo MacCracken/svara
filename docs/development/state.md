@@ -5,6 +5,18 @@
 
 ## Version
 
+**3.5.2** (2026-08-26) — **the oracle's preserve-first gate.** Everything
+roadmap 3.6.0 needs before `rust-old/` can go, except consumer-green: five
+runnable `examples/` ported from `rust-old/examples/` (svara had **none**, and CI
+now builds and runs them); the third v2.0.1 quirk annotated in code (`tone` is
+honoured only by `render_planned`) where it had been described only here; the
+recovery incantation `git show <tag>:rust-old/…` recorded in ADR-0001 and
+CONTRIBUTING **and verified** against every tag; and the last NaN hole closed —
+[ADR-0007](../adr/0007-reject-nan-formant-parameters.md) rejects NaN formant
+parameters, a **deliberate divergence**, since the oracle accepts them and emits
+a whole buffer of NaN having returned `Ok`. That was the last exception to
+ADR-0001's own "reject NaN positively" rule. 917 assertions.
+
 **3.5.1** (2026-08-26) — **the five oracle test gaps.** `tests/oracle.tcyr`,
 69 assertions, every expected value re-derived from `rust-old/` and cited by
 line. ⭐ **`svara_tract_set_quality` appeared in no suite or bench**, so every
@@ -246,7 +258,8 @@ All green on the 6.5.35 pin:
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 909 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 917 assertions |
+| **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | ⚠ NOT covered by `cyrius audit`, whose scope is `src` |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
 | **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |

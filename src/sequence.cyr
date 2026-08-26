@@ -15,6 +15,19 @@ var SV_SEQ_MAX_CF   = 0.45;   # max crossfade fraction (low-resistance)
 var SV_SEQ_CLUSTER  = 0.7;    # consonant-cluster duration compression
 var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 
+# ⚠ v2.0.1 QUIRK, PRESERVED (3 of 3) -- `tone` is honoured ONLY by
+# svara_sequence_render_planned. The crossfade path, svara_sequence_render,
+# reads stress but ignores tone entirely, so setting a tone and calling
+# `render` produces the same audio as setting none. The Rust did the same
+# (rust-old/src/sequence.rs); it is preserved for parity and scheduled to be
+# fixed in a later minor with its own test -- see docs/development/roadmap.md
+# "Out of scope for v1.0".
+#
+# The other two quirks are annotated at src/glottal.cyr (set_speed_quotient is
+# ignored by the Rosenberg pulse) and src/phoneme.cyr (per-vowel spectral tilt
+# is computed but not applied). This one had been described only in state.md
+# and annotated nowhere in code.
+
 # PhonemeEvent -- a timed phoneme. tone = SVARA_TONE_NONE or a SVARA_TONE_* value.
 #derive(accessors)
 #derive(Serialize)

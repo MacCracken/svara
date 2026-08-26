@@ -93,6 +93,19 @@ jobs:
           [ "$fail" -eq 0 ] || { echo "tests/benches failed fmt or lint"; exit 1; }
           echo "tests and benches: fmt + lint clean"
 
+      - name: Examples build and run
+        # examples/ is documentation that executes. Without this it rots against
+        # the API silently -- and it is a roadmap 3.6.0 pre-removal gate, so it
+        # has to keep working after rust-old/ goes.
+        run: |
+          set -e
+          for f in examples/*.cyr; do
+              name="$(basename "$f" .cyr)"
+              cyrius build "$f" "build/example-$name"
+              "build/example-$name" > /dev/null
+              echo "ok  $name"
+          done
+
       - name: Logging gate — builds and passes with AND without -D LOGGING
         # `cyrius test` does not forward `-D`, so `cyrius audit` above only ever
         # compiles the logging-OFF half. Without this step the entire

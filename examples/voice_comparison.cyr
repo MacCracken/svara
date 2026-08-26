@@ -1,0 +1,88 @@
+# examples/voice_comparison.cyr -- male, female and child on the same vowel.
+# Ported from rust-old/examples/voice_comparison.rs.
+#
+#   cyrius build examples/voice_comparison.cyr build/example-voices
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+# print a literal without hand-counting its bytes
+fn ex_s(t) { print(t, strlen(t)); return 0; }
+# label + a float, one line
+fn ex_f(label, v) { ex_s(label); fmt_float(v, 4); ex_s("\n"); return 0; }
+# label + an integer, one line
+fn ex_i(label, v) { ex_s(label); fmt_int(v); ex_s("\n"); return 0; }
+
+#must_use
+fn vc_rms(v) {
+    var n = vec_len(v);
+    if (n == 0) { return 0; }
+    var acc = 0;
+    var i = 0;
+    while (i < n) { var s = vec_get(v, i); acc = f64_add(acc, f64_mul(s, s)); i = i + 1; }
+    return f64_sqrt(f64_div(acc, f64_from(n)));
+}
+
+#must_use
+fn vc_peak(v) {
+    var mx = 0;
+    var i = 0;
+    while (i < vec_len(v)) {
+        var a = f64_abs(vec_get(v, i));
+        if (f64_gt(a, mx) == 1) { mx = a; }
+        i = i + 1;
+    }
+    return mx;
+}
+
+fn vc_report(name, voice, sr, dur) {
+    var s = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, sr, dur);
+    if (svara_is_err(s) == 1) { println("synthesis failed"); return 1; }
+    ex_s(name);
+    ex_s("  f0="); fmt_float(SvVoiceProfile_base_f0(voice), 1);
+    ex_s("  formant_scale="); fmt_float(SvVoiceProfile_formant_scale(voice), 2);
+    ex_s("  samples="); fmt_int(vec_len(s));
+    ex_s("  rms="); fmt_float(vc_rms(s), 4);
+    ex_s("  peak="); fmt_float(vc_peak(s), 4);
+    ex_s("\n");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    var sr = f64_from(44100);
+    var dur = 0.3;
+    println("=== svara: voice presets on /a/ ===");
+    vc_report("  Male  ", svara_voice_new_male(), sr, dur);
+    vc_report("  Female", svara_voice_new_female(), sr, dur);
+    vc_report("  Child ", svara_voice_new_child(), sr, dur);
+
+    # a custom breathy voice, built with the chained builders
+    println("");
+    var breathy = svara_voice_with_vibrato_depth(
+      svara_voice_with_vibrato_rate(
+        svara_voice_with_breathiness(svara_voice_new_male(), 0.4), 5.5), 0.04);
+    vc_report("  Breathy", breathy, sr, dur);
+    ex_f("  (breathiness = ", SvVoiceProfile_breathiness(breathy));
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

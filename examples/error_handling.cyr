@@ -1,0 +1,96 @@
+# examples/error_handling.cyr -- how svara reports failure, and how to handle it.
+# Ported from rust-old/examples/error_handling.rs, whose `match` on SvaraError
+# variants becomes a comparison against the SVARA_ERR_* codes.
+#
+#   cyrius build examples/error_handling.cyr build/example-errors
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+# print a literal without hand-counting its bytes
+fn ex_s(t) { print(t, strlen(t)); return 0; }
+# label + a float, one line
+fn ex_f(label, v) { ex_s(label); fmt_float(v, 4); ex_s("\n"); return 0; }
+# label + an integer, one line
+fn ex_i(label, v) { ex_s(label); fmt_int(v); ex_s("\n"); return 0; }
+
+# Report what a fallible call returned. Two shapes exist in svara and both are
+# shown here: most functions return a NEGATIVE SVARA_ERR_*, while
+# pointer-returning ones signal failure with 0.
+fn eh_expect(what, got, want) {
+    ex_s(what);
+    if (got == want) {
+        ex_s("  -> ");
+        ex_s(svara_err_name(got));
+        ex_s(" (as expected)\n");
+        return 0;
+    }
+    ex_s("  -> UNEXPECTED: ");
+    fmt_int(got);
+    ex_s("\n");
+    return 1;
+}
+
+fn main() {
+    alloc_init();
+    var sr = f64_from(44100);
+    println("=== svara: error handling ===");
+
+    # f0 outside [20, 2000] Hz
+    eh_expect("f0 = 5 Hz                    ",
+      svara_glottal_new(f64_from(5), sr), SVARA_ERR_INVALID_PITCH);
+
+    # NaN f0 -- rejected too, matching Rust's !(20.0..=2000.0).contains()
+    eh_expect("f0 = NaN                     ",
+      svara_glottal_new(f64_div(0, 0), sr), SVARA_ERR_INVALID_PITCH);
+
+    # non-positive sample rate
+    eh_expect("sample_rate = 0              ",
+      svara_glottal_new(f64_from(120), 0), SVARA_ERR_INVALID_FORMANT);
+
+    # negative duration
+    var voice = svara_voice_new_male();
+    eh_expect("duration = -1 s              ",
+      svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, sr, f64_neg(F64_ONE)),
+      SVARA_ERR_INVALID_DURATION);
+
+    # a formant above Nyquist
+    var bad = vec_new();
+    vec_push(bad, svara_formant_new(f64_from(25000), f64_from(80), F64_ONE));
+    eh_expect("formant 25 kHz at 44.1 kHz   ",
+      svara_formant_filter_new(bad, sr), SVARA_ERR_INVALID_FORMANT);
+
+    # a duration so long the buffer cannot exist (svara refuses rather than
+    # writing through a null -- see docs/adr/0001-*.md)
+    eh_expect("duration = 6100 s            ",
+      svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, sr, f64_from(6100)),
+      SVARA_ERR_COMPUTATION);
+
+    # and one that succeeds, for contrast
+    println("");
+    var ok = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, sr, 0.1);
+    if (svara_is_err(ok) == 1) { println("unexpected failure"); return 1; }
+    ex_i("success: samples = ", vec_len(ok));
+    ex_f("         rms     = ", svara_spectral_rms_level(ok));
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

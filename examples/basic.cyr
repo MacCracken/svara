@@ -1,0 +1,108 @@
+# examples/basic.cyr -- synthesize a male /a/ for 0.5 s, then a short sequence.
+# Ported from rust-old/examples/basic.rs.
+#
+#   cyrius build examples/basic.cyr build/example-basic && ./build/example-basic
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+# print a literal without hand-counting its bytes
+fn ex_s(t) { print(t, strlen(t)); return 0; }
+# label + a 6-decimal float on one line
+fn ex_f(label, v) { ex_s(label); fmt_float(v, 6); ex_s("\n"); return 0; }
+# label + an integer on one line
+fn ex_i(label, v) { ex_s(label); fmt_int(v); ex_s("\n"); return 0; }
+
+#must_use
+fn ex_rms(v) {
+    var n = vec_len(v);
+    if (n == 0) { return 0; }
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(v, i);
+        acc = f64_add(acc, f64_mul(s, s));
+        i = i + 1;
+    }
+    return f64_sqrt(f64_div(acc, f64_from(n)));
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+    var sample_rate = f64_from(44100);
+    var duration = F64_HALF;
+
+    var samples = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, sample_rate, duration);
+    # Errors are negative codes here, not a Result -- always test before use.
+    if (svara_is_err(samples) == 1) {
+        println("synthesis failed:");
+        println(svara_err_name(samples));
+        return 1;
+    }
+
+    println("=== svara: male /a/ vowel synthesis ===");
+    ex_i("Sample rate: 44100 Hz, total samples: ", vec_len(samples));
+    println("");
+    println("First 10 samples:");
+    var i = 0;
+    while (i < 10) {
+        ex_f("  ", vec_get(samples, i));
+        i = i + 1;
+    }
+    println("");
+
+    var mn = vec_get(samples, 0);
+    var mx = vec_get(samples, 0);
+    var sum = 0;
+    var k = 0;
+    while (k < vec_len(samples)) {
+        var s = vec_get(samples, k);
+        if (f64_lt(s, mn) == 1) { mn = s; }
+        if (f64_gt(s, mx) == 1) { mx = s; }
+        sum = f64_add(sum, s);
+        k = k + 1;
+    }
+    println("Statistics:");
+    ex_f("  Min:  ", mn);
+    ex_f("  Max:  ", mx);
+    ex_f("  Mean: ", f64_div(sum, f64_from(vec_len(samples))));
+    ex_f("  RMS:  ", ex_rms(samples));
+    println("");
+
+    # a short sequence, with coarticulation crossfades at the boundaries
+    var seq = svara_sequence_new();
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.15, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.08, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.15, SVARA_STRESS_SECONDARY));
+    var seq_samples = svara_sequence_render(seq, voice, sample_rate);
+    if (svara_is_err(seq_samples) == 1) {
+        println("sequence render failed:");
+        println(svara_err_name(seq_samples));
+        return 1;
+    }
+    println("Sequence 'a-n-i':");
+    ex_i("  Total samples: ", vec_len(seq_samples));
+    ex_f("  RMS: ", ex_rms(seq_samples));
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

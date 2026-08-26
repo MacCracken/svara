@@ -416,10 +416,14 @@ struct SvFormantFilter { bank; dc; sample_rate; }
 # validate -- SVARA_ERR_NONE if `formants` can build a bank at `sample_rate`.
 # Shared by new() and rebuild() so both accept exactly the same inputs.
 #
-# PARITY NOTE: the frequency test mirrors Rust's `f.frequency <= 0.0 ||
-# f.frequency >= nyquist`, which is FALSE for NaN -- Rust accepts a NaN formant
-# frequency and produces NaN coefficients. Preserved deliberately; tightening it
-# would need an ADR (rust-old/src/formant.rs:479-486).
+# DELIBERATE DIVERGENCE from the oracle, decided in
+# docs/adr/0007-reject-nan-formant-parameters.md. Rust's
+# `f.frequency <= 0.0 || f.frequency >= nyquist` (rust-old/src/formant.rs:479-486)
+# is FALSE for NaN, so Rust ACCEPTS a NaN formant frequency and silently
+# produces NaN coefficients and NaN audio. svara rejects it: this was the one
+# place left that did not follow ADR-0001's own rule -- "reject NaN positively,
+# never by negating a range test" -- and silent NaN output is precisely the
+# failure mode that ADR exists to prevent.
 #must_use
 fn svara_formant_validate(formants, sample_rate) {
     if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
@@ -432,9 +436,14 @@ fn svara_formant_validate(formants, sample_rate) {
     while (i < n) {
         var f = vec_get(formants, i);
         var freq = SvFormant_frequency(f);
-        if (f64_le(freq, 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
-        if (f64_ge(freq, nyquist) == 1) { return SVARA_ERR_INVALID_FORMANT; }
-        if (f64_le(SvFormant_bandwidth(f), 0) == 1) { return SVARA_ERR_INVALID_FORMANT; }
+        # Tested POSITIVELY so NaN falls through to the reject: f64_gt and
+        # f64_lt are both false for NaN, so `if (freq <= 0) reject` would let it
+        # past. Same shape as svara_f0_in_range.
+        var freq_ok = 0;
+        if ((f64_gt(freq, 0) == 1) & (f64_lt(freq, nyquist) == 1)) { freq_ok = 1; }
+        if (freq_ok == 0) { return SVARA_ERR_INVALID_FORMANT; }
+        var bw = SvFormant_bandwidth(f);
+        if (f64_gt(bw, 0) == 0) { return SVARA_ERR_INVALID_FORMANT; }
         i = i + 1;
     }
     return SVARA_ERR_NONE;

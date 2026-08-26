@@ -66,6 +66,21 @@ Two formatter notes:
   Cyrius 6.5.28 taught `cyrfmt` to track parentheses; the older 8-space convention is retired.
 - `cyrius fmt <file>` **rewrites the file in place** — it does not print to stdout.
 
+## Reading the Rust oracle
+
+`rust-old/` is the frozen parity oracle — 8,785 lines, read-only, and scheduled
+for removal (`docs/development/roadmap.md` 3.6.0). Cross-check against it before
+changing ported behaviour, and **cite a tag, not a bare path**, so the citation
+survives the deletion:
+
+```sh
+git show 3.5.1:rust-old/src/phoneme.rs        # after removal, this still works
+```
+
+Verified against every tag from `1.0.0` to `3.5.1`. A bare `rust-old/src/x.rs:NN`
+in a comment becomes unresolvable the day the directory goes; `git show <tag>:…`
+does not.
+
 ## Code Standards
 
 - **`svara_` / `SVARA_` / `SV_` / `Sv` prefix on every top-level symbol.** Cyrius has one flat

@@ -69,11 +69,13 @@ Its discrimination is measured — 9 of 10 public-API probes fail against a 3.1.
 checkout (4 wrong value, 3 process abort, 1 SIGSEGV, 1 hang) while the control
 passes on both sides. Re-measure when the group is extended.
 
-**Known residual, carried deliberately**: `svara_formant_validate` accepts a NaN
-formant frequency, producing NaN coefficients and NaN output. Rust's
-`f.frequency <= 0.0 || f.frequency >= nyquist` accepts it too, so this is parity,
-annotated at `src/formant.cyr`. It is silent-wrong-output, not memory-unsafe.
-Tightening it is a deliberate divergence and needs its own ADR.
+**That residual is closed as of 3.5.2.** `svara_formant_validate` used to accept
+a NaN formant frequency — parity with Rust, but the filter then emitted a whole
+buffer of NaN having returned success, which is the worst failure shape svara
+has: not a crash, but a plausible-looking `Ok`. It is now rejected under
+[ADR-0007](../adr/0007-reject-nan-formant-parameters.md), a deliberate
+divergence from the oracle. **Every NaN rejection in the codebase is written
+positively, with no exceptions.**
 
 ### 2. Resource exhaustion
 
@@ -133,7 +135,7 @@ story rests on the toolchain installer and the lockfile.
 
 **Mitigations:**
 
-- `cyrius deny src/main.cyr` validates the dependency set in CI (currently 21
+- `cyrius deny src/main.cyr` validates the dependency set in CI (currently 23
   deps, 0 violations).
 - `cyrius.lock` pins every dependency to a **resolved commit SHA**, not just a
   tag, and records a SHA-256 for every vendored file in `lib/`.

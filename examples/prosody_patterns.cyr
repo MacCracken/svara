@@ -1,0 +1,85 @@
+# examples/prosody_patterns.cyr -- how the four intonation patterns shape f0.
+# Ported from rust-old/examples/prosody_patterns.rs.
+#
+#   cyrius build examples/prosody_patterns.cyr build/example-prosody
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+# print a literal without hand-counting its bytes
+fn ex_s(t) { print(t, strlen(t)); return 0; }
+# label + a float, one line
+fn ex_f(label, v) { ex_s(label); fmt_float(v, 4); ex_s("\n"); return 0; }
+# label + an integer, one line
+fn ex_i(label, v) { ex_s(label); fmt_int(v); ex_s("\n"); return 0; }
+
+fn pp_row(name, contour, base_f0) {
+    ex_s(name);
+    ex_s("  f0 start="); fmt_float(f64_mul(svara_prosody_f0_at(contour, 0), base_f0), 0);
+    ex_s("Hz  mid="); fmt_float(f64_mul(svara_prosody_f0_at(contour, F64_HALF), base_f0), 0);
+    ex_s("Hz  end="); fmt_float(f64_mul(svara_prosody_f0_at(contour, F64_ONE), base_f0), 0);
+    ex_s("Hz  dur_scale="); fmt_float(SvProsodyContour_duration_scale(contour), 2);
+    ex_s("\n");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+    var sr = f64_from(44100);
+    var base = SvVoiceProfile_base_f0(voice);
+
+    println("=== svara: intonation patterns ===");
+    pp_row("   Declarative", svara_prosody_from_pattern(SVARA_INTONATION_DECLARATIVE, base), base);
+    pp_row(" Interrogative", svara_prosody_from_pattern(SVARA_INTONATION_INTERROGATIVE, base), base);
+    pp_row("   Exclamatory", svara_prosody_from_pattern(SVARA_INTONATION_EXCLAMATORY, base), base);
+    pp_row("  Continuation", svara_prosody_from_pattern(SVARA_INTONATION_CONTINUATION, base), base);
+
+    # the nine lexical tones use the same contour machinery
+    println("");
+    println("=== lexical tones (f0 multiplier at start / mid / end) ===");
+    var t = 0;
+    while (t < 9) {
+        var c = svara_tone_to_contour(t);
+        ex_s("   tone "); fmt_int(t);
+        ex_s(": "); fmt_float(svara_prosody_f0_at(c, 0), 3);
+        ex_s(" / "); fmt_float(svara_prosody_f0_at(c, F64_HALF), 3);
+        ex_s(" / "); fmt_float(svara_prosody_f0_at(c, F64_ONE), 3);
+        ex_s("\n");
+        t = t + 1;
+    }
+
+    # a stressed sequence, rendered
+    println("");
+    var seq = svara_sequence_new();
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.15, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(seq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.12, SVARA_STRESS_SECONDARY));
+    var samples = svara_sequence_render(seq, voice, sr);
+    if (svara_is_err(samples) == 1) { println("render failed"); return 1; }
+    println("=== stressed sequence 'a-n-i' ===");
+    ex_i("   samples: ", vec_len(samples));
+    ex_f("   ms:      ", f64_mul(f64_div(f64_from(vec_len(samples)), sr), f64_from(1000)));
+    ex_f("   rms:     ", svara_spectral_rms_level(samples));
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

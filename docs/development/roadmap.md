@@ -20,6 +20,7 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.5.2** | 2026-08-26 | **The oracle's preserve-first gate.** Five runnable `examples/` (there were none); the third v2.0.1 quirk annotated in code; the recovery incantation (`git show <tag>:rust-old/…`) recorded and verified; and the last NaN hole closed by [ADR-0007](../adr/0007-reject-nan-formant-parameters.md) — a deliberate divergence, since the oracle accepts a NaN formant and emits a buffer of NaN having returned Ok. |
 | **3.5.1** | 2026-08-26 | **Five oracle test gaps closed** (`tests/oracle.tcyr`, 69 assertions, no defects found) — quality levels had **no** suite or bench at all. Also found that `cyrius audit` prints `scope: src` and never lints tests or benches; CI does now. |
 | **3.5.0** | 2026-08-26 | **Redundant input delay line collapsed.** The bank's eight per-slot `x1`/`x2` buffers all held the same two values — verified by 28,672 cross-slot comparisons before changing anything. Now two scalars: −6.0% formant `process_sample`, −4.2% `process_block`, bit-identical. A `#inline` experiment was measured, rejected and recorded. |
 | **3.4.0** | 2026-08-26 | **Structured logging (M-log).** sakshi tracing behind `-D LOGGING`, off by default and compiled out when off; four coarse entry points, never per-sample. Spans are token-based because every entry point has early returns. `scripts/check-logging.sh` builds and runs both ways — `cyrius test` does not forward `-D`, so `cyrius audit` only ever compiled the OFF half. |
@@ -141,23 +142,28 @@ have frozen an existing bug in as correct.
 
 ### Preserve first — each of these removes a reason to keep the directory
 
-- [ ] **The serde contract** — done in [3.2.0](#320--container-serde). This is
+- [x] **The serde contract** ✅ done in [3.2.0](#320--container-serde). This is
       the largest one.
-- [ ] **Port the five Rust examples** to `examples/*.cyr` — `basic`,
-      `error_handling`, `prosody_patterns`, `streaming`, `voice_comparison` (269
-      lines). svara has no `examples/` directory at all; `docs/examples/` holds
-      only a `.gitkeep` while `CLAUDE.md` advertises "Runnable examples". This is
-      goonj's stated precondition, verbatim.
-- [ ] **Annotate the third v2.0.1 quirk at its call site.** Two are annotated
-      (`src/glottal.cyr:141`, `src/phoneme.cyr:659`); the third — `Tone` honoured
-      only in `render_planned` — is described once in `state.md` and annotated
-      nowhere in code. Its Rust baseline is in `rust-old/src/sequence.rs`.
-- [ ] **Resolve or freeze the open parity question at `src/formant.cyr:409`** —
-      `svara_formant_validate` accepts a NaN formant frequency because Rust's
-      `f.frequency <= 0.0 || f.frequency >= nyquist` accepts it too. Either accept
-      it permanently in ADR-0001 with the Rust quoted inline, or tighten it under
-      ADR-0002. Deciding needs the oracle.
-- [ ] **Record the recovery incantation** in ADR-0001 and `CONTRIBUTING.md`,
+- [x] **Port the five Rust examples** ✅ 3.5.2 — `examples/basic.cyr`,
+      `error_handling`, `prosody_patterns`, `streaming`, `voice_comparison`.
+      svara had **no** `examples/` directory at all; `docs/examples/` held only a
+      `.gitkeep` while `CLAUDE.md` advertised "Runnable examples". CI builds and
+      runs all five, so they cannot rot after the oracle goes. This was goonj's
+      stated precondition, verbatim.
+- [x] **Annotate the third v2.0.1 quirk at its call site.** ✅ 3.5.2 — at
+      `SVARA_TONE_NONE` in `sequence.cyr`. The other two were already annotated
+      (`glottal.cyr`: `set_speed_quotient` ignored by the Rosenberg pulse;
+      `phoneme.cyr`: per-vowel spectral tilt computed but not applied); this one
+      — `tone` honoured only by `render_planned` — had been described in
+      `state.md` and annotated nowhere in code.
+- [x] **Resolve the open parity question at `src/formant.cyr`** ✅ 3.5.2 —
+      **resolved by tightening**, [ADR-0007](../adr/0007-reject-nan-formant-parameters.md).
+      `svara_formant_validate` accepted a NaN formant frequency because the
+      oracle's `f.frequency <= 0.0 || f.frequency >= nyquist` accepts it too —
+      and then emitted a whole buffer of NaN having returned success. It was the
+      last exception to ADR-0001's own "reject NaN positively" rule, so it is now
+      a documented divergence rather than an inherited hole.
+- [x] **Record the recovery incantation** ✅ 3.5.2 — in ADR-0001 and `CONTRIBUTING.md`,
       following goonj ADR-0002: after deletion the Rust is reachable as
       `git show 3.1.3:rust-old/src/<module>.rs`. Verified working — all ten tags
       carry the full tree.

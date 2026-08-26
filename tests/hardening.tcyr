@@ -164,6 +164,41 @@ fn main() {
       f64_div(F64_ONE, f64_from(100)), nz);
     assert_eq(svara_is_err(nr), 0, "NaN onset does not error");
     assert_eq(vec_len(nr), 441, "NaN onset still renders the full duration");
+    # ================================================================
+    test_group("NaN formant parameters are rejected (ADR-0007 divergence)");
+    # ================================================================
+    # Rust's `f.frequency <= 0.0 || f.frequency >= nyquist` is FALSE for NaN, so
+    # the oracle ACCEPTS a NaN formant frequency and silently produces NaN
+    # coefficients and NaN audio. svara diverges deliberately.
+    var nanf = vec_new();
+    vec_push(nanf, svara_formant_new(nan, f64_from(80), F64_ONE));
+    assert_eq(svara_formant_filter_new(nanf, SR), SVARA_ERR_INVALID_FORMANT, "NaN frequency rejected");
+    var nanb = vec_new();
+    vec_push(nanb, svara_formant_new(f64_from(700), nan, F64_ONE));
+    assert_eq(svara_formant_filter_new(nanb, SR), SVARA_ERR_INVALID_FORMANT, "NaN bandwidth rejected");
+    var inff = vec_new();
+    vec_push(inff, svara_formant_new(SV_POS_INF, f64_from(80), F64_ONE));
+    assert_eq(svara_formant_filter_new(inff, SR), SVARA_ERR_INVALID_FORMANT, "+inf frequency rejected");
+    # CONTROLS: the ordinary range behaviour is untouched.
+    var good = vec_new();
+    vec_push(good, svara_formant_new(f64_from(700), f64_from(80), F64_ONE));
+    assert_eq(svara_is_err(svara_formant_filter_new(good, SR)), 0, "control: a normal formant is accepted");
+    var zero = vec_new();
+    vec_push(zero, svara_formant_new(0, f64_from(80), F64_ONE));
+    assert_eq(svara_formant_filter_new(zero, SR), SVARA_ERR_INVALID_FORMANT, "control: 0 Hz still rejected");
+    var above = vec_new();
+    vec_push(above, svara_formant_new(f64_from(25000), f64_from(80), F64_ONE));
+    assert_eq(svara_formant_filter_new(above, SR), SVARA_ERR_INVALID_FORMANT,
+      "control: above Nyquist still rejected");
+    # And a NaN target can no longer poison a tract through the vowel path.
+    var nant = svara_vowel_target_with_bandwidths(nan, f64_from(1200), f64_from(2500),
+      f64_from(3300), f64_from(3750), f64_from(90), f64_from(100), f64_from(120),
+      f64_from(140), f64_from(160));
+    var nt = svara_tract_new(SR);
+    assert_eq(svara_is_err(nt), 0, "control: tract constructs");
+    assert_eq(svara_tract_set_formants_from_target(nt, nant), SVARA_ERR_INVALID_FORMANT,
+      "a NaN vowel target is refused rather than producing NaN audio");
+
     return assert_summary();
 }
 

@@ -112,12 +112,28 @@ license tightening validation that the oracle also lacks — see below.
   `usize::MAX` and aborts inside the allocator, and `svara_tract_new` returns an
   error where Rust panics. Both are documented at the call site.
 
-- **Neutral** — some Rust weaknesses are carried forward on purpose, because the
-  parity bar is "matches what Rust did" and diverging needs its own ADR. The
-  known one: `svara_formant_validate` accepts a NaN formant frequency, because
-  Rust's `f.frequency <= 0.0 || f.frequency >= nyquist` accepts it too and
-  produces NaN coefficients. It is annotated in `src/formant.cyr` rather than
-  quietly tightened.
+- **Neutral** — some Rust weaknesses were carried forward on purpose, because
+  the parity bar is "matches what Rust did" and diverging needs its own ADR. The
+  one this ADR named — `svara_formant_validate` accepting a NaN formant
+  frequency, as Rust does — was the last exception to rule 4, and it was closed
+  in 3.5.2 under [ADR-0007](0007-reject-nan-formant-parameters.md). Every NaN
+  rejection in the codebase is now written positively.
+
+## Reading the oracle after it is retired
+
+`rust-old/` is scheduled for removal (`docs/development/roadmap.md` 3.6.0). The
+Rust cited throughout this ADR stays reachable from git:
+
+```sh
+git show 3.5.1:rust-old/src/formant.rs      # any module, at any released tag
+git show 3.5.1:rust-old/tests/integration.rs
+```
+
+Verified: every tag from `1.0.0` to `3.5.1` carries the full tree, and
+`git show 3.5.1:rust-old/src/formant.rs` reproduces lines 479-486 exactly as this
+ADR and `src/formant.cyr` cite them. **Cite a tag, not a bare path**, in anything
+written from here on — a bare `rust-old/src/x.rs:NN` becomes unresolvable the day
+the directory goes.
 
 ## Alternatives considered
 

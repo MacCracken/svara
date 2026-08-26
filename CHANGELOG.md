@@ -9,6 +9,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.5.2] - 2026-08-26 — the oracle's preserve-first gate
+
+Everything roadmap 3.6.0 requires to exist **before** `rust-old/` can be deleted,
+except consumer-green — which is not svara's to close. The theme is that each
+item is a thing the Rust still holds that nothing in the Cyrius tree does.
+
+Suite **909 → 917 assertions**; five runnable examples where there were none.
+
+### Added — `examples/`, five programs, ported from `rust-old/examples/`
+
+svara had **no examples directory at all**; `docs/examples/` held a `.gitkeep`
+while `CLAUDE.md` advertised "runnable examples". goonj set the same gate before
+its own oracle retirement.
+
+| Example | Shows |
+|---|---|
+| `basic.cyr` | a male /a/, a three-phoneme sequence, sample statistics |
+| `voice_comparison.cyr` | male / female / child presets, plus a breathy voice via the chained builders |
+| `error_handling.cyr` | every failure shape — negative `SVARA_ERR_*`, and the 0-pointer form |
+| `prosody_patterns.cyr` | four intonation patterns and nine lexical tones as f0 contours |
+| `streaming.cyr` | **the zero-allocation real-time path** |
+
+`streaming.cyr` is the one that carries a warning rather than a demo: Cyrius's
+bump allocator never frees, so an allocation inside an audio callback is not a
+leak that grows slowly — it is one that ends the process. It allocates its block
+once, uses the `_into` forms, and checks `svara_alloc_samples` for 0.
+
+**CI builds and runs all five on every push**, so they cannot rot against the
+API — which matters more than usual, since they have to keep working after the
+oracle goes.
+
+### Changed — NaN formant parameters are now rejected ([ADR-0007](docs/adr/0007-reject-nan-formant-parameters.md))
+
+⭐ **A deliberate divergence from the oracle, and the last exception to
+ADR-0001's own rule.** `rust-old/src/formant.rs:479-486` is
+`f.frequency <= 0.0 || f.frequency >= nyquist` — both comparisons are **false**
+for NaN, so Rust accepts a NaN formant frequency, `cos(NaN)` makes every
+coefficient NaN, and the filter emits an entire buffer of NaN having returned
+`Ok`. The port reproduced that faithfully and three releases of hardening walked
+past it, each recording it as a known residual.
+
+`svara_formant_validate` now tests positively, so NaN and `±inf` fall through to
+the reject — the same shape as `svara_f0_in_range`. It also closes the path
+through `svara_tract_set_formants_from_target`, so a NaN `VowelTarget` is
+refused rather than silently poisoning a tract.
+
+This is svara's **third** documented divergence, all the same kind: an
+overflowing sample count errors where Rust saturates and aborts;
+`svara_tract_new` errors where Rust panics; a NaN formant is refused where Rust
+accepts it. Each replaces a silent or fatal outcome with a checkable code.
+
+Six new assertions in `tests/hardening.tcyr`, three of them controls proving the
+ordinary range checks (0 Hz, at/above Nyquist, a normal formant) are unchanged.
+All ten render-path digests are still identical to 3.1.2 — no valid input moved.
+
+### Added — the third v2.0.1 quirk is annotated where it lives
+
+Two of the three preserved quirks had call-site annotations
+(`set_speed_quotient` ignored by the Rosenberg pulse; per-vowel spectral tilt
+computed but not applied). The third — **`tone` is honoured only by
+`svara_sequence_render_planned`**, so setting a tone and calling
+`svara_sequence_render` produces the same audio as setting none — was described
+once in `state.md` and annotated nowhere in code. It is now at
+`SVARA_TONE_NONE`'s definition, where someone reading the field will find it.
+
+### Added — how to read the oracle after it is gone
+
+ADR-0001 and `CONTRIBUTING.md` now carry the recovery incantation, following
+goonj's ADR-0002:
+
+```sh
+git show 3.5.1:rust-old/src/formant.rs
+```
+
+**Verified**, not asserted: every tag from `1.0.0` to `3.5.1` carries the full
+tree, and that command reproduces lines 479-486 exactly as ADR-0001 and
+`src/formant.cyr` cite them. The standing instruction from here on is to **cite a
+tag, not a bare path** — a bare `rust-old/src/x.rs:NN` in a comment becomes
+unresolvable the day the directory goes; `git show <tag>:…` does not.
+
+### Notes
+
+- **ADR numbering collision caught before it shipped.** The new ADR was drafted
+  as 0003, which 3.3.1 had already used for the re-homed source-filter ADR.
+  Renumbered to 0007; `docs/adr/README.md` never renumbers, per its own rule.
+- What remains before `rust-old/` can go: **consumer-green** (dhvani or vansh
+  building against `dist/svara.cyr` — both siblings hold on the same gate), a
+  final parity sweep, verifying the tree is green with the directory moved aside,
+  and the reference sweep.
+- `dist/svara.cyr` regenerated at v3.5.2.
+
 ## [3.5.1] - 2026-08-26 — the five scenarios the Rust asserted and the port did not
 
 **Test-only; no source change.** An audit of `rust-old/`'s 213 tests against the
