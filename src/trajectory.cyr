@@ -28,6 +28,97 @@ fn svara_keypoint_new(time, target, resistance) {
 # an interpolated target without allocating three of them per sample.
 struct SvTrajectoryPlanner { keypoints; total_samples; scratch_a; scratch_b; }
 
+# ================================================================
+# TrajectoryState / KeypointState -- the flat, serializable forms.
+#
+# FormantKeypoint holds a nested SvVowelTarget POINTER, so neither it nor the
+# planner that owns a vec of them can be derived (ADR-0002). KeypointState
+# inlines the target's ten components instead, which makes it flat -- and a
+# `Vec<flat #derive struct>` IS reachable, so the planner's whole keypoint list
+# round-trips.
+#
+# The planner's scratch targets are not carried: they hold nothing between calls
+# and restore allocates its own.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvKeypointState {
+    time: i64; resistance: f64;
+    f1: f64; f2: f64; f3: f64; f4: f64; f5: f64;
+    b1: f64; b2: f64; b3: f64; b4: f64; b5: f64;
+}
+
+#derive(accessors)
+#derive(Serialize)
+struct SvTrajectoryState { keypoints: Vec<SvKeypointState>; total_samples: i64; }
+
+# keypoint_save -- flatten one keypoint (time, resistance + the target inline).
+#must_use
+fn svara_keypoint_save(kp) {
+    var st = alloc(sizeof(SvKeypointState));
+    var t = SvFormantKeypoint_target(kp);
+    SvKeypointState_set_time(st, SvFormantKeypoint_time(kp));
+    SvKeypointState_set_resistance(st, SvFormantKeypoint_resistance(kp));
+    SvKeypointState_set_f1(st, SvVowelTarget_f1(t));
+    SvKeypointState_set_f2(st, SvVowelTarget_f2(t));
+    SvKeypointState_set_f3(st, SvVowelTarget_f3(t));
+    SvKeypointState_set_f4(st, SvVowelTarget_f4(t));
+    SvKeypointState_set_f5(st, SvVowelTarget_f5(t));
+    SvKeypointState_set_b1(st, SvVowelTarget_b1(t));
+    SvKeypointState_set_b2(st, SvVowelTarget_b2(t));
+    SvKeypointState_set_b3(st, SvVowelTarget_b3(t));
+    SvKeypointState_set_b4(st, SvVowelTarget_b4(t));
+    SvKeypointState_set_b5(st, SvVowelTarget_b5(t));
+    return st;
+}
+
+# keypoint_restore -- rebuild a keypoint, re-creating its VowelTarget.
+#must_use
+fn svara_keypoint_restore(st) {
+    var t = svara_vowel_target_with_bandwidths(
+      SvKeypointState_f1(st), SvKeypointState_f2(st), SvKeypointState_f3(st),
+      SvKeypointState_f4(st), SvKeypointState_f5(st),
+      SvKeypointState_b1(st), SvKeypointState_b2(st), SvKeypointState_b3(st),
+      SvKeypointState_b4(st), SvKeypointState_b5(st));
+    return svara_keypoint_new(SvKeypointState_time(st), t, SvKeypointState_resistance(st));
+}
+
+# save -- snapshot a TrajectoryPlanner into its serializable form.
+#must_use
+fn svara_trajectory_save(self) {
+    var st = alloc(sizeof(SvTrajectoryState));
+    var kps = SvTrajectoryPlanner_keypoints(self);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(kps)) {
+        vec_push(out, svara_keypoint_save(vec_get(kps, i)));
+        i = i + 1;
+    }
+    SvTrajectoryState_set_keypoints(st, out);
+    SvTrajectoryState_set_total_samples(st, SvTrajectoryPlanner_total_samples(self));
+    return st;
+}
+
+# restore -- rebuild a TrajectoryPlanner from a state snapshot. Always succeeds:
+# a planner has no validated inputs of its own, and an empty keypoint list is a
+# legal planner (formants_at falls back to a neutral target).
+#must_use
+fn svara_trajectory_restore(st) {
+    var self = alloc(sizeof(SvTrajectoryPlanner));
+    SvTrajectoryPlanner_set_scratch_a(self, svara_vowel_target_new(0, 0, 0, 0, 0));
+    SvTrajectoryPlanner_set_scratch_b(self, svara_vowel_target_new(0, 0, 0, 0, 0));
+    var kps = vec_new();
+    var src = SvTrajectoryState_keypoints(st);
+    var i = 0;
+    while (i < vec_len(src)) {
+        vec_push(kps, svara_keypoint_restore(vec_get(src, i)));
+        i = i + 1;
+    }
+    SvTrajectoryPlanner_set_keypoints(self, kps);
+    SvTrajectoryPlanner_set_total_samples(self, SvTrajectoryState_total_samples(st));
+    return self;
+}
+
 # plan -- build a trajectory from parallel phonemes (vec<int>) + durations (vec<f64>).
 #must_use
 fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {

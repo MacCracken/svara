@@ -17,8 +17,12 @@ var SV_TENTH = 0x3FB999999999999A;   # 0.1 (estimate_formants peak threshold fac
 #   freq_resolution : Hz per bin
 #   sample_rate     : Hz
 # ================================================================
+# serde: derived (3.2.1). Every field is already flat -- a `Vec<f64>` and two
+# scalars -- so Spectrum needs no state companion, unlike the engine objects in
+# docs/adr/0002-serialization-boundary.md. It only needed the annotations.
 #derive(accessors)
-struct SvSpectrum { magnitudes; freq_resolution; sample_rate; }
+#derive(Serialize)
+struct SvSpectrum { magnitudes: Vec<f64>; freq_resolution: f64; sample_rate: f64; }
 
 # smallest power of two >= n (n >= 1). Matches Rust next_power_of_two.
 #must_use

@@ -32,6 +32,11 @@ fn svara_render_progress_fraction(p) {
 }
 
 # RenderOutput -- rendered samples (vec<f64>) + final progress.
+#
+# serde: NOT derived. `progress` is a nested SvRenderProgress POINTER, and the
+# toolchain cannot decode a nested #derive-struct field -- it returns zeros, so a
+# decoded RenderOutput would carry a null where the progress is. Use the flat
+# SvRenderOutputState companion below. See docs/adr/0002-serialization-boundary.md.
 #derive(accessors)
 struct SvRenderOutput { samples; progress; }
 
@@ -41,6 +46,78 @@ fn svara_render_output_new(samples, progress) {
     SvRenderOutput_set_samples(o, samples);
     SvRenderOutput_set_progress(o, progress);
     return o;
+}
+
+# ================================================================
+# RenderOutputState -- the flat, serializable form of RenderOutput: the samples
+# plus the three progress counters inlined. Nothing is lost, because
+# RenderProgress is itself three scalars; only the indirection goes away.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvRenderOutputState {
+    samples: Vec<f64>;
+    phoneme_index: i64; total_phonemes: i64; samples_rendered: i64;
+}
+
+# save -- snapshot a RenderOutput into its serializable form.
+#must_use
+fn svara_render_output_save(o) {
+    var st = alloc(sizeof(SvRenderOutputState));
+    SvRenderOutputState_set_samples(st, SvRenderOutput_samples(o));
+    var p = SvRenderOutput_progress(o);
+    SvRenderOutputState_set_phoneme_index(st, SvRenderProgress_phoneme_index(p));
+    SvRenderOutputState_set_total_phonemes(st, SvRenderProgress_total_phonemes(p));
+    SvRenderOutputState_set_samples_rendered(st, SvRenderProgress_samples_rendered(p));
+    return st;
+}
+
+# restore -- rebuild a RenderOutput from a state snapshot. The samples vec is
+# adopted, not copied: a state decoded from JSON owns its vec already.
+#must_use
+fn svara_render_output_restore(st) {
+    var p = svara_render_progress_new(SvRenderOutputState_phoneme_index(st),
+      SvRenderOutputState_total_phonemes(st), SvRenderOutputState_samples_rendered(st));
+    return svara_render_output_new(SvRenderOutputState_samples(st), p);
+}
+
+# ================================================================
+# BatchRendererState -- the flat, serializable form: the pending event queue
+# plus the context's carried state. `Vec<SvPhonemeEvent>` is reachable because
+# PhonemeEvent is flat. The renderer's cloned voice is NOT inlined -- restore
+# takes it, so VoiceProfile's schema lives in one place.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvBatchRendererState {
+    events: Vec<SvPhonemeEvent>;
+    sample_rate: f64; noise_state: i64; noise_inc: i64;
+}
+
+# save -- snapshot a BatchRenderer into its serializable form. The event vec is
+# referenced, not copied: events are immutable value objects here.
+#must_use
+fn svara_batch_save(r) {
+    var st = alloc(sizeof(SvBatchRendererState));
+    SvBatchRendererState_set_events(st, SvBatchRenderer_events(r));
+    SvBatchRendererState_set_sample_rate(st, SvBatchRenderer_sample_rate(r));
+    var n = SvSynthCtx_noise(SvBatchRenderer_ctx(r));
+    SvBatchRendererState_set_noise_state(st, SvRng_state(n));
+    SvBatchRendererState_set_noise_inc(st, SvRng_inc(n));
+    return st;
+}
+
+# restore -- rebuild a BatchRenderer from a state snapshot plus its voice.
+# Returns a renderer pointer or a negative SVARA_ERR_*.
+#must_use
+fn svara_batch_restore(st, voice) {
+    var r = svara_batch_new(voice, SvBatchRendererState_sample_rate(st));
+    if (svara_is_err(r) == 1) { return r; }
+    SvBatchRenderer_set_events(r, SvBatchRendererState_events(st));
+    var n = SvSynthCtx_noise(SvBatchRenderer_ctx(r));
+    SvRng_set_state(n, SvBatchRendererState_noise_state(st));
+    SvRng_set_inc(n, SvBatchRendererState_noise_inc(st));
+    return r;
 }
 
 # BatchRenderer -- phoneme queue + reusable context + cloned voice.

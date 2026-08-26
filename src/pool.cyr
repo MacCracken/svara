@@ -12,6 +12,47 @@
 #derive(accessors)
 struct SvSynthesisPool { ctx; render_count; peak_samples; }
 
+# ================================================================
+# SynthesisPoolState -- the flat, serializable form. The pool is a
+# SynthesisContext plus two diagnostic counters, so its state is the context's
+# state plus those counters. Restore takes the voice for the same reason
+# svara_synthctx_restore does.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvSynthesisPoolState {
+    sample_rate: f64; noise_state: i64; noise_inc: i64;
+    render_count: i64; peak_samples: i64;
+}
+
+# save -- snapshot a SynthesisPool into its serializable form.
+#must_use
+fn svara_pool_save(p) {
+    var st = alloc(sizeof(SvSynthesisPoolState));
+    var ctx = SvSynthesisPool_ctx(p);
+    SvSynthesisPoolState_set_sample_rate(st, SvSynthCtx_sample_rate(ctx));
+    var n = SvSynthCtx_noise(ctx);
+    SvSynthesisPoolState_set_noise_state(st, SvRng_state(n));
+    SvSynthesisPoolState_set_noise_inc(st, SvRng_inc(n));
+    SvSynthesisPoolState_set_render_count(st, SvSynthesisPool_render_count(p));
+    SvSynthesisPoolState_set_peak_samples(st, SvSynthesisPool_peak_samples(p));
+    return st;
+}
+
+# restore -- rebuild a SynthesisPool from a state snapshot plus its voice.
+# Returns a pool pointer or a negative SVARA_ERR_*.
+#must_use
+fn svara_pool_restore(st, voice) {
+    var p = svara_pool_new(voice, SvSynthesisPoolState_sample_rate(st));
+    if (svara_is_err(p) == 1) { return p; }
+    var n = SvSynthCtx_noise(SvSynthesisPool_ctx(p));
+    SvRng_set_state(n, SvSynthesisPoolState_noise_state(st));
+    SvRng_set_inc(n, SvSynthesisPoolState_noise_inc(st));
+    SvSynthesisPool_set_render_count(p, SvSynthesisPoolState_render_count(st));
+    SvSynthesisPool_set_peak_samples(p, SvSynthesisPoolState_peak_samples(st));
+    return p;
+}
+
 # new -- pool for a voice + sample rate. Returns ptr or neg error.
 #must_use
 fn svara_pool_new(voice, sample_rate) {

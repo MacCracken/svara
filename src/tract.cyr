@@ -38,13 +38,15 @@ fn svara_nasal_place_antiformant_frequency(place) {
 
 # VocalTract -- formant bank + nasal/subglottal biquads + lip radiation + gain.
 #derive(accessors)
-# `scratch_formants` is a five-slot SvFormant vec owned by the tract, so
-# set_formants_from_target can refresh the bank without allocating. See the note
-# on svara_tract_set_formants.
+# `formants` is an SvFormant vec owned by the tract. It serves two purposes at
+# once: set_formants_from_target fills it in place so the bank can be refreshed
+# without allocating, AND it is the tract's record of its CURRENT formants --
+# which is what SvVocalTractState needs, since a built biquad bank holds
+# coefficients from which frequency and bandwidth cannot be recovered.
 struct SvVocalTract {
     filter; nasal_coupling; nasal_antiformant; lip_prev; lip_radiation;
     interaction_strength; interaction_feedback; subglottal_coupling;
-    subglottal_filter; gain; quality; sample_rate; scratch_formants;
+    subglottal_filter; gain; quality; sample_rate; formants; nasal_place;
 }
 
 # new -- default neutral vowel (schwa), Full quality. Returns a tract pointer,
@@ -61,18 +63,24 @@ struct SvVocalTract {
 #must_use
 fn svara_tract_new(sample_rate) {
     var target = svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA);
-    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
+    # `fvec` is kept, not discarded: it becomes the tract's `formants` record, so
+    # the record always describes the filter that was actually built. Setting it
+    # to a fresh zeroed scratch instead left a brand-new tract claiming five
+    # 0 Hz formants -- which svara_tract_save then captured and
+    # svara_tract_restore correctly refused.
+    var fvec = svara_vowel_target_to_formants(target);
+    var filter = svara_formant_filter_new(fvec, sample_rate);
     if (svara_is_err(filter) == 1) {
         # absolute fallback: single 500 Hz formant
-        var fb = vec_new();
-        vec_push(fb, svara_formant_new(f64_from(500), f64_from(100), F64_ONE));
-        filter = svara_formant_filter_new(fb, sample_rate);
+        fvec = vec_new();
+        vec_push(fvec, svara_formant_new(f64_from(500), f64_from(100), F64_ONE));
+        filter = svara_formant_filter_new(fvec, sample_rate);
     }
     if (svara_is_err(filter) == 1) { return filter; }
 
     var self = alloc(sizeof(SvVocalTract));
     SvVocalTract_set_filter(self, filter);
-    SvVocalTract_set_scratch_formants(self, svara_formant_scratch_vec());
+    SvVocalTract_set_formants(self, fvec);
     SvVocalTract_set_nasal_coupling(self, svara_smooth_new(0, sample_rate));
     var nasal_q = f64_div(f64_from(SV_T_NASAL_FREQ_NEUTRAL), f64_from(SV_T_NASAL_BW));   # 2.5
     SvVocalTract_set_nasal_antiformant(self,
@@ -87,6 +95,98 @@ fn svara_tract_new(sample_rate) {
     SvVocalTract_set_gain(self, svara_smooth_new(F64_ONE, sample_rate));
     SvVocalTract_set_quality(self, SVARA_QUALITY_FULL);
     SvVocalTract_set_sample_rate(self, sample_rate);
+    SvVocalTract_set_nasal_place(self, SVARA_NASAL_NEUTRAL);
+    return self;
+}
+
+# ================================================================
+# VocalTractState -- the flat, serializable form of VocalTract.
+#
+# VocalTract is NOT derived: it holds a FormantFilter pointer, two SmoothedParam
+# pointers and TWO naad BiquadFilter handles, and neither a nested #derive-struct
+# field nor a foreign handle can round-trip (ADR-0002). Everything here is either
+# a scalar or the formant list, and the rest is rebuilt.
+#
+# The two SmoothedParams contribute `current` and `target` only: their `alpha` is
+# a pure function of the sample rate, so restore re-derives it rather than
+# carrying a number that must agree with one.
+#
+# ⚠ WHAT RESTORE DOES NOT REPRODUCE: the filter bank's delay lines and the two
+# naad biquads' internal state. That is deliberate and matches the oracle --
+# Rust's `set_formants` is `self.filter = FormantFilter::new(..)?`, which discards
+# the delay lines on every call, so there is nothing there a caller could have
+# relied on. `lip_prev` and `interaction_feedback`, which ARE one-sample memories
+# svara owns, are carried.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvVocalTractState {
+    formants: Vec<SvFormant>;
+    nasal_coupling_current: f64; nasal_coupling_target: f64;
+    gain_current: f64; gain_target: f64;
+    lip_prev: f64; lip_radiation: f64;
+    interaction_strength: f64; interaction_feedback: f64;
+    subglottal_coupling: f64;
+    nasal_place: i64; quality: i64; sample_rate: f64;
+}
+
+# save -- snapshot a VocalTract into its serializable form. The formant list is
+# copied into a fresh vec (save is not a hot path) so the state does not alias
+# the tract's own working vec.
+#must_use
+fn svara_tract_save(self) {
+    var st = alloc(sizeof(SvVocalTractState));
+    var src = SvVocalTract_formants(self);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(src)) {
+        var f = vec_get(src, i);
+        vec_push(out, svara_formant_new(SvFormant_frequency(f), SvFormant_bandwidth(f),
+            SvFormant_amplitude(f)));
+        i = i + 1;
+    }
+    SvVocalTractState_set_formants(st, out);
+    var nc = SvVocalTract_nasal_coupling(self);
+    SvVocalTractState_set_nasal_coupling_current(st, svara_smooth_value(nc));
+    SvVocalTractState_set_nasal_coupling_target(st, SvSmoothedParam_target(nc));
+    var gn = SvVocalTract_gain(self);
+    SvVocalTractState_set_gain_current(st, svara_smooth_value(gn));
+    SvVocalTractState_set_gain_target(st, SvSmoothedParam_target(gn));
+    SvVocalTractState_set_lip_prev(st, SvVocalTract_lip_prev(self));
+    SvVocalTractState_set_lip_radiation(st, SvVocalTract_lip_radiation(self));
+    SvVocalTractState_set_interaction_strength(st, SvVocalTract_interaction_strength(self));
+    SvVocalTractState_set_interaction_feedback(st, SvVocalTract_interaction_feedback(self));
+    SvVocalTractState_set_subglottal_coupling(st, SvVocalTract_subglottal_coupling(self));
+    SvVocalTractState_set_nasal_place(st, SvVocalTract_nasal_place(self));
+    SvVocalTractState_set_quality(st, SvVocalTract_quality(self));
+    SvVocalTractState_set_sample_rate(st, SvVocalTract_sample_rate(self));
+    return st;
+}
+
+# restore -- rebuild a VocalTract from a state snapshot. Returns a tract pointer
+# or a negative SVARA_ERR_*: a decoded state is externally-authored data, so the
+# sample rate and the formant list are validated through the ordinary
+# constructors rather than trusted.
+#must_use
+fn svara_tract_restore(st) {
+    var self = svara_tract_new(SvVocalTractState_sample_rate(st));
+    if (svara_is_err(self) == 1) { return self; }
+    var e = svara_tract_set_formants(self, SvVocalTractState_formants(st));
+    if (svara_is_err(e) == 1) { return e; }
+    var nc = SvVocalTract_nasal_coupling(self);
+    SvSmoothedParam_set_current(nc, SvVocalTractState_nasal_coupling_current(st));
+    SvSmoothedParam_set_target(nc, SvVocalTractState_nasal_coupling_target(st));
+    var gn = SvVocalTract_gain(self);
+    SvSmoothedParam_set_current(gn, SvVocalTractState_gain_current(st));
+    SvSmoothedParam_set_target(gn, SvVocalTractState_gain_target(st));
+    SvVocalTract_set_lip_prev(self, SvVocalTractState_lip_prev(st));
+    SvVocalTract_set_lip_radiation(self, SvVocalTractState_lip_radiation(st));
+    SvVocalTract_set_interaction_strength(self, SvVocalTractState_interaction_strength(st));
+    SvVocalTract_set_interaction_feedback(self, SvVocalTractState_interaction_feedback(st));
+    SvVocalTract_set_subglottal_coupling(self, SvVocalTractState_subglottal_coupling(st));
+    SvVocalTract_set_quality(self, SvVocalTractState_quality(st));
+    # through the setter so the naad notch is retuned, not just the field written
+    svara_tract_set_nasal_place(self, SvVocalTractState_nasal_place(st));
     return self;
 }
 
@@ -102,20 +202,54 @@ fn svara_tract_new(sample_rate) {
 #must_use
 fn svara_tract_set_formants(self, formants) {
     var cur = SvVocalTract_filter(self);
-    if (cur != 0) { return svara_formant_filter_rebuild(cur, formants); }
-    var f = svara_formant_filter_new(formants, SvVocalTract_sample_rate(self));
-    if (svara_is_err(f) == 1) { return f; }
-    SvVocalTract_set_filter(self, f);
+    var e = SVARA_ERR_NONE;
+    if (cur != 0) {
+        e = svara_formant_filter_rebuild(cur, formants);
+    } else {
+        var f = svara_formant_filter_new(formants, SvVocalTract_sample_rate(self));
+        if (svara_is_err(f) == 1) { return f; }
+        SvVocalTract_set_filter(self, f);
+    }
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_record_formants(self, formants);
     return SVARA_ERR_NONE;
 }
 
-# set_formants_from_target -- as above, from a VowelTarget. Fills the tract's
-# own five-slot scratch rather than allocating a fresh formant vec per call.
+# record_formants -- keep the tract's `formants` vec equal to what the bank was
+# just built from, so SvVocalTractState can reproduce it. Copies VALUES, and is a
+# no-op self-copy when the caller passed the tract's own vec (the
+# set_formants_from_target path). Allocates only when the formant COUNT changes,
+# which on the per-sample render path happens once.
+fn svara_tract_record_formants(self, formants) {
+    var rec = SvVocalTract_formants(self);
+    var n = vec_len(formants);
+    if (vec_len(rec) != n) {
+        rec = vec_new();
+        var k = 0;
+        while (k < n) { vec_push(rec, svara_formant_new(0, 0, 0)); k = k + 1; }
+        SvVocalTract_set_formants(self, rec);
+    }
+    if (rec == formants) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var src = vec_get(formants, i);
+        var dst = vec_get(rec, i);
+        SvFormant_set_frequency(dst, SvFormant_frequency(src));
+        SvFormant_set_bandwidth(dst, SvFormant_bandwidth(src));
+        SvFormant_set_amplitude(dst, SvFormant_amplitude(src));
+        i = i + 1;
+    }
+    return 0;
+}
+
+# set_formants_from_target -- as above, from a VowelTarget. Fills the tract's own
+# formant vec in place rather than allocating a fresh one per call, so
+# set_formants sees its own vec and record_formants is a no-op.
 #must_use
 fn svara_tract_set_formants_from_target(self, target) {
-    var scratch = SvVocalTract_scratch_formants(self);
-    svara_vowel_target_to_formants_into(target, scratch);
-    return svara_tract_set_formants(self, scratch);
+    var own = SvVocalTract_formants(self);
+    svara_vowel_target_to_formants_into(target, own);
+    return svara_tract_set_formants(self, own);
 }
 
 #must_use
@@ -134,11 +268,19 @@ fn svara_tract_set_lip_radiation(self, coefficient) {
 }
 
 # set_nasal_place -- retune the nasal antiformant (preserves filter state).
+# The place is also recorded: the naad notch holds only its coefficients, so
+# without this a tract could not report its own configuration and
+# svara_tract_restore could not reproduce it.
 fn svara_tract_set_nasal_place(self, place) {
     var freq = svara_nasal_place_antiformant_frequency(place);
     var q = f64_div(freq, f64_from(SV_T_NASAL_BW));
     filter_biquad_set_params(SvVocalTract_nasal_antiformant(self), freq, q, 0);
+    SvVocalTract_set_nasal_place(self, place);
 }
+
+# nasal_place -- the place the antiformant is currently tuned to.
+#must_use
+fn svara_tract_nasal_place(self) { return SvVocalTract_nasal_place(self); }
 
 # set_interaction_strength -- source-filter feedback amount, clamped [0,0.3].
 fn svara_tract_set_interaction_strength(self, strength) {

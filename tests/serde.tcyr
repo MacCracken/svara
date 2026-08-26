@@ -28,6 +28,7 @@ include "src/rng.cyr"
 include "src/smooth.cyr"
 include "src/lod.cyr"
 include "src/formant.cyr"
+include "src/spectral.cyr"
 include "src/glottal.cyr"
 include "src/tract.cyr"
 include "src/voice.cyr"
@@ -35,6 +36,7 @@ include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
+include "src/pool.cyr"
 include "src/render.cyr"
 
 var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3 (6-decimal text round-trip tolerance)
@@ -234,6 +236,347 @@ assert_eq(svara_is_err(gsrc), 0, "control: glottal source constructs");
 assert_eq(SvGlottalSource_rng(gsrc) != 0, 1, "glottal holds an rng handle");
 assert_eq(SvGlottalSource_aspiration_noise(gsrc) != 0, 1, "glottal holds a naad noise handle");
 assert_eq(SvGlottalSource_vibrato_lfo(gsrc) != 0, 1, "glottal holds a naad LFO handle");
+
+# ================================================================
+test_group("Spectrum round-trip");
+var sp_samples = vec_new();
+var sp_i = 0;
+while (sp_i < 256) {
+    vec_push(sp_samples, f64_sin(f64_div(f64_mul(F64_TAU, f64_from(sp_i)), f64_from(32))));
+    sp_i = sp_i + 1;
+}
+var spec = svara_spectral_analyze(sp_samples, sr_hz);
+assert_eq(svara_is_err(spec), 0, "control: analyze succeeds");
+var spec_n = vec_len(SvSpectrum_magnitudes(spec));
+assert_eq(spec_n > 0, 1, "control: the spectrum has bins");
+var spec2 = SvSpectrum_from_json_str(se_json(&SvSpectrum_to_json, spec));
+assert_eq(vec_len(SvSpectrum_magnitudes(spec2)), spec_n, "bin count survives");
+assert_eq(se_approx(SvSpectrum_freq_resolution(spec2),
+    SvSpectrum_freq_resolution(spec), TOL_1EM3), 1, "freq_resolution survives");
+# BEHAVIOUR: the restored spectrum answers queries the same way.
+var spec_peak = alloc(16);
+var spec_peak2 = alloc(16);
+assert_eq(svara_spectrum_peak_in_range(spec, f64_from(1000), f64_from(2000), spec_peak), 1,
+  "control: the original finds a peak");
+assert_eq(svara_spectrum_peak_in_range(spec2, f64_from(1000), f64_from(2000), spec_peak2), 1,
+  "restored spectrum finds a peak too");
+assert_eq(se_approx(load64(spec_peak2), load64(spec_peak), TOL_1EM3), 1, "at the same frequency");
+
+# ================================================================
+test_group("RenderOutput state companion");
+var ro_samples = vec_new();
+vec_push(ro_samples, F64_HALF); vec_push(ro_samples, f64_neg(F64_HALF)); vec_push(ro_samples, 0);
+var ro = svara_render_output_new(ro_samples, svara_render_progress_new(4, 9, 1234));
+var ro_st = svara_render_output_save(ro);
+var ro_st2 = SvRenderOutputState_from_json_str(se_json(&SvRenderOutputState_to_json, ro_st));
+var ro2 = svara_render_output_restore(ro_st2);
+assert_eq(vec_len(SvRenderOutput_samples(ro2)), 3, "sample count survives");
+assert_eq(se_approx(vec_get(SvRenderOutput_samples(ro2), 0), F64_HALF, TOL_1EM3), 1, "sample 0");
+assert_eq(se_approx(vec_get(SvRenderOutput_samples(ro2), 1), f64_neg(F64_HALF), TOL_1EM3), 1, "sample 1 negative");
+var ro_p = SvRenderOutput_progress(ro2);
+assert_eq(ro_p != 0, 1, "the restored progress is a real object, not a null");
+assert_eq(SvRenderProgress_phoneme_index(ro_p), 4, "progress index survives the flattening");
+assert_eq(SvRenderProgress_total_phonemes(ro_p), 9, "progress total survives");
+assert_eq(SvRenderProgress_samples_rendered(ro_p), 1234, "progress samples survive");
+assert_eq(se_approx(svara_render_progress_fraction(ro_p),
+    svara_render_progress_fraction(SvRenderOutput_progress(ro)), TOL_1EM3), 1, "fraction matches");
+
+# ================================================================
+test_group("GlottalSource state companion -- deterministic path is exact");
+# breathiness 0 and vibrato_rate 0 means neither naad handle contributes, so a
+# restored source must be bit-for-bit identical over a long run.
+var g1 = svara_glottal_new(f64_from(140), sr_hz);
+assert_eq(svara_is_err(g1), 0, "control: source constructs");
+var g1e = svara_glottal_set_f0(g1, f64_from(140));
+assert_eq(g1e, SVARA_ERR_NONE, "control: f0 accepted");
+svara_glottal_set_breathiness(g1, 0);
+svara_glottal_set_vibrato(g1, 0, 0);
+# advance it well past the first period so phase/period/amplitude are all non-initial
+var g_i = 0;
+while (g_i < 700) { var gw = svara_glottal_next_sample(g1); g_i = g_i + 1; }
+assert_eq(f64_gt(SvGlottalSource_phase(g1), 0), 1, "control: the source is mid-period");
+
+var g_st = svara_glottal_save(g1);
+var g_st2 = SvGlottalState_from_json_str(se_json(&SvGlottalState_to_json, g_st));
+assert_eq(SvGlottalState_rng_state(g_st2), SvGlottalState_rng_state(g_st), "rng state exact (i64)");
+assert_eq(SvGlottalState_rng_inc(g_st2), SvGlottalState_rng_inc(g_st), "rng inc exact");
+var g2 = svara_glottal_restore(g_st2);
+assert_eq(svara_is_err(g2), 0, "restore succeeds");
+
+var g_diff = 0;
+var g_loud = 0;
+var g_j = 0;
+while (g_j < 1024) {
+    var s1 = svara_glottal_next_sample(g1);
+    var s2 = svara_glottal_next_sample(g2);
+    if (se_approx(s1, s2, TOL_1EM3) == 0) { g_diff = g_diff + 1; }
+    if (f64_gt(f64_abs(s1), TOL_1EM3) == 1) { g_loud = g_loud + 1; }
+    g_j = g_j + 1;
+}
+assert_eq(g_diff, 0, "restored source matches over 1024 samples");
+assert_eq(g_loud > 0, 1, "control: the compared signal is not silence");
+
+# ================================================================
+test_group("GlottalSource state companion -- the naad handles are NOT restored");
+# This is the documented limit of the companion, asserted so it stays a measured
+# fact rather than a caveat nobody checked. naad's NoiseGenerator cell and Lfo
+# phase are internal to naad and cannot be read out, so with breathiness > 0 the
+# aspiration stream restarts and the output legitimately differs.
+var h1 = svara_glottal_new(f64_from(140), sr_hz);
+svara_glottal_set_breathiness(h1, F64_HALF);
+var h_i = 0;
+while (h_i < 700) { var hw = svara_glottal_next_sample(h1); h_i = h_i + 1; }
+var h2 = svara_glottal_restore(svara_glottal_save(h1));
+assert_eq(svara_is_err(h2), 0, "control: restore still succeeds with breathiness");
+var h_diff = 0;
+var h_fin = 1;
+var h_j = 0;
+while (h_j < 512) {
+    var t1 = svara_glottal_next_sample(h1);
+    var t2 = svara_glottal_next_sample(h2);
+    if (se_approx(t1, t2, TOL_1EM3) == 0) { h_diff = h_diff + 1; }
+    if (svara_is_finite(t2) == 0) { h_fin = 0; }
+    h_j = h_j + 1;
+}
+assert_eq(h_diff > 0, 1, "the aspiration stream DOES restart -- the limit is real, not hypothetical");
+assert_eq(h_fin, 1, "and the restored source still produces finite output");
+assert_eq(se_approx(SvGlottalSource_breathiness(h2), F64_HALF, TOL_1EM3), 1,
+  "control: the breathiness field itself did survive");
+
+# ================================================================
+test_group("restore validates a decoded state rather than trusting it");
+# A state is externally-authored data once it has been through JSON.
+var bad = svara_glottal_save(svara_glottal_new(f64_from(140), sr_hz));
+SvGlottalState_set_f0(bad, f64_from(5));
+assert_eq(svara_glottal_restore(bad), SVARA_ERR_INVALID_PITCH, "f0 below range rejected");
+SvGlottalState_set_f0(bad, f64_div(0, 0));
+assert_eq(svara_glottal_restore(bad), SVARA_ERR_INVALID_PITCH, "NaN f0 rejected");
+SvGlottalState_set_f0(bad, f64_from(140));
+SvGlottalState_set_sample_rate(bad, 0);
+assert_eq(svara_glottal_restore(bad), SVARA_ERR_INVALID_FORMANT, "zero sample rate rejected");
+SvGlottalState_set_sample_rate(bad, sr_hz);
+assert_eq(svara_is_err(svara_glottal_restore(bad)), 0, "control: the repaired state restores");
+
+# ================================================================
+test_group("VocalTract state companion");
+var t1 = svara_tract_new(sr_hz);
+assert_eq(svara_is_err(t1), 0, "control: tract constructs");
+var t1e = svara_tract_set_vowel(t1, SVARA_VOWEL_O);
+assert_eq(t1e, SVARA_ERR_NONE, "control: vowel accepted");
+svara_tract_set_nasal_place(t1, SVARA_NASAL_VELAR);
+svara_tract_set_nasal_coupling(t1, 0.35);
+svara_tract_set_lip_radiation(t1, 0.9);
+svara_tract_set_interaction_strength(t1, 0.2);
+svara_tract_set_subglottal_coupling(t1, 0.08);
+svara_tract_set_quality(t1, SVARA_QUALITY_REDUCED);
+# run it so lip_prev / interaction_feedback / the delay lines are all non-initial
+var tg = svara_glottal_new(f64_from(110), sr_hz);
+var t_i = 0;
+while (t_i < 400) { var tw = svara_tract_process_sample(t1, svara_glottal_next_sample(tg)); t_i = t_i + 1; }
+
+var t_st = svara_tract_save(t1);
+var t_st2 = SvVocalTractState_from_json_str(se_json(&SvVocalTractState_to_json, t_st));
+assert_eq(vec_len(SvVocalTractState_formants(t_st2)), 5, "five formants survive the JSON");
+var t2 = svara_tract_restore(t_st2);
+assert_eq(svara_is_err(t2), 0, "restore succeeds");
+
+# configuration fidelity
+assert_eq(svara_tract_nasal_place(t2), SVARA_NASAL_VELAR, "nasal place survives");
+assert_eq(SvVocalTract_quality(t2), SVARA_QUALITY_REDUCED, "quality survives");
+assert_eq(se_approx(SvVocalTract_lip_radiation(t2), 0.9, TOL_1EM3), 1, "lip_radiation survives");
+assert_eq(se_approx(SvVocalTract_interaction_strength(t2), 0.2, TOL_1EM3), 1, "interaction_strength survives");
+assert_eq(se_approx(SvVocalTract_subglottal_coupling(t2), 0.08, TOL_1EM3), 1, "subglottal_coupling survives");
+assert_eq(se_approx(SvVocalTract_lip_prev(t2), SvVocalTract_lip_prev(t1), TOL_1EM3), 1,
+  "lip_prev is carried (it is a one-sample memory svara owns)");
+assert_eq(svara_formant_filter_num_formants(SvVocalTract_filter(t2)), 5, "the bank was rebuilt at width 5");
+
+# BEHAVIOUR: from a clean filter state both tracts must agree sample for sample.
+svara_tract_reset(t1);
+svara_tract_reset(t2);
+var ta = svara_glottal_new(f64_from(110), sr_hz);
+var tb = svara_glottal_new(f64_from(110), sr_hz);
+var t_diff = 0;
+var t_loud = 0;
+var t_j = 0;
+while (t_j < 512) {
+    var u1 = svara_tract_process_sample(t1, svara_glottal_next_sample(ta));
+    var u2 = svara_tract_process_sample(t2, svara_glottal_next_sample(tb));
+    if (se_approx(u1, u2, TOL_1EM3) == 0) { t_diff = t_diff + 1; }
+    if (f64_gt(f64_abs(u1), TOL_1EM3) == 1) { t_loud = t_loud + 1; }
+    t_j = t_j + 1;
+}
+assert_eq(t_diff, 0, "restored tract matches the original over 512 samples");
+assert_eq(t_loud > 0, 1, "control: the compared signal is not silence");
+
+# CONTROL: the comparison discriminates -- a differently-configured tract must NOT match.
+var t3 = svara_tract_new(sr_hz);
+var t3e = svara_tract_set_vowel(t3, SVARA_VOWEL_I);
+assert_eq(t3e, SVARA_ERR_NONE, "control: second tract configures");
+var tc = svara_glottal_new(f64_from(110), sr_hz);
+var t3_diff = 0;
+var t_k = 0;
+svara_tract_reset(t1);
+var td = svara_glottal_new(f64_from(110), sr_hz);
+while (t_k < 512) {
+    var v1 = svara_tract_process_sample(t1, svara_glottal_next_sample(td));
+    var v3 = svara_tract_process_sample(t3, svara_glottal_next_sample(tc));
+    if (se_approx(v1, v3, TOL_1EM3) == 0) { t3_diff = t3_diff + 1; }
+    t_k = t_k + 1;
+}
+assert_eq(t3_diff > 0, 1, "control: a different vowel really does produce different output");
+
+# ================================================================
+test_group("VocalTract restore validates, and does not carry filter state");
+var tbad = svara_tract_save(svara_tract_new(sr_hz));
+SvVocalTractState_set_sample_rate(tbad, 0);
+assert_eq(svara_is_err(svara_tract_restore(tbad)), 1, "zero sample rate rejected");
+SvVocalTractState_set_sample_rate(tbad, f64_div(0, 0));
+assert_eq(svara_is_err(svara_tract_restore(tbad)), 1, "NaN sample rate rejected");
+SvVocalTractState_set_sample_rate(tbad, sr_hz);
+SvVocalTractState_set_formants(tbad, vec_new());
+assert_eq(svara_tract_restore(tbad), SVARA_ERR_INVALID_FORMANT, "empty formant list rejected");
+var tfix = svara_tract_save(svara_tract_new(sr_hz));
+assert_eq(svara_is_err(svara_tract_restore(tfix)), 0, "control: a well-formed state restores");
+# The delay lines are deliberately NOT carried -- Rust's set_formants discards
+# them on every call, so there is nothing there to preserve. Prove it is real.
+var w1 = svara_tract_new(sr_hz);
+var w1e = svara_tract_set_vowel(w1, SVARA_VOWEL_A);
+assert_eq(w1e, SVARA_ERR_NONE, "control: warm tract configures");
+var wg = svara_glottal_new(f64_from(110), sr_hz);
+var w_i = 0;
+while (w_i < 400) { var ww = svara_tract_process_sample(w1, svara_glottal_next_sample(wg)); w_i = w_i + 1; }
+var w2 = svara_tract_restore(svara_tract_save(w1));
+var wa = svara_glottal_new(f64_from(110), sr_hz);
+var wb = svara_glottal_new(f64_from(110), sr_hz);
+var w_diff = 0;
+var w_j = 0;
+while (w_j < 128) {
+    var x1 = svara_tract_process_sample(w1, svara_glottal_next_sample(wa));
+    var x2 = svara_tract_process_sample(w2, svara_glottal_next_sample(wb));
+    if (se_approx(x1, x2, TOL_1EM3) == 0) { w_diff = w_diff + 1; }
+    w_j = w_j + 1;
+}
+assert_eq(w_diff > 0, 1, "a warm tract and its restore DO differ -- delay lines are not state");
+
+# ================================================================
+test_group("TrajectoryPlanner state companion");
+var pl_ph = vec_new();
+vec_push(pl_ph, SVARA_PH_VOWEL_A); vec_push(pl_ph, SVARA_PH_NASAL_N); vec_push(pl_ph, SVARA_PH_VOWEL_I);
+var pl_du = vec_new();
+vec_push(pl_du, 0.06); vec_push(pl_du, 0.04); vec_push(pl_du, 0.06);
+var pv = svara_voice_new_male();
+var plan1 = svara_trajectory_plan(pl_ph, pl_du, pv, sr_hz);
+var plan_kn = vec_len(SvTrajectoryPlanner_keypoints(plan1));
+assert_eq(plan_kn > 3, 1, "control: the plan has several keypoints");
+assert_eq(svara_trajectory_total_samples(plan1) > 0, 1, "control: it spans samples");
+
+var pl_st = svara_trajectory_save(plan1);
+var pl_st2 = SvTrajectoryState_from_json_str(se_json(&SvTrajectoryState_to_json, pl_st));
+assert_eq(vec_len(SvTrajectoryState_keypoints(pl_st2)), plan_kn, "keypoint count survives the JSON");
+var plan2 = svara_trajectory_restore(pl_st2);
+assert_eq(svara_trajectory_total_samples(plan2), svara_trajectory_total_samples(plan1),
+  "total_samples survives");
+assert_eq(vec_len(SvTrajectoryPlanner_keypoints(plan2)), plan_kn, "the keypoints are rebuilt");
+# BEHAVIOUR: the restored plan must interpolate to the same targets.
+var pl_diff = 0;
+var pl_moved = 0;
+var pl_first = svara_trajectory_formants_at(plan1, 0);
+var pl_i = 0;
+while (pl_i < svara_trajectory_total_samples(plan1)) {
+    var q1 = svara_trajectory_formants_at(plan1, pl_i);
+    var q2 = svara_trajectory_formants_at(plan2, pl_i);
+    if (se_approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
+    if (se_approx(SvVowelTarget_f2(q1), SvVowelTarget_f2(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
+    if (se_approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(pl_first), TOL_1EM3) == 0) { pl_moved = pl_moved + 1; }
+    pl_i = pl_i + 331;
+}
+assert_eq(pl_diff, 0, "restored plan interpolates identically across its span");
+assert_eq(pl_moved > 0, 1, "control: the trajectory actually moves, so the sweep compares real change");
+
+# ================================================================
+test_group("SynthesisContext state companion resumes the noise stream");
+var cv = svara_voice_new_male();
+var cx1 = svara_synthctx_new(cv, sr_hz);
+assert_eq(svara_is_err(cx1), 0, "control: context constructs");
+# /s/ is a fricative, so it draws from the context's noise PRNG
+var cx_n1 = svara_synthctx_synthesize(cx1, SVARA_PH_FRIC_S, cv, 0.02, 0);
+assert_eq(svara_is_err(cx_n1), 0, "control: a fricative renders");
+assert_eq(cx_n1 > 0, 1, "control: it produced samples");
+
+var cx_st = svara_synthctx_save(cx1);
+var cx_st2 = SvSynthCtxState_from_json_str(se_json(&SvSynthCtxState_to_json, cx_st));
+assert_eq(SvSynthCtxState_noise_state(cx_st2), SvSynthCtxState_noise_state(cx_st), "noise state exact");
+var cx2 = svara_synthctx_restore(cx_st2, cv);
+assert_eq(svara_is_err(cx2), 0, "restore succeeds");
+
+var cx_a = svara_synthctx_synthesize(cx1, SVARA_PH_FRIC_S, cv, 0.02, 0);
+var cx_b = svara_synthctx_synthesize(cx2, SVARA_PH_FRIC_S, cv, 0.02, 0);
+assert_eq(cx_b, cx_a, "same sample count");
+var cx_buf1 = svara_synthctx_buffer(cx1);
+var cx_buf2 = svara_synthctx_buffer(cx2);
+var cx_diff = 0;
+var cx_loud = 0;
+var cx_i = 0;
+while (cx_i < cx_a) {
+    if (se_approx(load64(cx_buf1 + cx_i * 8), load64(cx_buf2 + cx_i * 8), TOL_1EM3) == 0) {
+        cx_diff = cx_diff + 1;
+    }
+    if (f64_gt(f64_abs(load64(cx_buf1 + cx_i * 8)), TOL_1EM3) == 1) { cx_loud = cx_loud + 1; }
+    cx_i = cx_i + 1;
+}
+assert_eq(cx_diff, 0, "restored context renders the same noise-driven audio");
+assert_eq(cx_loud > 0, 1, "control: the compared audio is not silence");
+# CONTROL: a context that did NOT resume the stream renders differently.
+var cx3 = svara_synthctx_new(cv, sr_hz);
+var cx_c = svara_synthctx_synthesize(cx3, SVARA_PH_FRIC_S, cv, 0.02, 0);
+var cx_buf3 = svara_synthctx_buffer(cx3);
+var cx3_diff = 0;
+var cx_j = 0;
+while (cx_j < cx_c) {
+    if (se_approx(load64(cx_buf1 + cx_j * 8), load64(cx_buf3 + cx_j * 8), TOL_1EM3) == 0) {
+        cx3_diff = cx3_diff + 1;
+    }
+    cx_j = cx_j + 1;
+}
+assert_eq(cx3_diff > 0, 1, "control: a fresh context does NOT match -- the stream really was resumed");
+
+# ================================================================
+test_group("SynthesisPool + BatchRenderer state companions");
+var pp = svara_pool_new(cv, sr_hz);
+assert_eq(svara_is_err(pp), 0, "control: pool constructs");
+var pp_r = svara_pool_render(pp, SVARA_PH_VOWEL_A, cv, 0.02);
+assert_eq(svara_is_err(pp_r), 0, "control: pool renders");
+var pp_st2 = SvSynthesisPoolState_from_json_str(se_json(&SvSynthesisPoolState_to_json, svara_pool_save(pp)));
+var pp2 = svara_pool_restore(pp_st2, cv);
+assert_eq(svara_is_err(pp2), 0, "pool restore succeeds");
+assert_eq(svara_pool_render_count(pp2), svara_pool_render_count(pp), "render_count survives");
+assert_eq(svara_pool_peak_samples(pp2), svara_pool_peak_samples(pp), "peak_samples survives");
+assert_eq(svara_pool_render_count(pp) > 0, 1, "control: the counter is not zero on both sides");
+
+var br = svara_batch_new(cv, sr_hz);
+assert_eq(svara_is_err(br), 0, "control: renderer constructs");
+svara_batch_push(br, SVARA_PH_VOWEL_A, 0.03, SVARA_STRESS_PRIMARY);
+svara_batch_push(br, SVARA_PH_FRIC_S, 0.03, SVARA_STRESS_UNSTRESSED);
+svara_batch_push(br, SVARA_PH_VOWEL_I, 0.03, SVARA_STRESS_SECONDARY);
+var br_st2 = SvBatchRendererState_from_json_str(se_json(&SvBatchRendererState_to_json, svara_batch_save(br)));
+assert_eq(vec_len(SvBatchRendererState_events(br_st2)), 3, "the event queue survives the JSON");
+var br2 = svara_batch_restore(br_st2, cv);
+assert_eq(svara_is_err(br2), 0, "renderer restore succeeds");
+assert_eq(svara_batch_len(br2), 3, "the restored renderer has all three events");
+# BEHAVIOUR: both render the same audio.
+var br_o1 = svara_batch_render_all(br);
+var br_o2 = svara_batch_render_all(br2);
+var br_s1 = SvRenderOutput_samples(br_o1);
+var br_s2 = SvRenderOutput_samples(br_o2);
+assert_eq(vec_len(br_s1) > 0, 1, "control: the original rendered samples");
+assert_eq(vec_len(br_s2), vec_len(br_s1), "same length");
+var br_diff = 0;
+var br_i = 0;
+while (br_i < vec_len(br_s1)) {
+    if (vec_get(br_s1, br_i) != vec_get(br_s2, br_i)) { br_diff = br_diff + 1; }
+    br_i = br_i + 1;
+}
+assert_eq(br_diff, 0, "restored renderer renders bit-identical audio");
 
 var rc = assert_summary();
 syscall(60, rc);

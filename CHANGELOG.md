@@ -9,6 +9,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.3.0] - 2026-08-26 — state companions: everything svara owns now round-trips
+
+The follow-on ADR-0002 scoped. Nine engine types could not be derived — each
+holds a nested struct pointer, a raw buffer, or a foreign naad handle — so each
+now has a **flat state companion** the derive *can* reach, plus `save` / `restore`.
+No hand-written codecs.
+
+Derived types **13 → 22**; serde suite **54 → 135 assertions**; whole suite
+**745 → 826** across 20 suites. `cyrius audit` exits 0, the 3.1.3 allocation
+budget is intact, and every render path is still bit-for-bit identical to 3.1.2.
+
+### Added — eight `save` / `restore` pairs and one direct derive
+
+| Engine type | Companion | What restore rebuilds |
+|---|---|---|
+| `SvSpectrum` | *none needed* | already flat — `Vec<f64>` plus two scalars; it only wanted the annotations |
+| `SvRenderOutput` | `SvRenderOutputState` | the nested `progress` pointer, inlined as three counters |
+| `SvGlottalSource` | `SvGlottalState` | the naad noise generator + LFO; the Rng resumes exactly |
+| `SvVocalTract` | `SvVocalTractState` | the formant bank and both naad biquads, from the recorded formants |
+| `SvFormantKeypoint` | `SvKeypointState` | the nested `SvVowelTarget`, inlined as ten components |
+| `SvTrajectoryPlanner` | `SvTrajectoryState` | the whole keypoint list, as `Vec<SvKeypointState>` |
+| `SvSynthCtx` | `SvSynthCtxState` | the context, from the voice + the noise PRNG |
+| `SvSynthesisPool` | `SvSynthesisPoolState` | as above, plus the two diagnostic counters |
+| `SvBatchRenderer` | `SvBatchRendererState` | the event queue and the context |
+
+⭐ **The context carries far less state than its field list suggests, and finding
+that out is what made three of these small.** `svara_synthctx_synthesize` calls
+`svara_tract_reset` and re-applies *every* glottal parameter from the supplied
+voice at the top of each call — so the tract and glottal source hold nothing
+across calls, and the buffer is scratch. What actually persists is the noise
+PRNG and the sample rate. `SvSynthCtxState` is three fields.
+
+**Restore takes the voice as an argument** for the context, pool and renderer. A
+context is derived *from* a voice, and `SvVoiceProfile` already serializes on its
+own; inlining its nine fields into three more structs would duplicate a schema
+that then has to be kept in step.
+
+### Changed — the tract now records its own formants and nasal place
+
+Two pieces of information the tract used to throw away, both needed by restore
+and both worth having anyway:
+
+- **`formants`** — a built biquad bank holds coefficients, from which frequency
+  and bandwidth cannot be recovered. The 3.1.3 `scratch_formants` vec is now that
+  record as well as the scratch: `set_formants` syncs it after a successful
+  rebuild. The sync copies **values**, is a no-op self-copy on the
+  `set_formants_from_target` path, and allocates only when the formant *count*
+  changes — so the per-sample allocation budget is unchanged, and
+  `tests/allocbudget.tcyr` still passes.
+- **`nasal_place`** — `set_nasal_place` used to retune the naad notch and forget
+  which place it was. A tract could not report its own configuration. It is now
+  stored and readable via `svara_tract_nasal_place`.
+
+⚠ `SvVocalTract_scratch_formants` is now `SvVocalTract_formants`. Like 3.2.0's
+`SvProsodyContour_xs`, it was `#derive(accessors)` output for internal scratch,
+introduced two releases ago, never documented API.
+
+### Fixed — a fresh tract misreported its own formants
+
+Found by a control assertion, not by the feature test it belonged to. The first
+version of the formant record left `svara_tract_new` setting it to a fresh zeroed
+scratch vec while the filter was built from the schwa targets — so a
+brand-new tract claimed **five 0 Hz formants**, `svara_tract_save` captured that,
+and `svara_tract_restore` then correctly refused the state as invalid. The
+constructor now keeps the vec it actually built the filter from.
+
+The assertion that caught it was `"control: a well-formed state restores"` —
+there to prove the *rejection* tests were not passing vacuously. It failed
+instead, which is the control doing its job.
+
+### Notes — what restore does NOT reproduce, measured rather than caveated
+
+Two limits are real, and each is pinned by a test that asserts the divergence
+*exists* — so they stay measured facts rather than warnings nobody checked.
+
+- **naad's internal state cannot be read out.** A restored `GlottalSource`
+  reproduces the deterministic pulse train **bit-for-bit over 1024 samples** when
+  breathiness and vibrato are 0 — that is the whole output in that
+  configuration. With breathiness > 0 the aspiration stream restarts, because
+  naad's `NoiseGenerator` cell and `Lfo` phase are internal to naad. Asserted
+  both ways: identical in the first case, *different* in the second.
+- **Filter delay lines are not state.** A restored `VocalTract` matches the
+  original **over 512 samples from a clean filter state**, and a *warm* tract and
+  its restore deliberately differ. That matches the oracle: Rust's `set_formants`
+  is `self.filter = FormantFilter::new(..)?`, which discards the delay lines on
+  every call, so there is nothing there a caller could have relied on.
+  `lip_prev` and `interaction_feedback` — one-sample memories svara owns — *are*
+  carried.
+
+Behavioural equivalence is the standard throughout, as in 3.2.0: a restored
+`SynthesisContext` renders the same noise-driven fricative (with a fresh context
+asserted *not* to match, proving the stream really was resumed), a restored
+`BatchRenderer` renders bit-identical audio, and a restored `TrajectoryPlanner`
+interpolates identically across its span.
+
+### Notes — restore validates, it does not trust
+
+A state that has been through JSON is externally-authored data. Every `restore`
+runs its inputs through the ordinary constructors: `svara_glottal_restore`
+rejects an out-of-range or NaN `f0` and a non-positive `sample_rate`;
+`svara_tract_restore` rejects a bad sample rate and an empty formant list. All
+pinned, each alongside a control proving a well-formed state still restores.
+
+- `dist/svara.cyr` regenerated at v3.3.0 (5,470 lines).
+- **Why minor, not patch:** ten new public types and sixteen new public functions,
+  plus the one accessor rename above.
 ## [3.2.0] - 2026-08-26 — container serde, and where serialization stops
 
 **M2.** The serialized surface grows from 8 types to **13**, and — more usefully —

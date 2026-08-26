@@ -5,6 +5,19 @@
 
 ## Version
 
+**3.3.0** (2026-08-26) — **state companions.** The nine engine types ADR-0002
+excluded from direct derive each got a flat companion the derive *can* reach plus
+`save`/`restore`: `SvGlottalState`, `SvVocalTractState`, `SvKeypointState`,
+`SvTrajectoryState`, `SvSynthCtxState`, `SvSynthesisPoolState`,
+`SvBatchRendererState`, `SvRenderOutputState` (and `SvSpectrum`, which was
+already flat and only needed annotations). Derived types **13 → 22**, suite
+**745 → 826**. Restore is measured behaviourally, and its **two limits are pinned
+by tests that assert the divergence exists**: naad's `NoiseGenerator` cell and
+`Lfo` phase cannot be read out, and filter delay lines are not state (Rust
+discards them on every `set_formants` too). The tract now records its own
+`formants` and `nasal_place` — both were previously thrown away, and a fresh
+tract misreported its formants until a control assertion caught it.
+
 **3.2.0** (2026-08-26) — **container serde.** Serialized surface 8 → **13**
 types: `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
 `(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
@@ -174,8 +187,8 @@ All green on the 6.5.35 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (252 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 745 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (269 public fns across 17 modules) |
+| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 826 assertions |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
@@ -251,19 +264,37 @@ Cyrius ships `#derive(Serialize)` (emits `Type_to_json` / `_from_json` /
 `[deps] stdlib` module — so any entry file that includes a deriving module needs
 both, or the codecs are undefined at link.
 
-**Derived (13):** `SvFormant`, `SvVowelTarget`, `SvVoiceProfile`,
-`SvEffortParams`, `SvPhonemeEvent`, `SvNasalization`, `SvVOT`,
-`SvRenderProgress` (M-serde, 3.0.0) · `SvSmoothedParam`, `SvRng`, `SvF0Point`,
-`SvProsodyContour`, `SvPhonemeSequence` (3.2.0). Round-trip coverage in
-`tests/serde.tcyr` (54 assertions).
+**Derived directly (22).** Configuration and data: `SvFormant`,
+`SvVowelTarget`, `SvVoiceProfile`, `SvEffortParams`, `SvPhonemeEvent`,
+`SvNasalization`, `SvVOT`, `SvRenderProgress` (3.0.0) · `SvSmoothedParam`,
+`SvRng`, `SvF0Point`, `SvProsodyContour`, `SvPhonemeSequence` (3.2.0) ·
+`SvSpectrum` (3.3.0 — already flat, only wanted the annotations). State
+companions: `SvGlottalState`, `SvVocalTractState`, `SvKeypointState`,
+`SvTrajectoryState`, `SvSynthCtxState`, `SvSynthesisPoolState`,
+`SvBatchRendererState`, `SvRenderOutputState` (3.3.0).
 
-**Not derived, by decision:** `SvVocalTract`, `SvGlottalSource`,
-`SvFormantFilter` / `SvFormantBank`, `SvTrajectoryPlanner` / `SvFormantKeypoint`,
-`SvSynthCtx`, `SvSynthesisPool`, `SvBatchRenderer`, `SvRenderOutput`,
-`SvSpectrum`. Each holds a nested struct pointer, a raw sample buffer, or a
-foreign naad handle with no JSON form. These are engine state, not configuration
-— see [ADR-0002](../adr/0002-serialization-boundary.md), and `roadmap.md` 3.2.1
-for the state-companion follow-on.
+**Engine types reach JSON through a companion, never directly** —
+`SvGlottalSource`, `SvVocalTract`, `SvFormantKeypoint`, `SvTrajectoryPlanner`,
+`SvSynthCtx`, `SvSynthesisPool`, `SvBatchRenderer`, `SvRenderOutput`. Each holds
+a nested struct pointer, a raw buffer, or a foreign naad handle. `save` flattens,
+`restore` rebuilds and **validates** (a decoded state is externally-authored
+data). `SvFormantFilter` needs no companion of its own: its state is
+(formants, sample_rate) and `svara_tract_restore` rebuilds it.
+
+⚠ **Two things restore does not reproduce, both pinned by tests that assert the
+divergence exists rather than warning about it:** naad's `NoiseGenerator` cell
+and `Lfo` phase are internal to naad and cannot be read out (so a restored
+glottal source is bit-exact only on the deterministic path — breathiness and
+vibrato at 0), and filter delay lines are not state (Rust's `set_formants`
+discards them on every call too). `lip_prev` and `interaction_feedback`, which
+svara owns, *are* carried.
+
+Round-trip coverage in `tests/serde.tcyr` (135 assertions). The standard is
+**behavioural**: a restored sequence renders bit-identical audio, a restored
+context renders the same noise-driven fricative *and a fresh one is asserted not
+to*, a restored tract matches over 512 samples from a clean filter state.
+
+See [ADR-0002](../adr/0002-serialization-boundary.md).
 
 Three toolchain facts, measured on 6.5.35 rather than read off a changelog:
 

@@ -20,6 +20,7 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.3.0** | 2026-08-26 | **State companions.** The nine engine types ADR-0002 excluded from direct derive each got a flat companion + `save`/`restore`. Derived types 13 → 22, suite 745 → 826. Restore is measured behaviourally, and its two limits (naad's internal state; filter delay lines) are pinned by tests that assert the divergence exists. |
 | **3.1.3** | 2026-08-26 | **P1 audit sweep.** Five defects reachable through the public API — a SIGSEGV, three process aborts, a silent NaN — plus a constructor returning an error code as a pointer and an infinite loop. Per-sample arena use in `render_planned` **1,121 → 33 B** (34×) untoned, **1,505 → 113 B** (13×) toned. Output bit-for-bit identical. 713 assertions / 20 suites. [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). |
 
 **M-serde (value types) — done 2026-07-03.** Cyrius ships `#derive(Serialize)`
@@ -160,52 +161,37 @@ already round-trips wherever it appears as a field. Same for the other 12 Rust
 
 ---
 
-## 3.2.1 — state companions for the engine types
+## 3.3.0 — state companions for the engine types
 
-**The mechanical follow-on to ADR-0002.** Nine types are deliberately not
-serialized because each holds a nested struct pointer, a raw sample buffer, or a
-foreign naad handle. The ADR's decision 3 says what to do instead: give each a
-**flat state companion** that the derive *can* reach, plus a `restore` that
-rebuilds the runtime object. Never a hand-written codec.
+✅ **Shipped 2026-08-26.** The nine types ADR-0002 excluded from direct derive
+each got a flat state companion plus `save` / `restore`. Derived types 13 → 22;
+serde suite 54 → 135 assertions; whole suite 745 → 826.
 
-The shape, using `GlottalSource` as the worked example: a flat
-`SvGlottalState { model: i64; rd: f64; f0: f64; … ; rng_state: i64; rng_inc: i64; }`
-carrying only reconstructable scalars, `svara_glottal_save(g) -> state` and
-`svara_glottal_restore(state, sample_rate) -> source` which re-creates the naad
-noise generator and LFO. The delay lines and handles are not state to preserve —
-they are state to rebuild.
+`SvSpectrum` needed no companion — it was already flat and only wanted the
+annotations. `SvFormantFilter` needed none either: its state is
+(formants, sample_rate), and the tract now records its formants, so
+`svara_tract_restore` rebuilds the filter without a separate type.
 
-- [ ] `SvGlottalSource` — 18 scalars plus rng state; the naad noise + LFO handles
-      rebuild from `sample_rate` and the vibrato parameters.
-- [ ] `SvVocalTract` — scalars, quality, sample rate and the current formant
-      targets; the two naad biquads and the formant filter rebuild. Note the
-      filter's delay lines are already discarded on every `set_formants`, so
-      there is nothing there worth saving.
-- [ ] `SvFormantFilter` — state is the formant list (`Vec<SvFormant>`, already a
-      derived flat type) plus `sample_rate`; `restore` is `filter_new`.
-- [ ] `SvTrajectoryPlanner` + `SvFormantKeypoint` — the keypoint's `target` is a
-      nested pointer, so the state form flattens it: `{time; f1..f5; b1..b5;
-      resistance}` in a `Vec`.
-- [ ] `SvRenderOutput` — `{samples: Vec<f64>; phoneme_index; total_phonemes;
-      samples_rendered}`, flattening the nested `progress`.
-- [ ] `SvSynthesisContext` / `SvSynthesisPool` / `SvBatchRenderer` — state is the
-      voice, the sample rate and the pending event queue; the context rebuilds.
-- [ ] `SvSpectrum` — `{magnitudes: Vec<f64>; freq_resolution; sample_rate}` is
-      already flat-shaped; it only needs the annotations.
+**Released as a minor, not the planned patch** — ten new public types and sixteen
+new public functions.
 
-**Gate:** each state type round-trips within the ~1e-3 tolerance **and** a
-restored object is behaviourally indistinguishable from the original — same
-samples out for the same input, the standard set in 3.2.0's suite. No raw pointer
-appears in any emitted JSON.
+Two findings worth carrying forward:
 
-⚠ `tests/serde.tcyr`'s last group pins the two facts that make the nested case
-un-derivable. If a Cyrius release fixes nested-field decode, that group starts
-**failing** — which is the signal to revisit whether the companions are still
-needed, not a defect.
+- **The SynthesisContext holds almost nothing across calls.**
+  `svara_synthctx_synthesize` resets the tract and re-applies every glottal
+  parameter from the voice at the top of each call, so its whole persistent state
+  is the noise PRNG and the sample rate. `SvSynthCtxState` is three fields. The
+  same is true of the pool and the batch renderer, which is why all three take
+  the voice as a `restore` argument rather than inlining `SvVoiceProfile`'s nine
+  fields into three more schemas.
+- **A fresh tract used to misreport its own formants** — the constructor built
+  the filter from the schwa targets while setting the record to a zeroed scratch
+  vec, so a new tract claimed five 0 Hz formants. Caught by a control assertion
+  written to prove the *rejection* tests were not vacuous; it failed instead.
 
 ---
 
-## 3.3.0 — structured logging
+## 3.4.0 — structured logging
 
 **M-log. Unblocked** — `lib/sakshi.cyr` is already vendored (transitively via
 hisab), so this is wiring, not a new dependency. svara currently emits no logs;
@@ -231,7 +217,7 @@ substrate as varna and shabdakosh).
 
 ---
 
-## 3.4.0 — hot-path memory and SIMD
+## 3.5.0 — hot-path memory and SIMD
 
 **M-perf, remainder.** A same-machine head-to-head
 ([`../benchmarks-rust-v-cyrius.md`](../benchmarks-rust-v-cyrius.md)) put the
@@ -299,7 +285,7 @@ records before/after per-op deltas; no regression on non-AVX2 hosts.
 
 ---
 
-## 3.5.0 — retire `rust-old/`
+## 3.6.0 — retire `rust-old/`
 
 **The port is complete; the debt is the work that still reads the Rust.** A
 name-by-name sweep of every Rust `pub` item found **zero missing counterparts** —
@@ -401,7 +387,7 @@ expectations **from `rust-old/`**, not from svara's own output — that is naad
 - [ ] **Decide the three preserved v2.0.1 quirks.** Unapplied per-vowel spectral
       tilt; `set_speed_quotient` ignored by the Rosenberg pulse; `Tone` honoured
       only in `render_planned`. Each needs its own test when fixed. Requires the
-      annotation work in [3.5.0](#350--retire-rust-old) to be done first.
+      annotation work in [3.6.0](#360--retire-rust-old) to be done first.
 - [ ] **Consumer-green** — shared gate with 3.5.0.
 
 ---
@@ -414,5 +400,5 @@ expectations **from `rust-old/`**, not from svara's own output — that is naad
   other languages and dialects need their own targets
   (`docs/architecture/adr-003-formant-data.md`).
 - **Populating `docs/examples/`** as a separate concern — the runnable examples
-  land in `examples/` in [3.5.0](#350--retire-rust-old), ported from the Rust.
+  land in `examples/` in [3.6.0](#360--retire-rust-old), ported from the Rust.
   Either point `CLAUDE.md` at `examples/` or drop the `docs/examples/` reference.

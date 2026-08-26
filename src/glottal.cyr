@@ -120,6 +120,104 @@ fn svara_glottal_new(f0, sample_rate) {
     return self;
 }
 
+# ================================================================
+# GlottalState -- the flat, serializable form of GlottalSource.
+#
+# GlottalSource itself is NOT derived: it carries three dependency handles --
+# svara's own Rng plus a naad NoiseGenerator and a naad Lfo -- and the two naad
+# handles have no JSON form at all. Per docs/adr/0002-serialization-boundary.md
+# the answer is this companion: every reconstructable scalar, plus the Rng's two
+# words so a restored source resumes the exact draw sequence.
+#
+# ⚠ WHAT RESTORE DOES NOT REPRODUCE, stated because it is easy to assume
+# otherwise: naad's NoiseGenerator cell and the Lfo phase are internal to naad
+# and cannot be read out. A restored source therefore reproduces the
+# DETERMINISTIC pulse train bit-for-bit -- which is the whole output when
+# breathiness is 0 and vibrato_rate is 0 -- but restarts the aspiration-noise and
+# vibrato streams from their construction state. Both cases are asserted in
+# tests/serde.tcyr, the second one specifically to prove the divergence is real
+# rather than a hypothetical caveat.
+#
+# lf_ta/lf_te/lf_ee are carried even though apply_rd() derives them from rd:
+# storing them restores the exact bits rather than re-deriving through
+# transcendentals that are not bit-identical across architectures.
+# ================================================================
+#derive(accessors)
+#derive(Serialize)
+struct SvGlottalState {
+    model: i64; rd: f64; lf_ta: f64; lf_te: f64; lf_ee: f64; f0: f64; sample_rate: f64;
+    open_quotient: f64; speed_quotient: f64; spectral_tilt: f64;
+    jitter: f64; shimmer: f64; breathiness: f64; diplophonia: f64; diplo_phase: f64;
+    vibrato_rate: f64; vibrato_depth: f64; tilt_state: f64;
+    phase: f64; current_period: f64; current_amplitude: f64;
+    rng_state: i64; rng_inc: i64;
+}
+
+# save -- snapshot a GlottalSource into its serializable form.
+#must_use
+fn svara_glottal_save(self) {
+    var st = alloc(sizeof(SvGlottalState));
+    SvGlottalState_set_model(st, SvGlottalSource_model(self));
+    SvGlottalState_set_rd(st, SvGlottalSource_rd(self));
+    SvGlottalState_set_lf_ta(st, SvGlottalSource_lf_ta(self));
+    SvGlottalState_set_lf_te(st, SvGlottalSource_lf_te(self));
+    SvGlottalState_set_lf_ee(st, SvGlottalSource_lf_ee(self));
+    SvGlottalState_set_f0(st, SvGlottalSource_f0(self));
+    SvGlottalState_set_sample_rate(st, SvGlottalSource_sample_rate(self));
+    SvGlottalState_set_open_quotient(st, SvGlottalSource_open_quotient(self));
+    SvGlottalState_set_speed_quotient(st, SvGlottalSource_speed_quotient(self));
+    SvGlottalState_set_spectral_tilt(st, SvGlottalSource_spectral_tilt(self));
+    SvGlottalState_set_jitter(st, SvGlottalSource_jitter(self));
+    SvGlottalState_set_shimmer(st, SvGlottalSource_shimmer(self));
+    SvGlottalState_set_breathiness(st, SvGlottalSource_breathiness(self));
+    SvGlottalState_set_diplophonia(st, SvGlottalSource_diplophonia(self));
+    SvGlottalState_set_diplo_phase(st, SvGlottalSource_diplo_phase(self));
+    SvGlottalState_set_vibrato_rate(st, SvGlottalSource_vibrato_rate(self));
+    SvGlottalState_set_vibrato_depth(st, SvGlottalSource_vibrato_depth(self));
+    SvGlottalState_set_tilt_state(st, SvGlottalSource_tilt_state(self));
+    SvGlottalState_set_phase(st, SvGlottalSource_phase(self));
+    SvGlottalState_set_current_period(st, SvGlottalSource_current_period(self));
+    SvGlottalState_set_current_amplitude(st, SvGlottalSource_current_amplitude(self));
+    var r = SvGlottalSource_rng(self);
+    SvGlottalState_set_rng_state(st, SvRng_state(r));
+    SvGlottalState_set_rng_inc(st, SvRng_inc(r));
+    return st;
+}
+
+# restore -- rebuild a GlottalSource from a state snapshot. Returns a source
+# pointer, or a negative SVARA_ERR_* if the state's f0 / sample_rate are out of
+# range -- a decoded state is externally-authored data, so it is validated, not
+# trusted. The naad handles are constructed fresh and then re-parameterised.
+#must_use
+fn svara_glottal_restore(st) {
+    var g = svara_glottal_new(SvGlottalState_f0(st), SvGlottalState_sample_rate(st));
+    if (svara_is_err(g) == 1) { return g; }
+    SvGlottalSource_set_model(g, SvGlottalState_model(st));
+    SvGlottalSource_set_rd(g, SvGlottalState_rd(st));
+    SvGlottalSource_set_lf_ta(g, SvGlottalState_lf_ta(st));
+    SvGlottalSource_set_lf_te(g, SvGlottalState_lf_te(st));
+    SvGlottalSource_set_lf_ee(g, SvGlottalState_lf_ee(st));
+    SvGlottalSource_set_open_quotient(g, SvGlottalState_open_quotient(st));
+    SvGlottalSource_set_speed_quotient(g, SvGlottalState_speed_quotient(st));
+    SvGlottalSource_set_spectral_tilt(g, SvGlottalState_spectral_tilt(st));
+    SvGlottalSource_set_jitter(g, SvGlottalState_jitter(st));
+    SvGlottalSource_set_shimmer(g, SvGlottalState_shimmer(st));
+    SvGlottalSource_set_breathiness(g, SvGlottalState_breathiness(st));
+    SvGlottalSource_set_diplophonia(g, SvGlottalState_diplophonia(st));
+    SvGlottalSource_set_diplo_phase(g, SvGlottalState_diplo_phase(st));
+    SvGlottalSource_set_tilt_state(g, SvGlottalState_tilt_state(st));
+    SvGlottalSource_set_phase(g, SvGlottalState_phase(st));
+    SvGlottalSource_set_current_period(g, SvGlottalState_current_period(st));
+    SvGlottalSource_set_current_amplitude(g, SvGlottalState_current_amplitude(st));
+    var r = SvGlottalSource_rng(g);
+    SvRng_set_state(r, SvGlottalState_rng_state(st));
+    SvRng_set_inc(r, SvGlottalState_rng_inc(st));
+    # Through set_vibrato so the naad Lfo's frequency and depth follow the fields
+    # (it clamps, exactly as a live caller would go through it).
+    svara_glottal_set_vibrato(g, SvGlottalState_vibrato_rate(st), SvGlottalState_vibrato_depth(st));
+    return g;
+}
+
 # ---- setters --------------------------------------------------------------
 #must_use
 fn svara_glottal_set_f0(self, f0) {
