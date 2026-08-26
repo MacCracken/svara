@@ -3,6 +3,12 @@
 # quality skips expensive synthesis stages to cut CPU per voice. Pure config
 # logic, no float. serde on Quality dropped (tracked in docs/development/roadmap.md).
 
+# MEASURED AND REJECTED (3.5.0): marking the four predicates the tract calls
+# once per sample `#inline` moved `tract process_sample` by +0.7% -- noise, in the
+# wrong direction -- over three interleaved runs taking the minimum of each. The
+# call overhead is not what this loop spends its time on. Left un-inlined so the
+# source carries no pragma that does nothing; do not re-try without a measurement.
+
 # Quality levels (was `enum Quality`). Order matches the Rust variant order.
 var SVARA_QUALITY_FULL    = 0;   # all stages
 var SVARA_QUALITY_REDUCED = 1;   # 3 formants, no subglottal, no interaction

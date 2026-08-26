@@ -20,6 +20,7 @@
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
 | **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
+| **3.5.0** | 2026-08-26 | **Redundant input delay line collapsed.** The bank's eight per-slot `x1`/`x2` buffers all held the same two values — verified by 28,672 cross-slot comparisons before changing anything. Now two scalars: −6.0% formant `process_sample`, −4.2% `process_block`, bit-identical. A `#inline` experiment was measured, rejected and recorded. |
 | **3.4.0** | 2026-08-26 | **Structured logging (M-log).** sakshi tracing behind `-D LOGGING`, off by default and compiled out when off; four coarse entry points, never per-sample. Spans are token-based because every entry point has early returns. `scripts/check-logging.sh` builds and runs both ways — `cyrius test` does not forward `-D`, so `cyrius audit` only ever compiled the OFF half. |
 | **3.3.2** | 2026-08-26 | **Glottal restore is exact.** 3.3.0 documented a limitation that was not real — naad derives accessors on `NoiseGenerator` and `Lfo`, so their state was reachable all along. `SvGlottalState` now carries it; the test flipped from asserting divergence to asserting identity. Lesson recorded in ADR-0002: a foreign type lacks a **codec**, not accessors. |
 | **3.3.1** | 2026-08-26 | **Docs, CI, stale claims.** CI ran four steps and none of the gate it documents; it now runs `cyrius audit` + fuzz + deny, asserts the toolchain matches the pin, and checks `dist/` is current. Four Rust-era docs rewritten (incl. the threat model, which asserted mitigations 3.1.3 disproved); four pre-port ADRs re-homed as 0003–0006; `.gitignore` stopped hiding `benches/history.csv`. |
@@ -53,19 +54,31 @@ bench row.
 
 ### Unblocked
 
-- [ ] **Collapse the redundant input delay line.** `x1`/`x2` are per-slot buffers
-      but the input is shared across all 8 formant biquads, so every slot holds
-      identical values — replace two 8-wide buffers with two scalars, dropping
-      ~16 memory ops/sample. Bit-identical, no toolchain dependency. This is the
-      lever that attacks the measured bottleneck.
+- [x] **Collapse the redundant input delay line.** ✅ **Shipped 3.5.0.**
+      Measured first: 28,672 cross-slot comparisons over 4,096 samples found
+      **zero** divergence in `x1`/`x2`, with `y1` as the control proving the
+      check discriminates. Now two scalars. **−6.0%** on formant
+      `process_sample`, **−4.2%** on `process_block`, **−2.4%** on tract
+      `process_sample`, bit-identical output, 128 fewer bytes of state per bank
+      — about what the reverted AVX2 prototype bought, from the lever this file
+      predicted would work.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates ~16× per note
       and `pool.cyr` exists but is **not wired into the render path** (verified:
       `svara_pool_*` appears only in `src/main.cyr`'s smoke; `sequence.cyr` and
       `render.cyr` never reference it). 3.1.3 did this for the *per-sample* path;
       this is the remaining *per-note* one, same measurement method.
 - [ ] **Tract per-sample chain** (~366 ns/sample: filter + nasal + subglottal +
-      lip + feedback) — hoist coefficient recompute out of the per-sample loop.
-      The SIMD half of this item is blocked below.
+      lip + feedback). The SIMD half of this item is blocked below.
+
+      ⚠ **This item used to say "hoist coefficient recompute out of the
+      per-sample loop". There is no coefficient recompute there** — the naad
+      biquads are configured when formants are set, and the only per-sample state
+      work is the two `SmoothedParam` advances, which must happen every sample by
+      definition. Corrected 3.5.0 rather than left to send someone looking.
+
+      Also measured and rejected in 3.5.0: marking the four per-sample quality
+      predicates `#inline` moved the benchmark **+0.7%** — noise, wrong direction.
+      `src/lod.cyr` records that; do not re-try without a measurement.
 
 ### ⛔ Blocked on the Cyrius stdlib
 

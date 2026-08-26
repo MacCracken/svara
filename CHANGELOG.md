@@ -9,6 +9,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.5.0] - 2026-08-26 — the redundant delay line, and a roadmap premise that was wrong
+
+**M-perf, the bit-identical half.** The formant bank kept its input delay in
+eight per-slot buffers when one scalar pair would do. Removing the redundancy is
+worth **−6.0%** on the per-sample formant path and **−4.2%** on the block path,
+with **bit-identical output** and no new dependency.
+
+For scale: that is about what the AVX2 prototype bought before it was reverted in
+3.1.0 — from the lever the roadmap predicted would work, because it attacks
+memory traffic rather than arithmetic.
+
+### Changed — the input delay line is two scalars, not sixteen slots
+
+All eight biquads in the bank are driven by the **same** input sample, so
+`x1[i] = input` and `x2[i] = previous input` held identical values in every slot.
+Sixteen bytes of state doing the work of two, and 32 memory operations per sample
+doing the work of three.
+
+⭐ **Measured before changing anything**, not inferred from reading: over 4,096
+samples of real signal, **28,672 cross-slot comparisons found zero divergence**
+in `x1` or `x2` — while `y1`, which is genuinely per-slot, differed as expected.
+That control is what makes the zero meaningful rather than a check on a buffer of
+zeros.
+
+`svara_formant_bank_process` now reads the shared delay once before the loop and
+advances it once after. Same arithmetic, same order — the ten render-path digests
+are still identical to 3.1.2, and all 840 assertions pass unchanged.
+
+| benchmark | before | after | |
+|---|---|---|---|
+| formant filter `process_sample` | 168 ns | **158 ns** | **−6.0%** |
+| formant filter `process_block` 1024 | 180.4 µs | **172.7 µs** | **−4.2%** |
+| tract `process_sample` (Full) | 286 ns | **279 ns** | **−2.4%** |
+
+Minimum of three interleaved runs of each binary, so machine drift hits both
+sides equally. A single non-interleaved run had `glottal next_sample` moving
+79 → 121 ns on code this release does not touch, which is why the numbers above
+are not from one.
+
+Also drops **128 bytes of state per bank** (two 8-slot f64 buffers).
+
+⚠ `SvFormantBank_x1` / `_x2` are gone, replaced by `_xin1` / `_xin2` scalars.
+They were derived accessors on an internal delay line; nothing outside
+`formant.cyr` read them.
+
+### Fixed — the roadmap asked for a hoist that had nothing to hoist
+
+M-perf listed *"tract per-sample chain — hoist coefficient recompute out of the
+per-sample loop"*. There is no coefficient recompute in
+`svara_tract_process_sample`: the naad biquads are configured when formants are
+set, and the only per-sample state work is the two `SmoothedParam` advances,
+which must happen every sample by definition. The item is corrected in the
+roadmap rather than left to send someone looking.
+
+### Notes — one change measured, rejected, and recorded
+
+The four quality predicates the tract calls once per sample (`use_interaction`,
+`use_nasal_coupling`, `use_subglottal`, `use_lip_radiation`) are one or two
+integer comparisons each, so marking them `#inline` looked free. It moved
+`tract process_sample` by **+0.7%** — noise, in the wrong direction — over the
+same interleaved three-run protocol.
+
+Reverted. The source carries no pragma that does nothing, and `src/lod.cyr` now
+records the negative result so nobody re-tries it without measuring. The call
+overhead is not what that loop spends its time on.
+
+### Still open in M-perf
+
+Unchanged and now the whole of the remaining lane: pooling the per-note render
+buffers (unblocked), and three items blocked outside this repo — a stdlib
+`vec_with_capacity`, a non-allocating hisab `calc_monotone_cubic`, and the SIMD
+work waiting on Cyrius codegen that does not round-trip every `f64v4` op through
+memory.
+
+- `dist/svara.cyr` regenerated at v3.5.0.
+
 ## [3.4.0] - 2026-08-26 — structured logging through sakshi
 
 **M-log.** svara emitted no diagnostics at all — errors were integer codes and

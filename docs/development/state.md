@@ -5,6 +5,20 @@
 
 ## Version
 
+**3.5.0** (2026-08-26) — **the redundant input delay line.** All eight biquads
+in the formant bank are driven by the same input, so `x1`/`x2` held identical
+values in every slot — 16 bytes of state doing the work of 2, and 32 memory ops
+per sample doing the work of 3. **Measured before changing anything:** 28,672
+cross-slot comparisons over 4,096 samples of real signal found **zero**
+divergence, with `y1` (genuinely per-slot) differing as the control. Now two
+scalars: **−6.0%** formant `process_sample`, **−4.2%** `process_block`, **−2.4%**
+tract `process_sample`, **bit-identical** output, 128 fewer bytes per bank.
+Roughly what the reverted AVX2 prototype bought, with no toolchain dependency.
+Also: the roadmap's *"hoist coefficient recompute out of the tract per-sample
+loop"* had nothing to hoist (corrected), and a `#inline` experiment on the four
+per-sample quality predicates measured **+0.7%** and was reverted with the
+negative result recorded in `src/lod.cyr`.
+
 **3.4.0** (2026-08-26) — **structured logging (M-log).** svara emitted no
 diagnostics at all; it now routes tracing through **sakshi**, off by default
 behind `-D LOGGING` and **compiled out entirely** when off — no log call, no
