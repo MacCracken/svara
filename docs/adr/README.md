@@ -22,3 +22,4 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-signed-index-and-float-conversion-hazards.md) | Signed-index and float-conversion hazards inherited from the Rust port | Accepted |
+| [0002](0002-serialization-boundary.md) | Where serialization stops | Accepted |

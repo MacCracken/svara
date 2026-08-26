@@ -14,9 +14,10 @@
 # `1.0 / i32::MAX as f32` which rounds i32::MAX to 2^31, so the scale is exactly
 # 2^-31 (and 2^-32 for the unsigned variant).
 #
-# serde: Rng was Serialize/Deserialize for state persistence; its JSON codec
-# lands with svara's serde surface, tracked in docs/development/roadmap.md
-# (state = two u64 slots).
+# serde: derived (3.2.0) -- the Rust had it Serialize/Deserialize for state
+# persistence, and the two u64 slots carry as i64 bit-for-bit. Restoring a
+# saved state resumes the exact draw sequence. See
+# docs/adr/0002-serialization-boundary.md.
 
 var SVARA_RNG_DEFAULT_SEED = 42;                 # default deterministic seed
 
@@ -26,7 +27,8 @@ var SVARA_INV_I32MAX = 0x3E00000000000000;        # 2^-31 = 1.0 / (i32::MAX as f
 var SVARA_INV_U32MAX = 0x3DF0000000000000;        # 2^-32 = 1.0 / (u32::MAX as f32)
 
 #derive(accessors)
-struct SvRng { state; inc; }
+#derive(Serialize)
+struct SvRng { state: i64; inc: i64; }
 
 # next_u32 -- PCG32 output function. Defined before its callers (single-pass).
 # NOT #must_use: it advances internal state, and svara_rng_new intentionally

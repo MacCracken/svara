@@ -19,6 +19,7 @@
 | **3.1.0** | 2026-07-06 | **Control-rate glide coefficients.** `svara_ph_synth_diphthong` re-solved the whole biquad bank every sample; now every 64. `/ai/` **5.42 ms → 0.94 ms (5.8×)**, faster than the Rust oracle. |
 | **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
 | **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
+| **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
 | **3.1.3** | 2026-08-26 | **P1 audit sweep.** Five defects reachable through the public API — a SIGSEGV, three process aborts, a silent NaN — plus a constructor returning an error code as a pointer and an infinite loop. Per-sample arena use in `render_planned` **1,121 → 33 B** (34×) untoned, **1,505 → 113 B** (13×) toned. Output bit-for-bit identical. 713 assertions / 20 suites. [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). |
 
 **M-serde (value types) — done 2026-07-03.** Cyrius ships `#derive(Serialize)`
@@ -92,9 +93,6 @@ were not, and still document a language this project does not use.
 - [ ] **`state.md` warns that README and CONTRIBUTING "are still the pre-port
       Rust files"** — they were rewritten on 2026-08-26. A reader trusting the
       state authority would redo finished work.
-- [ ] **`tests/serde.tcyr:7-9`** says "Cyrius has no array-typed struct fields
-      yet (deferred to the compiler's v6.4.x)". It landed in 6.4.11–6.4.13 and
-      the pin carries it.
 - [ ] **`docs/benchmarks-rust-v-cyrius.md`** is headed "svara v3.0.1 / cycc
       6.4.11", still calls SIMD **P0** where this file marks it deferred, and its
       table predates 3.1.3 entirely.
@@ -126,51 +124,84 @@ were not, and still document a language this project does not use.
 
 ## 3.2.0 — container serde
 
-**M2. Unblocked** — array-typed struct fields landed across Cyrius **6.4.11**
-(`Vec<T>` handle fields), **6.4.12** (`#derive` Ser/De for `Vec<primitive>`) and
-**6.4.13** (`Vec<#derive-struct>`); the 6.5.35 pin carries all three. The standing
-rule holds: add the derive plus a round-trip `.tcyr` per type. **No hand-written
-codecs** — that was explicitly rejected as throwaway work the derive supersedes.
+✅ **Shipped 2026-08-26. M2, delivered — but not as this file described it.** Two of the milestone's
+premises were false and had to be measured:
 
-### Transcribe the Rust serde contract first
+1. **There was no Rust skip policy to inherit.** The oracle has **30
+   `Serialize`-deriving types, 3 `#[serde(default)]`, and zero `#[serde(skip)]`**.
+   Rust serialized everything because `VocalTract` holds a
+   `naad::filter::BiquadFilter` that is itself `Serialize` in the Rust naad;
+   Cyrius naad exposes opaque handles with no codec, so the policy had to be
+   decided. It is, in [ADR-0002](../adr/0002-serialization-boundary.md).
+2. **The toolchain reaches less than 6.4.13's changelog implies.** `Vec<f64>` and
+   `Vec<flat-derive-struct>` round-trip; a **nested `#derive`-struct field does
+   not, in either direction** — it is laid out inline while
+   `#derive(accessors)` gives it pointer semantics, so the encoder emits the
+   pointer reinterpreted as the first member, and the decoder returns zeros
+   regardless. That rules out 6 of the 9 container types this file named.
 
-- [ ] **Record the oracle's serde surface in-repo, as a table**, before anything
-      else in this release. This is also the largest single thing that
-      [3.5.0](#350--retire-rust-old) needs `rust-old/` for, so doing it here
-      converts a removal blocker into a finished artifact.
+**Shipped:** `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
+`(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
+`SvPhonemeSequence` (`Vec<SvPhonemeEvent>`). Serialized surface 8 → 13 types;
+suite 713 → 745; every render path still bit-for-bit identical to 3.1.2.
 
-      ⚠ **The contract is smaller than this file used to claim.** The Rust has
-      **30 `Serialize`-deriving types**, **3 `#[serde(default)]` attributes**
-      (`rust-old/src/sequence.rs:37`, `:87`, `rust-old/src/voice.rs:150`) and
-      **zero `#[serde(skip)]`**. The previous wording told an implementer to
-      "match `rust-old/`'s `#[serde(skip)]` per type" — there is nothing to
-      match. Decide svara's own skip policy explicitly instead of inheriting one
-      that does not exist.
+Round-trips are asserted **behaviourally** — a restored `Rng` reproduces 32 draws
+exactly, a restored contour traces the same curve at 21 points, a restored
+`PhonemeSequence` renders bit-identical audio.
 
-### Derive the containers
+`SvProsodyContour`'s interpolation scratch moved to module level: `#derive(Serialize)`
+has no skip attribute, so a scratch pointer would have leaked a heap address into
+the JSON and come back dangling. That also answered the "skip the seven 3.1.3
+scratch fields" item — the other six live on types that are not serialized.
 
-- [ ] `ProsodyContour` (f0-point vec) · `PhonemeSequence` (event vec) ·
-      `TrajectoryPlanner` + `FormantKeypoint` · `RenderOutput` / `BatchRenderer` ·
-      `SynthesisContext` · `SynthesisPool` · `FormantFilter` + the SOA biquad
-      bank · `GlottalSource` · `VocalTract`.
-- [ ] **Three pure-scalar types that M-serde missed** — each defers a codec in a
-      source comment pointing at this file, and none was ever listed here:
-      `Quality` (`src/lod.cyr:3-4`), `Rng` (`src/rng.cyr:17-18`, specifically for
-      state persistence), `SmoothedParam` (`src/smooth.cyr:9-10`). All three could
-      derive today.
+**`Quality` needed no work.** It is a `var SVARA_*` integer, not a struct, and
+already round-trips wherever it appears as a field. Same for the other 12 Rust
+`Serialize` enums.
 
-### Skip the scratch fields
+---
 
-- [ ] **Seven fields added in 3.1.3 are transient and must not serialize** —
-      `SvFormantBank.coeff`, `SvVocalTract.scratch_formants`,
-      `SvTrajectoryPlanner.scratch_a` / `.scratch_b`, `SvProsodyContour.xs` /
-      `.ys` / `.buf_cap`. Every one is overwritten before it is read, so all seven
-      are skip-equivalent and must be rebuilt on load. A correct implementation
-      cannot be written from the pre-3.1.3 type list alone.
+## 3.2.1 — state companions for the engine types
 
-**Gate:** every annotated type round-trips within the same f64 tolerance the
-value-type serde uses (~1e-3, 6-decimal text); the scratch fields are absent from
-the emitted JSON and reconstructed on load.
+**The mechanical follow-on to ADR-0002.** Nine types are deliberately not
+serialized because each holds a nested struct pointer, a raw sample buffer, or a
+foreign naad handle. The ADR's decision 3 says what to do instead: give each a
+**flat state companion** that the derive *can* reach, plus a `restore` that
+rebuilds the runtime object. Never a hand-written codec.
+
+The shape, using `GlottalSource` as the worked example: a flat
+`SvGlottalState { model: i64; rd: f64; f0: f64; … ; rng_state: i64; rng_inc: i64; }`
+carrying only reconstructable scalars, `svara_glottal_save(g) -> state` and
+`svara_glottal_restore(state, sample_rate) -> source` which re-creates the naad
+noise generator and LFO. The delay lines and handles are not state to preserve —
+they are state to rebuild.
+
+- [ ] `SvGlottalSource` — 18 scalars plus rng state; the naad noise + LFO handles
+      rebuild from `sample_rate` and the vibrato parameters.
+- [ ] `SvVocalTract` — scalars, quality, sample rate and the current formant
+      targets; the two naad biquads and the formant filter rebuild. Note the
+      filter's delay lines are already discarded on every `set_formants`, so
+      there is nothing there worth saving.
+- [ ] `SvFormantFilter` — state is the formant list (`Vec<SvFormant>`, already a
+      derived flat type) plus `sample_rate`; `restore` is `filter_new`.
+- [ ] `SvTrajectoryPlanner` + `SvFormantKeypoint` — the keypoint's `target` is a
+      nested pointer, so the state form flattens it: `{time; f1..f5; b1..b5;
+      resistance}` in a `Vec`.
+- [ ] `SvRenderOutput` — `{samples: Vec<f64>; phoneme_index; total_phonemes;
+      samples_rendered}`, flattening the nested `progress`.
+- [ ] `SvSynthesisContext` / `SvSynthesisPool` / `SvBatchRenderer` — state is the
+      voice, the sample rate and the pending event queue; the context rebuilds.
+- [ ] `SvSpectrum` — `{magnitudes: Vec<f64>; freq_resolution; sample_rate}` is
+      already flat-shaped; it only needs the annotations.
+
+**Gate:** each state type round-trips within the ~1e-3 tolerance **and** a
+restored object is behaviourally indistinguishable from the original — same
+samples out for the same input, the standard set in 3.2.0's suite. No raw pointer
+appears in any emitted JSON.
+
+⚠ `tests/serde.tcyr`'s last group pins the two facts that make the nested case
+un-derivable. If a Cyrius release fixes nested-field decode, that group starts
+**failing** — which is the signal to revisit whether the companions are still
+needed, not a defect.
 
 ---
 

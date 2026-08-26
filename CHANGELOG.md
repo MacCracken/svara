@@ -9,6 +9,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.2.0] - 2026-08-26 — container serde, and where serialization stops
+
+**M2.** The serialized surface grows from 8 types to **13**, and — more usefully —
+the boundary is now decided and written down instead of inherited. Suite
+**713 → 745 assertions** across 20 suites. `cyrius audit` exits 0; every render
+path stays bit-for-bit identical to 3.1.2.
+
+### Added — five types now serialize
+
+| Type | How |
+|---|---|
+| `SvSmoothedParam` | derived — it was already pure scalar and only needed three `f64` annotations |
+| `SvRng` | derived — two `i64`; restoring a saved state **resumes the exact draw sequence** |
+| `SvF0Point` | **new** — the raw 16-byte `(time, value)` pair given a type. Identical layout; `svara_pt_new`/`_time`/`_value` are unchanged in behaviour |
+| `SvProsodyContour` | derived — `Vec<SvF0Point>` |
+| `SvPhonemeSequence` | derived — `Vec<SvPhonemeEvent>`, whose element type is flat |
+
+⭐ **Round-trips are asserted behaviourally, not field-by-field.** A restored
+`Rng` must reproduce 32 draws exactly; a restored contour must trace the same
+curve at 21 points; a restored `PhonemeSequence` must render **bit-identical
+audio**. Equal fields are weaker evidence than equal behaviour, and the vacuous
+round-trip is a live failure mode in this ecosystem — naad shipped one that held
+for three releases because it compared through a truncating conversion.
+
+### Changed — `ProsodyContour`'s interpolation scratch moved to module level
+
+3.1.3 gave each contour its own `xs`/`ys`/`buf_cap` to get the allocation out of
+the render loop. Those fields cannot coexist with serialization: **`#derive(Serialize)`
+has no skip attribute**, so every field is emitted — a scratch pointer would leak
+a heap address into the JSON (an ASLR disclosure if it crosses a trust boundary)
+and come back dangling.
+
+The buffers hold nothing between calls — they are refilled on every one — so a
+single module-level pair serves every contour. That is less memory than the
+per-contour pair, keeps the raw pointers out of the serialized surface, and the
+allocation budget is unchanged.
+
+⚠ **`SvProsodyContour_xs` / `_ys` / `_buf_cap` are gone.** They were
+`#derive(accessors)` output for internal scratch, existed only in 3.1.3, and were
+never documented API.
+
+### Fixed — the roadmap told M2 to match something that does not exist
+
+M2 instructed an implementer to *"match `rust-old/`'s `#[derive(Serialize,
+Deserialize)]` / `#[serde(skip)]` per type"*. Transcribed from the oracle, the
+contract is **30 `Serialize`-deriving types, 3 `#[serde(default)]`, and zero
+`#[serde(skip)]`**. There was no skip policy to inherit.
+
+Rust could serialize everything because `VocalTract` holds a
+`naad::filter::BiquadFilter` (`rust-old/src/tract.rs:72`, `:94`) and that type is
+`Serialize` in the Rust naad. Cyrius naad exposes those filters as opaque handles
+with no JSON codec, so the policy had to be **decided**, not transcribed. It now
+is — [ADR-0002](docs/adr/0002-serialization-boundary.md).
+
+### Notes — three toolchain facts, measured
+
+Verified with a standalone probe on cyrius 6.5.35, not read off a changelog:
+
+- `Vec<f64>` / `Vec<iNN>` fields round-trip. ✅
+- `Vec<T>` where T is a **flat** `#derive` struct round-trips — via
+  `_from_json_str` **only**. The pairs-form `_from_json` returns an *empty vec*
+  for an array-of-objects field, because bayan truncates that value at the first
+  inner comma. Silent, so it is stated in each affected module header.
+- ⚠ **A nested `#derive`-struct field is broken in both directions, and worse
+  than "unsupported".** It is laid out **inline** — `sizeof(ND{tag: i64; inner: NA})`
+  is 24 for a 16-byte `NA` — while `#derive(accessors)` gives the same field
+  **pointer** semantics. The two derives disagree, so the encoder emits the
+  pointer reinterpreted as the first member: `{"inner":{"x":6.9e-310,"n":0}}`
+  where the value was `{x: 99, n: 3}`. Written inline instead, the encoder is
+  correct. **Either way the decoder returns zeros**, so a decoded object holds a
+  null pointer where a struct should be — the next dereference is a segfault, the
+  same shape as ADR-0001's findings.
+
+svara is not exposed to that corruption: every struct-valued field in `src/` is
+declared untyped (`filter;`, `progress;`, `target;`) and so is a plain slot with
+correct pointer semantics. **Adding a type annotation to make `Serialize` see
+such a field would change its layout and break the accessors** — a trap now named
+in ADR-0002.
+
+### Not shipped, and why
+
+`VocalTract`, `GlottalSource`, `FormantFilter` / the SOA bank,
+`TrajectoryPlanner`, `SynthesisContext`, `SynthesisPool`, `BatchRenderer`,
+`RenderOutput` and `Spectrum` are **not** derived. Each holds a nested struct
+pointer, a raw sample buffer, or a foreign naad handle with no JSON form at all.
+Under ADR-0002 these are engine state, not configuration: a consumer rebuilds
+them from the configuration that does serialize.
+
+`tests/serde.tcyr`'s final group pins the two facts that make them un-derivable —
+`FormantKeypoint` holds a target pointer, `GlottalSource` holds three dependency
+handles — so a toolchain release that fixes nested-field decode shows up here as
+a **failing test** rather than going unnoticed.
+
+Giving each of them a flat state companion plus a `restore` is the mechanical
+follow-on, scoped in the roadmap.
+
+### Notes
+
+- **The three `#[serde(default)]` behaviours are not reproduced** — Cyrius's
+  derive has no default mechanism and a missing field decodes to zero. For
+  `PhonemeEvent.tone` that is wrong in a specific way: `0` is `SVARA_TONE_HIGH`,
+  while the Rust default meant "no tone", which svara spells
+  `SVARA_TONE_NONE = -1`. svara always emits the field, so this only bites on
+  externally-authored JSON — worth a guard if that becomes a supported input.
+- **The 13 Rust `Serialize` enums need no counterpart.** They are `var SVARA_*`
+  integers here and already round-trip wherever they appear as a field
+  (`SvNasalization.place`, `SvPhonemeEvent.stress`/`.tone`). Deriving a one-field
+  wrapper per enum would add API surface to serialize an integer.
+- `dist/svara.cyr` regenerated at v3.2.0 (4,974 lines).
 ## [3.1.3] - 2026-08-26 — P1 audit: five reachable defects, and the leak in the render loop
 
 An adversarial-input and allocation sweep of the whole public surface. **Five

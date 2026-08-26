@@ -6,14 +6,15 @@
 # alpha semantics: 0.0 = instant (current := target), 1.0 = never moves.
 # next() short-circuits when converged (|current-target| < 1e-8), matching Rust.
 #
-# serde: SmoothedParam was Serialize/Deserialize; its JSON codec lands with
-# svara's serde surface, tracked in docs/development/roadmap.md.
+# serde: derived (3.2.0). Pure scalar -- all three fields are f64, so
+# `#derive(Serialize)` reaches it directly. See docs/adr/0002-serialization-boundary.md.
 
 var SVARA_DEFAULT_SMOOTH_TIME = 0x3F747AE147AE147B;   # 0.005 s (~5 ms, fast for speech)
 var SVARA_SMOOTH_CONVERGED    = 0x3E45798EE2308C3A;   # 1e-8 convergence threshold
 
 #derive(accessors)
-struct SvSmoothedParam { current; target; alpha; }
+#derive(Serialize)
+struct SvSmoothedParam { current: f64; target: f64; alpha: f64; }
 
 # alpha_from_time -- exp(-1/(time_secs*sample_rate)); 0.0 (instant) if either
 # input is non-positive. Defined before its callers (single-pass). `0` == +0.0.

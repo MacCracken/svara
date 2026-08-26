@@ -39,7 +39,11 @@ fn svara_phoneme_event_with_tone(phoneme, duration, stress, tone) {
 
 # PhonemeSequence -- ordered events + coarticulation params.
 #derive(accessors)
-struct SvPhonemeSequence { events; transition_window; lookahead_onset; speaking_rate; }
+#derive(Serialize)
+struct SvPhonemeSequence {
+    events: Vec<SvPhonemeEvent>;
+    transition_window: f64; lookahead_onset: f64; speaking_rate: f64;
+}
 
 #must_use
 fn svara_sequence_new() {

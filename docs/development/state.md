@@ -5,6 +5,20 @@
 
 ## Version
 
+**3.2.0** (2026-08-26) — **container serde.** Serialized surface 8 → **13**
+types: `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
+`(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
+`SvPhonemeSequence` (`Vec<SvPhonemeEvent>`). Round-trips are asserted
+**behaviourally**: a restored `Rng` reproduces 32 draws exactly, a restored
+contour traces the same curve at 21 points, a restored sequence renders
+**bit-identical audio**. Two premises of M2 turned out false and are corrected in
+[ADR-0002](../adr/0002-serialization-boundary.md) — the Rust had **zero
+`#[serde(skip)]`** to inherit, and the toolchain **cannot decode a nested
+`#derive`-struct field** in either direction, which rules out 6 of the 9 types
+M2 named. `SvProsodyContour`'s scratch moved to module level (a serialized struct
+may not hold a raw pointer — no skip attribute exists). 745 assertions / 20
+suites; every render path still bit-for-bit identical to 3.1.2.
+
 **3.1.3** (2026-08-26) — **P1 audit sweep.** Five defects reachable through the
 public API with no unsafe usage by the caller, all confirmed by running them
 rather than reasoned about: a **SIGSEGV** (`alloc` returns 0 on failure and svara
@@ -161,7 +175,7 @@ All green on the 6.5.35 pin:
 | fmt | `cyrfmt --check <f>` | clean (40 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (252 public fns across 17 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 713 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 20/20 suites, 745 assertions |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
@@ -229,33 +243,54 @@ diff the used-symbol set against the new bundle before assuming a clean build.
 
 dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.cyr`.
 
-## Serde (M-serde) — done via `#derive(Serialize)`
+## Serde — 13 derived types, and a decided boundary
 
-Cyrius already ships `#derive(Serialize)` (emits `Type_to_json`/`_from_json`/
-`_from_json_str` over bayan's typed DOM); **6.3.40 fixed f64-field support** (the
-"repair"). 8 pure-scalar public types derive it + round-trip (tests/serde.tcyr, 22
-tests): Formant, VowelTarget, VoiceProfile, EffortParams, PhonemeEvent, Nasalization,
-VoiceOnsetTime, RenderProgress. `bayan` is opt-in (`include "lib/bayan.cyr"`, not a
-`[deps] stdlib` module) — tests that include a deriving module also include
-`lib/hashmap.cyr` + `lib/bayan.cyr` so codecs are callable + warning-free.
-**Deferred:** container types (vec/buffer fields — ProsodyContour/PhonemeSequence/
-TrajectoryPlanner/RenderOutput/SynthesisContext/pool/BiquadBankSoa/FormantFilter/
-GlottalSource) could not derive until Cyrius gained array-typed struct fields.
+Cyrius ships `#derive(Serialize)` (emits `Type_to_json` / `_from_json` /
+`_from_json_str` over bayan's typed DOM); 6.3.40 added f64-field support.
+**`bayan` is opt-in** — `include "lib/bayan.cyr"` plus `lib/hashmap.cyr`, not a
+`[deps] stdlib` module — so any entry file that includes a deriving module needs
+both, or the codecs are undefined at link.
 
-✅ **That blocker is gone.** The feature landed across cyrius **6.4.11 → 6.4.13**
-in three rounds: `Vec<T>` handle fields (parse + layout + access), then `#derive`
-Serialize/Deserialize for `Vec<primitive>`, then for `Vec<#derive-struct>`. The
-6.5.35 pin carries all three. M2 is unblocked and deliberately **not** started in
-3.1.2 or 3.1.3 — it is its own milestone, and the standing rule holds: add the
-derive plus a roundtrip `.tcyr` per container type, **no hand-written codecs**.
+**Derived (13):** `SvFormant`, `SvVowelTarget`, `SvVoiceProfile`,
+`SvEffortParams`, `SvPhonemeEvent`, `SvNasalization`, `SvVOT`,
+`SvRenderProgress` (M-serde, 3.0.0) · `SvSmoothedParam`, `SvRng`, `SvF0Point`,
+`SvProsodyContour`, `SvPhonemeSequence` (3.2.0). Round-trip coverage in
+`tests/serde.tcyr` (54 assertions).
 
-⚠ **M2 now has scratch fields to skip.** 3.1.3 added reusable buffers to four
-structs to get the allocation out of the render loop: `SvFormantBank.coeff`,
-`SvVocalTract.scratch_formants`, `SvTrajectoryPlanner.scratch_a`/`scratch_b`, and
-`SvProsodyContour.xs`/`ys`/`buf_cap`. **None of them is state** — every one is
-overwritten before it is read — so all seven are `#[serde(skip)]`-equivalent and
-must be rebuilt on load, exactly as the Rust port convention says for transient
-runtime state and dep handles.
+**Not derived, by decision:** `SvVocalTract`, `SvGlottalSource`,
+`SvFormantFilter` / `SvFormantBank`, `SvTrajectoryPlanner` / `SvFormantKeypoint`,
+`SvSynthCtx`, `SvSynthesisPool`, `SvBatchRenderer`, `SvRenderOutput`,
+`SvSpectrum`. Each holds a nested struct pointer, a raw sample buffer, or a
+foreign naad handle with no JSON form. These are engine state, not configuration
+— see [ADR-0002](../adr/0002-serialization-boundary.md), and `roadmap.md` 3.2.1
+for the state-companion follow-on.
+
+Three toolchain facts, measured on 6.5.35 rather than read off a changelog:
+
+| Field shape | Encode | Decode |
+|---|---|---|
+| scalar, `Vec<f64>`, `Vec<iNN>` | ✅ | ✅ |
+| `Vec<T>`, T a **flat** derive struct | ✅ | ✅ — `_from_json_str` **only** |
+| **nested derive-struct field** | ⚠ garbage | ❌ zeros |
+
+⚠ **Two traps worth knowing before touching a `#derive(Serialize)` struct:**
+
+1. **A nested struct field is laid out INLINE** (`sizeof(ND{tag: i64; inner: NA})`
+   is 24 for a 16-byte `NA`) while `#derive(accessors)` gives the same field
+   **pointer** semantics. The two derives disagree, so annotating one of svara's
+   currently-untyped struct fields (`filter;`, `progress;`, `target;`) to make
+   `Serialize` see it would change its layout and silently corrupt live objects.
+   Leave them untyped.
+2. **There is no skip attribute.** Every field is emitted, so a serialized struct
+   may not hold a scratch buffer — the pointer leaks a heap address into the JSON
+   and returns dangling. `SvProsodyContour`'s interpolation pair moved to module
+   level in 3.2.0 for exactly this reason; the other 3.1.3 scratch fields
+   (`SvFormantBank.coeff`, `SvVocalTract.scratch_formants`,
+   `SvTrajectoryPlanner.scratch_a`/`_b`) live on types that are not serialized.
+
+**The pairs-form `_from_json` is not usable** for any type with a `Vec<struct>`
+field: bayan truncates an array-of-objects value at the first inner comma, so it
+returns an empty vec. Silently. Use `_from_json_str`.
 
 ## Next
 

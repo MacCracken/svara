@@ -4,9 +4,18 @@
 # generated Type_to_json / Type_from_json_str codecs are callable; f64 fields
 # round-trip through 6-decimal text (tolerance ~1e-3, per the toolchain fixture).
 #
-# Container types (ProsodyContour/PhonemeSequence/TrajectoryPlanner/RenderOutput/
-# SynthesisContext/pool/BiquadBankSoa) hold vec/buffer fields and are NOT derived:
-# Cyrius has no array-typed struct fields yet (deferred to the compiler's v6.4.x).
+# 3.2.0 adds the container/state surface the toolchain can actually reach:
+# SmoothedParam and Rng (pure scalar), F0Point, ProsodyContour (Vec<SvF0Point>)
+# and PhonemeSequence (Vec<SvPhonemeEvent>). Field round-trips are paired with a
+# BEHAVIOURAL check -- a restored Rng must resume the same draw sequence, a
+# restored contour must trace the same curve, a restored sequence must render the
+# same samples -- because equal fields are weaker evidence than equal behaviour.
+#
+# The types still NOT derived (VocalTract, GlottalSource, FormantFilter,
+# TrajectoryPlanner, SynthesisContext, SynthesisPool, BatchRenderer, RenderOutput)
+# each hold a nested struct pointer or a foreign naad handle. That is a toolchain
+# limit, not an oversight, and it is measured in this file's last group.
+# See docs/adr/0002-serialization-boundary.md.
 
 include "lib/hashmap.cyr"
 include "lib/result.cyr"
@@ -100,6 +109,131 @@ var rp2 = SvRenderProgress_from_json_str(se_json(&SvRenderProgress_to_json, rp))
 assert_eq(SvRenderProgress_phoneme_index(rp2), 3, "index 3");
 assert_eq(SvRenderProgress_total_phonemes(rp2), 10, "total 10");
 assert_eq(SvRenderProgress_samples_rendered(rp2), 44100, "samples 44100");
+
+# ================================================================
+test_group("SmoothedParam round-trip");
+var sp = svara_smooth_with_time(F64_HALF, f64_div(F64_ONE, f64_from(100)), f64_from(44100));
+var sp2 = SvSmoothedParam_from_json_str(se_json(&SvSmoothedParam_to_json, sp));
+assert_eq(se_approx(SvSmoothedParam_current(sp2), F64_HALF, TOL_1EM3), 1, "current 0.5");
+assert_eq(se_approx(SvSmoothedParam_target(sp2), F64_HALF, TOL_1EM3), 1, "target 0.5");
+assert_eq(se_approx(SvSmoothedParam_alpha(sp2), SvSmoothedParam_alpha(sp), TOL_1EM3), 1, "alpha preserved");
+# BEHAVIOUR: the restored smoother must converge identically.
+svara_smooth_set_target(sp, F64_ONE);
+svara_smooth_set_target(sp2, F64_ONE);
+var sm_i = 0;
+var sm_diff = 0;
+while (sm_i < 64) {
+    var a1 = svara_smooth_next(sp);
+    var a2 = svara_smooth_next(sp2);
+    if (se_approx(a1, a2, TOL_1EM3) == 0) { sm_diff = sm_diff + 1; }
+    sm_i = sm_i + 1;
+}
+assert_eq(sm_diff, 0, "restored smoother tracks the original over 64 steps");
+assert_eq(f64_gt(svara_smooth_value(sp), F64_HALF), 1, "control: it actually moved");
+
+# ================================================================
+test_group("Rng round-trip resumes the draw sequence");
+var rg = svara_rng_new(12345);
+var rg_i = 0;
+while (rg_i < 17) { var burn = svara_rng_next_u32(rg); rg_i = rg_i + 1; }
+var rg2 = SvRng_from_json_str(se_json(&SvRng_to_json, rg));
+assert_eq(SvRng_state(rg2), SvRng_state(rg), "state exact (i64, no float text)");
+assert_eq(SvRng_inc(rg2), SvRng_inc(rg), "inc exact");
+# BEHAVIOUR: identical draws from the restored state -- this is what Rust kept
+# Rng serde FOR, and field equality alone would not prove it.
+var rg_diff = 0;
+var rg_j = 0;
+var rg_seen = 0;
+while (rg_j < 32) {
+    var d1 = svara_rng_next_u32(rg);
+    var d2 = svara_rng_next_u32(rg2);
+    if (d1 != d2) { rg_diff = rg_diff + 1; }
+    if (d1 != 0) { rg_seen = rg_seen + 1; }
+    rg_j = rg_j + 1;
+}
+assert_eq(rg_diff, 0, "restored Rng reproduces 32 draws exactly");
+assert_eq(rg_seen > 0, 1, "control: the draws are not all zero");
+
+# ================================================================
+test_group("F0Point + ProsodyContour round-trip");
+var fp = svara_pt_new(0.25, 1.5);
+var fp2 = SvF0Point_from_json_str(se_json(&SvF0Point_to_json, fp));
+assert_eq(se_approx(SvF0Point_time(fp2), 0.25, TOL_1EM3), 1, "point time 0.25");
+assert_eq(se_approx(SvF0Point_value(fp2), 1.5, TOL_1EM3), 1, "point value 1.5");
+
+var pc = svara_tone_to_contour(SVARA_TONE_DIPPING);
+var pc_n = vec_len(SvProsodyContour_f0_points(pc));
+assert_eq(pc_n > 2, 1, "control: the dipping contour has several points");
+var pc2 = SvProsodyContour_from_json_str(se_json(&SvProsodyContour_to_json, pc));
+assert_eq(vec_len(SvProsodyContour_f0_points(pc2)), pc_n, "point count survives");
+assert_eq(se_approx(SvProsodyContour_duration_scale(pc2),
+    SvProsodyContour_duration_scale(pc), TOL_1EM3), 1, "duration_scale survives");
+# BEHAVIOUR: the restored contour must trace the same curve.
+var pc_diff = 0;
+var pc_span = 0;
+var pc_k = 0;
+var pc_first = svara_prosody_f0_at(pc, 0);
+while (pc_k <= 20) {
+    var tt = f64_div(f64_from(pc_k), f64_from(20));
+    var v1 = svara_prosody_f0_at(pc, tt);
+    var v2 = svara_prosody_f0_at(pc2, tt);
+    if (se_approx(v1, v2, TOL_1EM3) == 0) { pc_diff = pc_diff + 1; }
+    if (se_approx(v1, pc_first, TOL_1EM3) == 0) { pc_span = pc_span + 1; }
+    pc_k = pc_k + 1;
+}
+assert_eq(pc_diff, 0, "restored contour matches at 21 sample points");
+assert_eq(pc_span > 0, 1, "control: the contour is not flat");
+
+# ================================================================
+test_group("PhonemeSequence round-trip renders the same audio");
+var sq = svara_sequence_new();
+svara_sequence_push(sq, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0.06,
+    SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+svara_sequence_push(sq, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(sq, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_SECONDARY));
+svara_sequence_set_speaking_rate(sq, 1.25);
+var sq2 = SvPhonemeSequence_from_json_str(se_json(&SvPhonemeSequence_to_json, sq));
+assert_eq(vec_len(SvPhonemeSequence_events(sq2)), 3, "three events survive");
+var ev0 = vec_get(SvPhonemeSequence_events(sq2), 0);
+var ev2 = vec_get(SvPhonemeSequence_events(sq2), 2);
+assert_eq(SvPhonemeEvent_phoneme(ev0), SVARA_PH_VOWEL_A, "event 0 phoneme");
+assert_eq(SvPhonemeEvent_tone(ev0), SVARA_TONE_RISING, "event 0 tone");
+assert_eq(SvPhonemeEvent_phoneme(ev2), SVARA_PH_VOWEL_I, "event 2 phoneme (order preserved)");
+assert_eq(SvPhonemeEvent_stress(ev2), SVARA_STRESS_SECONDARY, "event 2 stress");
+assert_eq(se_approx(SvPhonemeSequence_speaking_rate(sq2), 1.25, TOL_1EM3), 1, "speaking_rate 1.25");
+# BEHAVIOUR: the restored sequence must render byte-identical audio.
+var sv = svara_voice_new_male();
+var sr_hz = f64_from(44100);
+var au1 = svara_sequence_render(sq, sv, sr_hz);
+var au2 = svara_sequence_render(sq2, sv, sr_hz);
+assert_eq(svara_is_err(au1), 0, "control: the original renders");
+assert_eq(vec_len(au1) > 0, 1, "control: it produced samples");
+assert_eq(vec_len(au2), vec_len(au1), "restored sequence renders the same length");
+var au_diff = 0;
+var au_i = 0;
+while (au_i < vec_len(au1)) {
+    if (vec_get(au1, au_i) != vec_get(au2, au_i)) { au_diff = au_diff + 1; }
+    au_i = au_i + 1;
+}
+assert_eq(au_diff, 0, "restored sequence renders bit-identical audio");
+
+# ================================================================
+test_group("the un-derivable types are un-derivable for a measured reason");
+# A nested #derive-struct field is laid out INLINE but #derive(accessors) gives
+# it POINTER semantics, and from_json_str never populates it. That is why
+# VocalTract / FormantFilter / TrajectoryPlanner / RenderOutput / SynthesisContext
+# / SynthesisPool / BatchRenderer are not derived. Pin the fact, so a toolchain
+# release that fixes it shows up here as a FAILING test rather than going unnoticed.
+var kp = svara_keypoint_new(100, svara_vowel_target_from_vowel(SVARA_VOWEL_A), F64_HALF);
+assert_eq(SvFormantKeypoint_target(kp) != 0, 1, "control: a keypoint holds a target pointer");
+assert_eq(se_approx(SvVowelTarget_f1(SvFormantKeypoint_target(kp)), f64_from(768), TOL_1EM3), 1,
+  "control: and the target is the /a/ one");
+# GlottalSource carries three dependency handles that have no JSON form at all.
+var gsrc = svara_glottal_new(f64_from(120), sr_hz);
+assert_eq(svara_is_err(gsrc), 0, "control: glottal source constructs");
+assert_eq(SvGlottalSource_rng(gsrc) != 0, 1, "glottal holds an rng handle");
+assert_eq(SvGlottalSource_aspiration_noise(gsrc) != 0, 1, "glottal holds a naad noise handle");
+assert_eq(SvGlottalSource_vibrato_lfo(gsrc) != 0, 1, "glottal holds a naad LFO handle");
 
 var rc = assert_summary();
 syscall(60, rc);
