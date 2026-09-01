@@ -199,6 +199,59 @@ fn main() {
     assert_eq(svara_tract_set_formants_from_target(nt, nant), SVARA_ERR_INVALID_FORMANT,
       "a NaN vowel target is refused rather than producing NaN audio");
 
+    # ================================================================
+    # A tract built at a sample rate too low for the five-formant schwa keeps
+    # the ONE-formant fallback bank svara_tract_new installs. set_formants_from_
+    # target used to write five formants into that one-slot vec through
+    # svara_vowel_target_to_formants_into, running off the end and ABORTING the
+    # process with "vec: index out of bounds" -- not a code any caller could
+    # check, because svara_tract_new had already reported success.
+    #
+    # Every vowel target carries F5 = 3750 Hz, so the fallback engages at or
+    # below 7500 Hz. On 3.5.3 the first assertion in this group KILLS the
+    # process; it does not fail.
+    # ================================================================
+    test_group("low-rate tract: set_formants_from_target reports instead of aborting");
+    var lowt = svara_tract_new(f64_from(4000));
+    assert_eq(svara_is_err(lowt), 0, "svara_tract_new(4000) still reports success");
+    var lowtgt = svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA);
+    assert_eq(svara_tract_set_formants_from_target(lowt, lowtgt), SVARA_ERR_INVALID_FORMANT,
+      "4000 Hz: five formants refused with a code, not an abort");
+    # the bank is left usable -- rebuild validates before it mutates
+    assert_eq(svara_is_finite(svara_tract_process_sample(lowt, F64_ONE)), 1,
+      "the fallback bank still synthesizes after the refusal");
+    # boundary, measured: 7500 has F5 exactly at nyquist and is refused; 7501 is not
+    var b7500 = svara_tract_new(f64_from(7500));
+    assert_eq(svara_tract_set_formants_from_target(b7500, lowtgt), SVARA_ERR_INVALID_FORMANT,
+      "7500 Hz (F5 at nyquist) refused");
+    var b7501 = svara_tract_new(f64_from(7501));
+    assert_eq(svara_tract_set_formants_from_target(b7501, lowtgt), SVARA_ERR_NONE,
+      "control: 7501 Hz accepts the full five-formant target");
+    # control: the rates real callers use are unaffected
+    var b44 = svara_tract_new(SR);
+    assert_eq(svara_tract_set_formants_from_target(b44, lowtgt), SVARA_ERR_NONE,
+      "control: 44100 accepts the full five-formant target");
+
+    # ================================================================
+    # svara_tract_new builds two FIXED-frequency biquads and stored both returns
+    # unchecked. naad rejects a centre frequency at or above nyquist, so the
+    # 600 Hz subglottal bandpass needs a rate above 1200 -- below that, a
+    # negative naad error code was written in as the filter pointer and the first
+    # render dereferenced it. On 3.5.3 these rates build a "valid" tract that
+    # kills the process on use; here they are refused up front.
+    # ================================================================
+    test_group("low-rate tract: fixed-frequency biquads are checked, not assumed");
+    assert_eq(svara_is_err(svara_tract_new(f64_from(1001))), 1,
+      "1001 Hz refused: 600 Hz subglottal bandpass is above nyquist");
+    assert_eq(svara_is_err(svara_tract_new(f64_from(1200))), 1,
+      "1200 Hz refused: 600 Hz is exactly at nyquist");
+    assert_eq(svara_is_err(svara_tract_new(f64_from(1201))), 0,
+      "control: 1201 Hz clears the subglottal bandpass and builds");
+    # and the tract that just built is actually usable, not a husk
+    var b1201 = svara_tract_new(f64_from(1201));
+    assert_eq(svara_is_finite(svara_tract_process_sample(b1201, F64_ONE)), 1,
+      "control: the 1201 Hz tract renders a finite sample");
+
     return assert_summary();
 }
 

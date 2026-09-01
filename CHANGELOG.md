@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [3.5.4] - 2026-08-31 — every sample rate below 7500 Hz killed the process
+
+Patch: **two memory-safety repairs**, same family — a dependency's return value
+believed rather than checked. No API change, and no behaviour change at any
+sample rate that already worked. **927 assertions / 22 suites**, `cyrius audit`
+exit 0.
+
+Between them these two defects meant **every sample rate in (1000, 7500] aborted
+the process**, through `svara_tract_new` reporting success and handing back a
+tract that could not survive its own next call. Both are now checkable failures,
+and the band above 1200 Hz — which never worked — now renders.
+
+### Fixed — CRITICAL: `svara_tract_set_formants_from_target` ran off the end of a fallback bank
+
+`svara_vowel_target_to_formants_into` writes **five** formants unconditionally and
+documents that precondition — *"`out` must already hold >= 5 SvFormant pointers"*
+(`src/formant.cyr`). `svara_tract_set_formants_from_target` violated it from
+inside svara:
+
+Every vowel target carries **F5 = 3750 Hz**, so at or below **7500 Hz** that
+formant sits at or above nyquist and `svara_formant_filter_new` refuses the
+five-formant schwa. `svara_tract_new` then takes its documented fallback —
+*"absolute fallback: single 500 Hz formant"* — and stores that **one-element**
+vec as the tract's formant record, **returning the tract as valid**. The next
+`set_formants_from_target` wrote five formants into one slot:
+
+```
+svara_tract_new(4000.0)                      -> ok, svara_is_err == 0
+svara_tract_set_formants_from_target(t, tgt) -> "vec: index out of bounds", process aborts
+```
+
+Not a code any caller could check — the constructor had already reported success,
+so there was nothing to test. Every sample rate in **(1000, 7500]** was affected,
+which is the whole low-rate band including 2000, 4000 and 6000.
+
+The fix builds a fresh five-formant vec when the tract's own record is short, and
+lets `svara_tract_set_formants` → `svara_formant_filter_rebuild` validate it
+against the sample rate. `rebuild` validates **before** it mutates, so the call
+now returns `SVARA_ERR_INVALID_FORMANT` and leaves the fallback bank intact and
+usable — a checkable failure instead of a crash.
+
+`SVARA_VOWEL_FORMANT_COUNT` names the invariant that was violated, and
+`svara_formant_scratch_vec` now builds against it instead of a bare `5`.
+
+**Found by prani**, whose `crvoice_vocalize` aborted for every sample rate in
+that band — reached through `crtract_new`, which correctly checks
+`svara_tract_new`'s return and had no way to see this coming.
+
+### Note — vendored `lib/` re-synced
+
+`lib/` was stale against this project's own `cyrius = "6.5.36"` pin, so the
+toolchain refreshed six files (`io.cyr` and the four `syscalls_*`) on the first
+build of this release. Not part of the repair and not hand-edited — any build
+would have picked it up. The largest item is a stdlib `getenv` fix: the environ
+block was read into a fixed 8 KB buffer with a single read, so any variable past
+byte 8192 was invisible and indistinguishable from unset.
+
+`tests/hardening.tcyr` grows a group that **aborts the process on 3.5.3** rather
+than failing, in that suite's established style, with the 7500/7501 boundary
+pinned and controls at 7501 and 44100 so a narrowing or widening of svara's own
+range is caught.
+
+### Fixed — CRITICAL: `svara_tract_new` stored two unchecked naad error codes as filter pointers
+
+Found while verifying the repair above: below 7500 Hz the abort simply moved.
+
+`svara_tract_new` builds two **fixed-frequency** biquads — a 250 Hz nasal notch
+and a 600 Hz subglottal bandpass — and stored both `filter_biquad_new` returns
+without checking them. naad rejects a centre frequency at or above nyquist
+(`validate_frequency`), so each carries an implied minimum rate: **> 500 Hz** for
+the notch and **> 1200 Hz** for the bandpass. Below those, a negative naad error
+code was written straight in as the filter pointer, and the first render
+dereferenced it.
+
+```
+svara_tract_new(1001.0)   -> ok, svara_is_err == 0   (subglottal filter is -2)
+  ... first process_sample -> dereferences -2, process dies
+```
+
+Both returns are now checked and mapped through `svara_map_naad_error`, so a rate
+that cannot carry svara's own fixed filters is refused up front rather than
+producing a tract that is a husk. A tract that cannot build its own filters is
+not a usable tract.
+
+`tests/hardening.tcyr` pins the 1200/1201 boundary and asserts the 1201 Hz tract
+actually renders a finite sample, so "refused" cannot quietly become "refuses
+everything".
+
 ## [3.5.3] - 2026-08-26 — documentation sweep, and a performance figure that was wrong by 1.6×
 
 **Docs only; no source change.** Every document swept against the tree rather

@@ -13,6 +13,10 @@
 # VowelTarget / FormantFilter is dropped (tracked in docs/development/roadmap.md).
 
 var SVARA_MAX_FORMANTS = 8;   # fixed bank width (unused slots zeroed)
+# A vowel target carries exactly five formants (F1-F5). Any destination vec
+# handed to svara_vowel_target_to_formants_into MUST hold at least this many
+# slots -- that function writes five unconditionally.
+var SVARA_VOWEL_FORMANT_COUNT = 5;
 
 # Default formant amplitudes F1..F5 (linear) for the parallel bank.
 var SVARA_AMP_0 = 0x3FF0000000000000;   # 1.0
@@ -184,7 +188,7 @@ fn svara_vowel_target_to_formants_into(self, out) {
 fn svara_formant_scratch_vec() {
     var v = vec_new();
     var i = 0;
-    while (i < 5) { vec_push(v, svara_formant_new(0, 0, 0)); i = i + 1; }
+    while (i < SVARA_VOWEL_FORMANT_COUNT) { vec_push(v, svara_formant_new(0, 0, 0)); i = i + 1; }
     return v;
 }
 

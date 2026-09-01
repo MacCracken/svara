@@ -5,6 +5,32 @@
 
 ## Version
 
+**3.5.4** (2026-08-31) — **two memory-safety repairs, same family:** a
+dependency's return value believed rather than checked. Together they meant
+**every sample rate in (1000, 7500] aborted the process** — `svara_tract_new`
+reported success and handed back a tract that could not survive its own next
+call. (1) The five-formant write into a one-formant fallback bank, below.
+(2) `svara_tract_new` stored two unchecked naad error codes as filter pointers:
+its fixed 250 Hz notch needs a rate above 500 and its 600 Hz subglottal bandpass
+above 1200, and below those a negative code became the filter. Both now report.
+The band above 1200 Hz, which never worked, now renders. **927 assertions /
+22 suites**, `cyrius audit` exit 0. No API change.
+
+<details><summary>the first repair in detail</summary>
+
+**3.5.4** (2026-08-31) — **one memory-safety repair.** ⭐ A tract built at any
+sample rate in **(1000, 7500]** aborted the process on its next
+`set_formants_from_target` call. Every vowel target carries F5 = 3750 Hz, so
+below nyquist-for-F5 `svara_tract_new` fell back to its documented single 500 Hz
+formant and stored that **one-element** vec as the tract's record — while
+returning the tract as **valid**. `svara_vowel_target_to_formants_into` then
+wrote five formants into one slot: `"vec: index out of bounds"`, with no code a
+caller could check. Now returns `SVARA_ERR_INVALID_FORMANT` and leaves the
+fallback bank usable. **Found by prani**, whose entire public synthesis surface
+aborted in that band.
+
+</details>
+
 **3.5.3** (2026-08-26) — **documentation sweep.** ⭐ The headline performance
 figure had been wrong since 3.0.0 and understated svara: every doc said
 "0.56 µs/sample, ~40× real-time", summed from glottal + formant + tract — but
