@@ -16,6 +16,77 @@
 
 ---
 
+## 🔴 P0 — move the synthesis core to f32
+
+**Filed 2026-08-31 by prani**, its downstream consumer, which measured the
+consequence. **Sequenced behind naad**: naad has the same P0, and svara's
+per-sample calls go through naad's filters, so naad converts first.
+
+### The measurement
+
+prani's roadmap 2.0.7 ran its Cyrius port against its frozen Rust oracle on one
+host — same species, same durations, same 44100 Hz. The oracle is prani 1.1.0 on
+**svara 1.0.0 in f32**; the port is prani 2.0.6 on **svara 3.5.4 in f64**:
+
+| | Rust (f32) | Cyrius (f64) | |
+|---|---:|---:|---:|
+| `wolf_howl_1s` | 1.39 ms | 21.9 ms | **15.8× slower** |
+| `songbird_trill_500ms` | 741 µs | 11.6 ms | 15.6× |
+| `snake_hiss_500ms` | 191 µs | 2.73 ms | 14.2× |
+| median, 13 synthesis benchmarks | | | **15.7× slower** |
+| realtime, wolf howl | **719×** | **45.6×** | |
+
+Those benchmarks are prani's, but the work is overwhelmingly **svara's**: every
+one of them runs `svara_glottal_next_sample` and `svara_tract_process_sample`
+per sample, through the formant bank. The 15.7× is largely a measurement of this
+engine.
+
+⚠ Note svara's own 3.5.3 headline — *"0.35 µs/sample, ~64× real-time"* — is the
+same order as the 45.6× measured here through prani, so this is consistent with
+svara's own numbers, not a contradiction of them.
+
+### Why this lands on svara
+
+svara owns the per-sample synthesis surface prani calls: `glottal_next_sample`,
+`tract_process_sample`, the formant bank. Those are f64 on both sides of every
+call, so **prani cannot convert without svara**, and converting only prani would
+mean widening at every per-sample boundary — strictly more work than doing
+nothing.
+
+### The constraint that justified f64 is gone
+
+The ports were written when Cyrius had no f32 math. **ganita 1.1.4 ships a
+23-function f32 scalar tier** — `sin cos exp ln sqrt pow atan2 hypot cbrt floor
+ceil trunc round abs neg min max clamp lerp sign log2 exp2` — already vendored in
+`lib/`. Audit what svara calls against that list first: svara uses more
+transcendentals than prani does, so **check for `tanh`/`sinh`/`cosh`/`asin`/`acos`
+specifically** — those are *not* in the f32 tier, and if the glottal model needs
+them this P0 needs a ganita request attached rather than a straight conversion.
+
+`f32_add`/`f32_mul` are **not** callable — f32 arithmetic dispatches through the
+operators on an `F32_TYID`-typed binding.
+
+### Three reasons, ranked honestly
+
+1. **SIMD width.** cycc has `f32v8` — eight lanes against `f64v4`'s four. The
+   formant bank is the obvious beneficiary; 3.5.0 already collapsed its delay
+   line for a 6% win, and lane width is a bigger lever than that.
+2. **Half the memory traffic** per sample buffer.
+3. **Parity.** svara's own oracle is f32, and every tolerance loosened in its
+   suites exists because of this widening.
+
+⚠ **f32 is not proven to be the cause of the 15.7×**, and this P0 must not
+assume it. Three things differ in that comparison: float width, three major
+versions of the DSP stack, and LLVM `--release` against cycc. **The honest prior
+is that codegen dominates and float width is second.** Measure one hot path
+before converting the engine — a measured "no" is a good outcome and closes the
+question for prani too.
+
+**Blocked on**: naad's f32 conversion (same P0, filed there).
+**Blocks**: prani 2.1.0 Lane A.
+
+---
+
 ## Shipped
 
 | Release | Date | What |
