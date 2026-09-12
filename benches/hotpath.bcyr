@@ -42,14 +42,22 @@ var _half = 0;
 
 # --- block / full-render paths (allocate) ---
 fn b_formant_block() { svara_formant_filter_process_block(_formant, _blk_in, _blk_out, 1024); return 0; }
+# b tract into — helper used by hotpath.bcyr.
 fn b_tract_into() { svara_tract_synthesize_into(_tract, _tract_g, _blk_out, 1024); return 0; }
+# b ph vowel — helper used by hotpath.bcyr.
 fn b_ph_vowel() { return svara_phoneme_synthesize(SVARA_PH_VOWEL_A, _voice, _sr, _dur); }
+# b ph fric — helper used by hotpath.bcyr.
 fn b_ph_fric() { return svara_phoneme_synthesize(SVARA_PH_FRIC_S, _voice, _sr, _dur); }
+# b ph diph — helper used by hotpath.bcyr.
 fn b_ph_diph() { return svara_phoneme_synthesize(SVARA_PH_DIPH_AI, _voice, _sr, _dur); }
+# b seq — helper used by hotpath.bcyr.
 fn b_seq() { return svara_sequence_render(_seq, _voice, _sr); }
+# b seq planned — helper used by hotpath.bcyr.
 fn b_seq_planned() { return svara_sequence_render_planned(_seq, _voice, _sr); }
+# b seq planned toned — helper used by hotpath.bcyr.
 fn b_seq_planned_toned() { return svara_sequence_render_planned(_seq_toned, _voice, _sr); }
 
+# bench — helper used by hotpath.bcyr.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -70,6 +78,7 @@ fn bench1(name, fp, arg, batch, rounds) {
     return 0;
 }
 
+# bench2 — helper used by hotpath.bcyr.
 fn bench2(name, fp, a1, a2, batch, rounds) {
     var b = bench_new(name);
     bench_run_batch2(b, fp, a1, a2, batch, rounds);
@@ -77,6 +86,7 @@ fn bench2(name, fp, a1, a2, batch, rounds) {
     return 0;
 }
 
+# Bench entry point — runs every benchmark in this file.
 fn main() {
     alloc_init();
     _sr = f64_from(44100);

@@ -44,6 +44,7 @@ fn lg_seq(voice) {
     return s;
 }
 
+# Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
     var voice = svara_voice_new_male();

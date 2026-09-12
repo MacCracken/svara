@@ -90,6 +90,7 @@ fn or_bufdiff(a, b, n) {
     return acc;
 }
 
+# Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
     var voice = svara_voice_new_male();

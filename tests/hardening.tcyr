@@ -44,6 +44,7 @@ var SR = 0x40E5888000000000;   # 44100.0
 #must_use
 fn hd_nan() { return f64_div(0, 0); }
 
+# Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
     var voice = svara_voice_new_male();

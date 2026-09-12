@@ -113,6 +113,7 @@ fn marginal_bytes(toned) {
     return ((c - b) - (b - a)) / (vec_len(r2) - vec_len(r1));
 }
 
+# Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
     var voice = svara_voice_new_male();
