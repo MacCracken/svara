@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.5.5] - Unblocked by cyrius 6.6.3
 
+### Also — the `#inline` markers that never inlined
+
+The M-log gate (`scripts/check-logging.sh`) requires svara to build with **no** `warning:`
+at all. cyrius 6.5.63 made `#inline` a real directive *and* gave it a diagnostic for the
+cases it cannot honour, so the first warning-free build on 6.6.3 surfaced 516 warning lines:
+**12 from svara's own `src/`** (rng, smooth, formant, glottal, tract) and **464 inherited
+from the vendored `lib/naad.cyr` bundle**. Every one of them said the same thing — the fn's
+body exceeds 32 tokens, or takes more than 2 parameters, or contains control flow, so the
+marker did nothing.
+
+svara's 12 are removed here. The 464 are fixed upstream in **naad 2.2.4**, which dropped 117
+dead markers of its own; the `[deps.naad]` pin moves 2.2.2 → **2.2.4** to pick that up.
+
+⭐ v6.5.63 recorded this exact trap against this exact repo: svara carried four `#inline`
+markers and `src/lod.cyr` recorded measuring one at "+0.7% -- noise" — a measurement of an
+optimisation that was not there. The compiler can finally say so.
+
+`CYRIUS_NO_WARN_SHADOW_LIB=1` is exported by the gate for ONE advisory it cannot act on:
+`lib/sakshi.cyr` arrives transitively through goonj, whose lock pins sakshi 2.5.1 while the
+6.6.3 toolchain bundles 2.5.2 — and the two files are byte-identical apart from the version
+stamp on line 2. `cyrius deps` reverts any local edit because the resolver owns that file,
+so the only real fix is a goonj release. The gate still fails on every compiler warning.
+
 Toolchain-pin release. `cyrius` 6.6.2 -> **6.6.3**; no source change.
 
 6.6.2 could not compile this project. `#inline` became a real directive at cyrius

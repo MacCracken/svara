@@ -335,7 +335,6 @@ fn svara_tract_sample_rate(self) { return SvVocalTract_sample_rate(self); }
 
 # ---- processing -----------------------------------------------------------
 # process_sample -- one excitation sample through the full (LOD-gated) pipeline.
-#inline
 fn svara_tract_process_sample(self, input) {
     var q = SvVocalTract_quality(self);
 

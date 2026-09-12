@@ -73,7 +73,7 @@ modules = ["dist/hisab.cyr"]
 # released tags naad uses, for a coherent bundle in downstream consumers.
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.2.2"
+tag = "2.2.4"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]

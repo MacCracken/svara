@@ -342,7 +342,6 @@ fn svara_glottal_period_samples(self) { return SvGlottalSource_current_period(se
 
 # ---- pulse models ---------------------------------------------------------
 # rosenberg_pulse -- 3t'^2 - 2t'^3 over the open phase (t < open_quotient), else 0.
-#inline
 #must_use
 fn svara_glottal_rosenberg_pulse(self, t) {
     var oq = SvGlottalSource_open_quotient(self);
@@ -358,7 +357,6 @@ fn svara_glottal_rosenberg_pulse(self, t) {
 
 # lf_pulse -- LF glottal-flow derivative: sinusoidal open phase to -Ee at te,
 # exponential return over ta, then closed (0).
-#inline
 #must_use
 fn svara_glottal_lf_pulse(self, t) {
     var te = SvGlottalSource_lf_te(self);
@@ -379,7 +377,6 @@ fn svara_glottal_lf_pulse(self, t) {
 }
 
 # whisper_sample -- noise-only with a steep (>=12 dB/oct) spectral tilt.
-#inline
 fn svara_glottal_whisper_sample(self) {
     var noise = noise_next_sample(SvGlottalSource_aspiration_noise(self));
     var tilt = f64_max(SvGlottalSource_spectral_tilt(self), f64_from(12));
@@ -436,7 +433,6 @@ fn svara_glottal_new_period(self) {
 
 # next_sample -- one glottal-source sample. Whisper is pure noise; otherwise a
 # model pulse with spectral tilt, shimmer, and gated aspiration-noise mix.
-#inline
 fn svara_glottal_next_sample(self) {
     if (SvGlottalSource_model(self) == SVARA_GLOTTAL_WHISPER) {
         return svara_glottal_whisper_sample(self);

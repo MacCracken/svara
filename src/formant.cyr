@@ -246,7 +246,6 @@ fn svara_vowel_target_interpolate(from, to, t) {
 # biquad_coefficients -- bandpass biquad, computed in f64. Writes b0,b2,a1,a2
 # into `out` (4 f64 slots). b1 == 0 for bandpass, b2 == -b0.
 # ================================================================
-#inline
 fn svara_formant_biquad_coeffs(frequency, bandwidth, sample_rate, out) {
     var omega = f64_div(f64_mul(F64_TAU, frequency), sample_rate);
     var cos_omega = f64_cos(omega);
@@ -340,7 +339,6 @@ fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_ra
 
 # bank_process -- one input sample through all MAX_FORMANTS slots -> weighted sum.
 # Unused slots (count..MAX) have zeroed coeffs -> contribute nothing.
-#inline
 fn svara_formant_bank_process(self, input) {
     var b0 = SvFormantBank_b0(self); var b2 = SvFormantBank_b2(self);
     var a1 = SvFormantBank_a1(self); var a2 = SvFormantBank_a2(self);
@@ -394,7 +392,7 @@ fn svara_dc_blocker_new(sample_rate) {
     return self;
 }
 
-#inline
+# Process one sample through the DC blocker (removes the 0 Hz offset); returns the filtered sample.
 fn svara_dc_blocker_process(self, input) {
     # output = input - x_prev + alpha * y_prev
     var output = f64_add(f64_sub(input, SvDcBlocker_x_prev(self)),
@@ -518,7 +516,6 @@ fn svara_formant_filter_update(self, formants) {
 }
 
 # process_sample -- bank sum through the DC blocker.
-#inline
 fn svara_formant_filter_process_sample(self, input) {
     var raw = svara_formant_bank_process(SvFormantFilter_bank(self), input);
     return svara_dc_blocker_process(SvFormantFilter_dc(self), raw);

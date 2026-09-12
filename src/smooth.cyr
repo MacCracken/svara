@@ -53,7 +53,6 @@ fn svara_smooth_set_target(self, target) {
 }
 
 # next -- return current smoothed value and advance one sample.
-#inline
 fn svara_smooth_next(self) {
     var current = SvSmoothedParam_current(self);
     var target = SvSmoothedParam_target(self);

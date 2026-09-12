@@ -33,7 +33,6 @@ struct SvRng { state: i64; inc: i64; }
 # next_u32 -- PCG32 output function. Defined before its callers (single-pass).
 # NOT #must_use: it advances internal state, and svara_rng_new intentionally
 # discards two warm-up draws during seeding.
-#inline
 fn svara_rng_next_u32(self) {
     var old_state = SvRng_state(self);
     # state = old * MULT + inc  (u64 wrapping via i64 wrap)
@@ -60,7 +59,6 @@ fn svara_rng_new(seed) {
 }
 
 # next_f32 -- value in [0.0, 1.0). bits = (next_u32() >> 1) in [0, 2^31-1].
-#inline
 #must_use
 fn svara_rng_next_f32(self) {
     var bits = svara_rng_next_u32(self) >> 1;
