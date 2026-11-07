@@ -11,8 +11,8 @@
 #     from_vowel), NOT externalized (a synth lib shouldn't need a runtime data file).
 #   PART 3 (after voice.cyr): the per-class synthesis functions + SynthesisContext.
 #
-# f32 -> f64 throughout. serde on Phoneme/PhonemeClass dropped (the actual serde
-# surface -- config/state types -- is tracked in docs/development/roadmap.md M-serde).
+# f32 -> f64 throughout. Phoneme and PhonemeClass are integers, so they serialize
+# as integers; the boundary is docs/adr/0002-serialization-boundary.md.
 
 # ================================================================
 # Phoneme inventory (was `enum Phoneme`) -> integer constants 0..100, in exact
@@ -1338,7 +1338,8 @@ fn svara_synthctx_fricative(self, phoneme, voice, n) {
 }
 
 # plosive into the context's buffer: silent closure (n/3), noise burst (n/6), then breathy
-# voicing if voiced, else filtered noise. Fixed fractions, not svara_vot_for_plosive's.
+# voicing if voiced, else filtered noise. Fixed fractions, not svara_vot_for_plosive's:
+# a v2.0.1 quirk, as in Rust's synthesize_plosive_ctx (roadmap 3.9.x).
 #must_use
 fn svara_synthctx_plosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);

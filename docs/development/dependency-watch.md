@@ -84,7 +84,7 @@ sentinel was negative. Their suites stayed green over the resulting aborts. Comp
 values old tree against new, and push NaN, ±inf and out-of-range inputs through the
 public entry points, one process per case. Compare the JSON too: a sample sweep
 never sees a serialization change, and bayan moves with the toolchain, not with a
-pin in `cyrius.cyml`.
+pin in `cyrius.cyml`. `scripts/sweep/compare.py <tag>` does all of this.
 
 A timing gap on a loaded machine is not evidence. Check it with retired
 instructions, which do not depend on load. Equal instructions and a small cycle
@@ -117,7 +117,8 @@ lint leg sums warnings only). Both run in CI.
 ## Security monitoring
 
 - `cyrius deny <source>` validates the dependency set (currently 23 deps, 0 violations).
-- `cyrius fuzz` drives `tests/svara.fcyr` against the public boundary.
+- ⚠ `cyrius fuzz` proves nothing yet: `tests/svara.fcyr` is the scaffold stub and
+  calls no svara function. A real target is the first audit item in roadmap 3.6.3.
 - The toolchain installer verifies a published SHA256 (CVE-21) and, where present,
   an Ed25519 signature over `SHA256SUMS` (CVE-13). Both CI workflows install
   through it rather than hand-rolling `curl` + `tar`.

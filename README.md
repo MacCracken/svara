@@ -112,7 +112,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.6.1"
+tag = "3.6.2"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
@@ -196,8 +196,8 @@ diphthong render is the exception, where 3.1.0's control-rate coefficient update
 0.94 ms) made Cyrius *faster* than Rust, which still re-solves per sample.
 
 Numbers and method: [`docs/benchmarks.md`](docs/benchmarks.md); head-to-head:
-[`docs/benchmarks-rust-v-cyrius.md`](docs/benchmarks-rust-v-cyrius.md); remaining work: **M-perf**
-in [`docs/development/roadmap.md`](docs/development/roadmap.md).
+[`docs/benchmarks-rust-v-cyrius.md`](docs/benchmarks-rust-v-cyrius.md); remaining work: the
+performance lane in [`docs/development/roadmap.md`](docs/development/roadmap.md).
 
 ## Consumers
 

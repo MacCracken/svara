@@ -1,0 +1,90 @@
+# probe.cyr -- fixed-iteration hot paths for instruction counting. compare.py runs
+# each mode once per tree and reads the hardware counters around it. Mode 0 is setup
+# only, and is subtracted.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
+include "src/bridge.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+var SINK = 0;
+
+fn mk_seq(dur, toned) {
+    var s = svara_sequence_new();
+    if (toned == 1) {
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, dur, SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_NASAL_N, dur, SVARA_STRESS_UNSTRESSED, SVARA_TONE_LOW));
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, dur, SVARA_STRESS_SECONDARY, SVARA_TONE_FALLING));
+    } else {
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, dur, SVARA_STRESS_PRIMARY));
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_NASAL_N, dur, SVARA_STRESS_UNSTRESSED));
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, dur, SVARA_STRESS_SECONDARY));
+    }
+    return s;
+}
+fn run(mode) {
+    var voice = svara_voice_new_male();
+    var i = 0;
+    if (mode == 0) { return 0; }
+    if (mode == 1) {
+        var g = svara_glottal_new(f64_from(120), SR);
+        while (i < 2000000) { SINK = svara_glottal_next_sample(g); i = i + 1; }
+        return 0;
+    }
+    if (mode == 2) {
+        var fv = svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+        var ff = svara_formant_filter_new(fv, SR);
+        while (i < 1000000) { SINK = svara_formant_filter_process_sample(ff, F64_HALF); i = i + 1; }
+        return 0;
+    }
+    if (mode == 3) {
+        var t = svara_tract_new(SR);
+        var e = svara_tract_set_vowel(t, SVARA_VOWEL_A);
+        while (i < 1000000) { SINK = svara_tract_process_sample(t, F64_HALF); i = i + 1; }
+        return 0;
+    }
+    if (mode == 4) {
+        var t2 = svara_tract_new(SR);
+        var g2 = svara_glottal_new(f64_from(120), SR);
+        var buf = alloc(8192);
+        while (i < 500) { svara_tract_synthesize_into(t2, g2, buf, 1024); i = i + 1; }
+        return 0;
+    }
+    if (mode == 5) {
+        while (i < 100) { SINK = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.05); i = i + 1; }
+        return 0;
+    }
+    if (mode == 6) {
+        var s = mk_seq(0.05, 0);
+        while (i < 20) { SINK = svara_sequence_render_planned(s, voice, SR); i = i + 1; }
+        return 0;
+    }
+    if (mode == 7) {
+        var s2 = mk_seq(0.05, 1);
+        while (i < 20) { SINK = svara_sequence_render_planned(s2, voice, SR); i = i + 1; }
+        return 0;
+    }
+    return 0;
+}
+fn main() { alloc_init(); args_init(); run(atoi(argv(1))); return 0; }
+var exit_code = main();
+syscall(60, exit_code);

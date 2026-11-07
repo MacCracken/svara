@@ -121,7 +121,7 @@ license tightening validation that the oracle also lacks — see below.
 
 ## Reading the oracle after it is retired
 
-`rust-old/` is scheduled for removal (`docs/development/roadmap.md` 3.6.0). The
+`rust-old/` is scheduled for removal (`docs/development/roadmap.md` 3.7.0). The
 Rust cited throughout this ADR stays reachable from git:
 
 ```sh

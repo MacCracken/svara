@@ -1,5 +1,5 @@
 # trajectory.tcyr -- tests for src/trajectory.cyr. Ports rust-old/src/trajectory.rs
-# #[test] blocks (serde dropped). phoneme pulls the full stack.
+# #[test] blocks (serde: tests/serde.tcyr). phoneme pulls the full stack.
 
 include "lib/hisab.cyr"
 include "lib/goonj.cyr"

@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.2] - 2026-11-07 — the roadmap holds only what is left
+
+Cleanup release. **No code change:** every `src/` edit is a comment, and `build/svara` is
+byte-identical to 3.6.1. **941 assertions / 22 suites**; `cyrius audit`, `cyrius deny`, the logging
+gate and `cyrius distlib --check` are all clean.
+
+### Changed
+
+- **The roadmap holds only what is left**, 464 lines down to 223. The shipped table and lane
+  write-ups are gone, because the CHANGELOG has every release and their lessons live in `state.md`,
+  the ADRs and `docs/guides/testing.md`. Remaining work is now 3.6.3 (the P(-1) sweep), 3.7.0
+  (retire `rust-old/`), 3.8.x (performance), 3.9.x (the preserved Rust quirks) and 3.x.x (SIMD and
+  upstream blockers). The v1.0 lane dissolves into those: its security audit is a 3.6.3 deliverable.
+- **The f32 P0 is closed** by [ADR-0008](docs/adr/0008-the-synthesis-core-stays-f64.md). It was blocked
+  on naad, which measured 0% on `filter_biquad_process_sample` and closed its own P0. svara could
+  not gain alone, because its filters and noise stay f64 in naad.
+- **The `rust-old/` gate is measured, not assumed.** It read "dhvani has not been updated to the
+  Cyrius svara", which stopped being true. In a scratch copy on cyrius 6.7.18, dhvani builds against
+  svara 3.6.1 and passes 65 of 65 suites. Whether that clears the gate is left as a decision.
+- **A fourth preserved quirk is recorded.** Plosive timing depends on the render path:
+  `svara_ph_synth_plosive` uses the VOT fractions and `svara_synthctx_plosive` a fixed n/3 and n/6.
+  Both match the oracle.
+- **SIMD stops waiting on "a later 6.5.x".** naad measured 3.3× from `f64v256_*` on cyrius 6.7.18, so
+  the lane now says to measure again.
+
+### Added
+
+- **`scripts/sweep/compare.py`** compares a git ref with the working tree, each built on its own
+  toolchain pin: exact values, JSON bytes, 638 hostile cases, and retired instructions. It is the
+  harness behind the last three releases, kept for 3.6.3 and every later bump.
+
+### Fixed
+
+- **Test builds are warning-free.** `state.md` claimed it and 18 warnings said otherwise: six
+  suites compiled a `#derive(Serialize)` module without bayan, and `tests/pool.tcyr` discarded two
+  `#must_use` results, which it now asserts on.
+- **Comments and docs that had stopped being true.** "serde dropped" in ten modules, when 22 types
+  derive it since 3.3.0. Pointers to the `M-serde`, `M-perf` and `M-log` milestones, and to the lane
+  that used to be numbered 3.6.0. `state.md`'s consumers, deferred work and serde count.
+
+### Found, not fixed
+
+- ⚠ **`tests/svara.fcyr` is the `cyrius port` scaffold stub.** It calls no svara function, so
+  `cyrius fuzz` has passed vacuously in CI since 3.3.1, and `dependency-watch.md` claimed otherwise.
+  The claim is corrected here. A real target is the first audit item in 3.6.3, because it may find
+  defects, and this release changes no code.
+
+### Verified
+
+- `build/svara` is byte-identical to 3.6.1.
+- `scripts/sweep/compare.py 3.6.1` moves no value, no JSON byte and no hostile outcome. The same tool
+  against 3.5.6 reports exactly the 165 contour values 3.6.0 changed, so it can see a change.
+- Every release the old table listed has a CHANGELOG entry, and each lesson in the removed write-ups
+  was found elsewhere first. The two that were not, on static tables and `Quality`, moved to `state.md`.
+
 ## [3.6.1] - 2026-11-07 — cyrius 6.7.18, the newest deps, and a toned render stops allocating
 
 Toolchain and dependency release. `cyrius` 6.7.9 -> **6.7.18**, `hisab` 3.4.0 -> **3.4.1**,

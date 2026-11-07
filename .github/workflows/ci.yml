@@ -95,7 +95,7 @@ jobs:
 
       - name: Examples build and run
         # examples/ is documentation that executes. Without this it rots against
-        # the API silently -- and it is a roadmap 3.6.0 pre-removal gate, so it
+        # the API silently -- and it is a pre-removal gate for rust-old/, so it
         # has to keep working after rust-old/ goes.
         run: |
           set -e

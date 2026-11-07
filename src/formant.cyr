@@ -9,8 +9,8 @@
 #
 # Cyrius structs have no array fields, so BiquadBankSoa's nine [f32; 8] arrays
 # become nine raw f64 buffers (SVARA_MAX_FORMANTS slots each) held as struct
-# fields; the hot loop indexes them with load64/store64. serde on Formant /
-# VowelTarget / FormantFilter is dropped (tracked in docs/development/roadmap.md).
+# fields; the hot loop indexes them with load64/store64. Formant and VowelTarget
+# derive Serialize; a FormantFilter is rebuilt from its formants (ADR-0002).
 
 var SVARA_MAX_FORMANTS = 8;   # fixed bank width (unused slots zeroed)
 # A vowel target carries exactly five formants (F1-F5). Any destination vec

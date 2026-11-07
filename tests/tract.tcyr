@@ -1,5 +1,5 @@
 # tract.tcyr -- tests for src/tract.cyr. Ports rust-old/src/tract.rs #[test]
-# blocks (serde dropped) + a determinism check. Include order:
+# blocks (serde: tests/serde.tcyr) + a determinism check. Include order:
 # hisab -> goonj -> naad -> error -> rng -> smooth -> lod -> formant -> glottal -> tract.
 
 include "lib/hisab.cyr"

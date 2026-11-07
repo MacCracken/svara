@@ -3,6 +3,8 @@
 # hisab (num_fft / num_neumaier_sum) -> error -> spectral.
 
 include "lib/hisab.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/spectral.cyr"
 

@@ -5,6 +5,8 @@
 # exact in f64 (integer * power-of-two), so their golden bit patterns are
 # asserted exactly too; determinism + range round out coverage.
 
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/rng.cyr"
 

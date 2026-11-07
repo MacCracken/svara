@@ -1,8 +1,10 @@
 # prosody.tcyr -- tests for src/prosody.cyr. Ports rust-old/src/prosody.rs
-# #[test] blocks (serde dropped). Include: hisab (calc_monotone_cubic_checked) +
+# #[test] blocks (serde: tests/serde.tcyr). Include: hisab (calc_monotone_cubic_checked) +
 # prosody.
 
 include "lib/hisab.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/prosody.cyr"
 

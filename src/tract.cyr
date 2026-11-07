@@ -4,8 +4,8 @@
 # antiformant (naad Notch biquad, place-dependent) -> subglottal resonance (naad
 # ~600 Hz bandpass) -> lip-radiation HPF -> gain. LOD (Quality) gates the stages.
 # f32 -> f64 throughout. The fallback NasalAntiformant + sg_state/sg_coeff fields
-# are dropped (naad-backend carries both filters). serde on VocalTract dropped
-# (tracked in docs/development/roadmap.md).
+# are dropped (naad-backend carries both filters). A VocalTract serializes through
+# SvVocalTractState (docs/adr/0002-serialization-boundary.md).
 #
 # Requires (from the build/test unit): stdlib alloc/vec/math, hisab, goonj, naad
 # (filter_biquad_new/process_sample/set_params/reset, NAAD_FILTER_NOTCH/NAAD_FILTER_BANDPASS),

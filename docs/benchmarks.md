@@ -90,7 +90,7 @@ per-sample benches already batch-timed.
   glottal 15×, vowel 10×) — NOT the "~3–5×" earlier estimated here. Cyrius emits
   scalar code (no auto-vectorization) and the SOA bank loop LLVM vectorized runs
   scalar `load64`/`store64` + f64-op overhead here. Addressable via SIMD + FMA —
-  see roadmap **M-perf**. Still comfortably real-time in absolute terms.
+  see the roadmap's performance lane. Still comfortably real-time in absolute terms.
 
 ⚠ **The two `render_planned` rows are the ones a timer measures badly.** 3.1.3
 took that path from 1,121 to 33 bytes of never-freed arena per output sample

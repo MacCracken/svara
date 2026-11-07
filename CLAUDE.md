@@ -54,7 +54,7 @@ cyrius test                              # run tests/*.tcyr
 
 ## Key Principles
 
-- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR (three exist: ADR-0001's two, and ADR-0007). **Cite a tag, not a bare path** — `git show 3.5.2:rust-old/src/x.rs` — because the directory is scheduled for removal once a consumer is green.
+- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR (four exist: ADR-0001's two, ADR-0007 and ADR-0008). **Cite a tag, not a bare path** — `git show 3.5.2:rust-old/src/x.rs` — because the directory is scheduled for removal once a consumer is green.
 - **Correctness over cleverness** — if the Cyrius behavior diverges silently from Rust, the bugs win
 - Test after every change, not after the feature is "done"
 - ONE change at a time — never bundle unrelated changes
@@ -78,5 +78,5 @@ cyrius test                              # run tests/*.tcyr
 - [`docs/guides/`](docs/guides/) — Task-oriented how-tos
 - [`examples/`](examples/) — Runnable examples (5, ported from `rust-old/examples/`)
 - [`docs/development/state.md`](docs/development/state.md) — Live state
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones through v1.0
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Remaining work, in release order
 

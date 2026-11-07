@@ -8,7 +8,7 @@
 # formant.cyr, glottal.cyr, tract.cyr, voice.cyr, phoneme.cyr (synthesize_phoneme_
 # nasalized / detect_nasalization / coarticulation_resistance / class), prosody.cyr
 # (Stress / Tone / to_contour / f0_at), trajectory.cyr (plan / formants_at /
-# apply_speaking_rate). serde dropped (M-serde; roadmap.md).
+# apply_speaking_rate).
 
 var SV_SEQ_MIN_CF   = 0.15;   # min crossfade fraction (high-resistance)
 var SV_SEQ_MAX_CF   = 0.45;   # max crossfade fraction (low-resistance)
@@ -19,9 +19,8 @@ var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 # svara_sequence_render_planned. The crossfade path, svara_sequence_render,
 # reads stress but ignores tone entirely, so setting a tone and calling
 # `render` produces the same audio as setting none. The Rust did the same
-# (rust-old/src/sequence.rs); it is preserved for parity and scheduled to be
-# fixed in a later minor with its own test -- see docs/development/roadmap.md
-# "Out of scope for v1.0".
+# (rust-old/src/sequence.rs); it is preserved for parity until it is decided in
+# docs/development/roadmap.md 3.9.x, and any fix gets a minor and its own test.
 #
 # The other two quirks are annotated at src/glottal.cyr (set_speed_quotient is
 # ignored by the Rosenberg pulse) and src/phoneme.cyr (per-vowel spectral tilt

@@ -1,7 +1,7 @@
 # lod.cyr -- level-of-detail quality control for multi-voice scenarios.
 # Ports rust-old/src/lod.rs (Quality enum + pipeline-stage predicates). Lower
 # quality skips expensive synthesis stages to cut CPU per voice. Pure config
-# logic, no float. serde on Quality dropped (tracked in docs/development/roadmap.md).
+# logic, no float. Quality is an integer, so it serializes as one.
 
 # MEASURED AND REJECTED (3.5.0): marking the four predicates the tract calls
 # once per sample `#inline` moved `tract process_sample` by +0.7% -- noise, in the

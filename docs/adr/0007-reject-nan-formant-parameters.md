@@ -105,4 +105,4 @@ fatal outcome with a checkable error code.
 - **Fix it upstream in `rust-old/` too.** Not possible and not wanted —
   `rust-old/` is a frozen oracle and CLAUDE.md forbids modifying it. The
   divergence is recorded here instead, which is what an oracle retirement
-  (roadmap 3.6.0) needs anyway.
+  (roadmap 3.7.0) needs anyway.

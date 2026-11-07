@@ -1,0 +1,642 @@
+# sweep.cyr -- emits svara's observable output so two trees can be compared.
+# Built once per tree by compare.py, each with that tree's own toolchain pin.
+#   sweep 0 <section>         every value of one section, as f64 bit patterns
+#   sweep 1 <entry> <value>   one hostile input through one public entry point
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
+include "src/bridge.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+
+fn emit(x) { fmt_hex(x); println(""); return 0; }
+fn emit_vec(v) { var i = 0; while (i < vec_len(v)) { emit(vec_get(v, i)); i = i + 1; } return 0; }
+fn emit_buf(b, n) { var i = 0; while (i < n) { emit(load64(b + i * 8)); i = i + 1; } return 0; }
+fn emit_target(t) {
+    emit(SvVowelTarget_f1(t)); emit(SvVowelTarget_f2(t)); emit(SvVowelTarget_f3(t));
+    emit(SvVowelTarget_f4(t)); emit(SvVowelTarget_f5(t));
+    emit(SvVowelTarget_b1(t)); emit(SvVowelTarget_b2(t)); emit(SvVowelTarget_b3(t));
+    emit(SvVowelTarget_b4(t)); emit(SvVowelTarget_b5(t));
+    return 0;
+}
+fn voice_of(i) {
+    if (i == 0) { return svara_voice_new_male(); }
+    if (i == 1) { return svara_voice_new_female(); }
+    return svara_voice_new_child();
+}
+fn out_vec(r) {
+    if (svara_is_err(r) == 1) { println("err"); fmt_int(r); println(""); return 0; }
+    if (r == 0) { println("null"); return 0; }
+    emit_vec(r);
+    return 0;
+}
+fn out_code(r) { println("code"); fmt_int(r); println(""); return 0; }
+fn mk_seq(dur, toned) {
+    var s = svara_sequence_new();
+    if (toned == 1) {
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, dur, SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_NASAL_N, dur, SVARA_STRESS_UNSTRESSED, SVARA_TONE_LOW));
+        svara_sequence_push(s, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, dur, SVARA_STRESS_SECONDARY, SVARA_TONE_FALLING));
+    } else {
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, dur, SVARA_STRESS_PRIMARY));
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, dur, SVARA_STRESS_UNSTRESSED));
+        svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, dur, SVARA_STRESS_SECONDARY));
+    }
+    return s;
+}
+fn traj_of(dur, sr) {
+    var ph = vec_new(); var du = vec_new();
+    vec_push(ph, SVARA_PH_VOWEL_A); vec_push(du, dur);
+    vec_push(ph, SVARA_PH_NASAL_N); vec_push(du, 0.05);
+    vec_push(ph, SVARA_PH_VOWEL_I); vec_push(du, 0.1);
+    return svara_trajectory_plan(ph, du, svara_voice_new_male(), sr);
+}
+fn bridges(x) {
+    emit(svara_bridge_rd_from_arousal(x)); emit(svara_bridge_vibrato_depth_from_valence(x));
+    emit(svara_bridge_breathiness_from_arousal(x)); emit(svara_bridge_jitter_from_arousal(x));
+    emit(svara_bridge_f0_range_scale_from_arousal(x)); emit(svara_bridge_duration_scale_from_speech_rate(x));
+    emit(svara_bridge_f0_peak_from_prominence(x)); emit(svara_bridge_formant_scale_from_body_size(x));
+    emit(svara_bridge_f0_from_body_size(x)); emit(svara_bridge_jitter_from_age(x));
+    emit(svara_bridge_gain_from_distance(F64_ONE, x)); emit(svara_bridge_gain_from_distance(x, F64_ONE));
+    emit(svara_bridge_bandwidth_scale_from_reverb(x)); emit(svara_bridge_spectral_tilt_from_distance(x));
+    emit(svara_bridge_lombard_effort_from_noise(x)); emit(svara_bridge_lombard_f0_shift(x));
+    emit(svara_bridge_breathiness_reduction_from_wind(x));
+    var o = alloc(64); var r = svara_bridge_glottal_model_from_effort(x, o); emit(r); emit(load64(o));
+    return 0;
+}
+
+fn sec_phonemes() {
+    var v = 0;
+    while (v < 3) {
+        var p = 0;
+        while (p < SVARA_PHONEME_COUNT) {
+            println("#p"); fmt_int(p); println("");
+            out_vec(svara_phoneme_synthesize(p, voice_of(v), SR, 0.02));
+            p = p + 1;
+        }
+        v = v + 1;
+    }
+    return 0;
+}
+fn sec_ctx() {
+    var voice = svara_voice_new_female();
+    var ctx = svara_synthctx_new(voice, f64_from(22050));
+    var p = 0;
+    while (p < SVARA_PHONEME_COUNT) {
+        var n = svara_synthctx_synthesize(ctx, p, voice, 0.02, 0);
+        println("#c"); fmt_int(n); println("");
+        if (n > 0) { emit_buf(svara_synthctx_buffer(ctx), n); }
+        p = p + 1;
+    }
+    return 0;
+}
+fn sec_pool() {
+    var voice = svara_voice_new_child();
+    var pool = svara_pool_new(voice, f64_from(48000));
+    var p = 0;
+    while (p < SVARA_PHONEME_COUNT) {
+        var n = svara_pool_render(pool, p, voice, 0.01);
+        println("#o"); fmt_int(n); println("");
+        if (n > 0) { emit_buf(svara_pool_buffer(pool), n); }
+        p = p + 1;
+    }
+    var nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+    var m = svara_pool_render_nasalized(pool, SVARA_PH_VOWEL_A, voice, 0.03, nas);
+    fmt_int(m); println("");
+    if (m > 0) { emit_buf(svara_pool_buffer(pool), m); }
+    return 0;
+}
+fn glot(model) {
+    var g = svara_glottal_new(f64_from(130), SR);
+    svara_glottal_set_model(g, model);
+    svara_glottal_set_breathiness(g, 0.1);
+    svara_glottal_set_jitter(g, 0.02);
+    svara_glottal_set_shimmer(g, 0.04);
+    svara_glottal_set_vibrato(g, 5.5, 0.03);
+    var i = 0;
+    while (i < 4000) { emit(svara_glottal_next_sample(g)); i = i + 1; }
+    return 0;
+}
+fn sec_glottal() { var m = 0; while (m < 4) { println("#g"); glot(m); m = m + 1; } return 0; }
+fn sec_tract() {
+    var q = 0;
+    while (q < 3) {
+        var vw = 0;
+        while (vw < 5) {
+            var t = svara_tract_new(SR);
+            svara_tract_set_quality(t, q);
+            var e = svara_tract_set_vowel(t, vw);
+            println("#t"); fmt_int(e); println("");
+            svara_tract_set_nasal_coupling(t, 0.3);
+            svara_tract_set_subglottal_coupling(t, 0.2);
+            svara_tract_set_interaction_strength(t, 0.2);
+            var g = svara_glottal_new(f64_from(120), SR);
+            emit_buf(svara_tract_synthesize(t, g, 1024), 1024);
+            vw = vw + 1;
+        }
+        q = q + 1;
+    }
+    return 0;
+}
+fn sec_seq() {
+    var v = 0;
+    while (v < 3) {
+        var tn = 0;
+        while (tn < 2) {
+            println("#s"); out_vec(svara_sequence_render(mk_seq(0.06, tn), voice_of(v), SR));
+            println("#sp"); out_vec(svara_sequence_render_planned(mk_seq(0.06, tn), voice_of(v), SR));
+            var s = mk_seq(0.06, tn);
+            svara_sequence_set_speaking_rate(s, 1.5);
+            svara_sequence_set_transition_window(s, 0.02);
+            svara_sequence_set_lookahead_onset(s, 0.3);
+            println("#sr"); out_vec(svara_sequence_render_planned(s, voice_of(v), f64_from(16000)));
+            tn = tn + 1;
+        }
+        v = v + 1;
+    }
+    return 0;
+}
+fn sec_spectrum() {
+    var p = 0;
+    while (p < 24) {
+        var v = svara_phoneme_synthesize(p, svara_voice_new_male(), SR, 0.05);
+        if (svara_is_err(v) == 0) {
+            var s = svara_spectral_analyze(v, SR);
+            println("#f"); fmt_int(p); println("");
+            if (svara_is_err(s) == 1) { fmt_int(s); println(""); }
+            else {
+                emit_vec(SvSpectrum_magnitudes(s));
+                emit(svara_spectrum_total_energy(s));
+                emit(svara_spectrum_band_energy(s, f64_from(200), f64_from(3000)));
+                emit(svara_spectrum_magnitude_at(s, f64_from(700)));
+                var o = alloc(16);
+                emit(svara_spectrum_peak_in_range(s, f64_from(100), f64_from(1000), o));
+                emit(load64(o)); emit(load64(o + 8));
+                out_vec(svara_spectrum_estimate_formants(s, 5));
+                emit(svara_spectral_rms_level(v));
+            }
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+fn sec_prosody() {
+    var pt = 0;
+    while (pt < 4) {
+        var c = svara_prosody_from_pattern(pt, f64_from(140));
+        var i = 0;
+        while (i <= 200) { emit(svara_prosody_f0_at(c, f64_div(f64_from(i), f64_from(200)))); i = i + 1; }
+        pt = pt + 1;
+    }
+    var tn = 0;
+    while (tn < 9) {
+        var t = svara_tone_to_contour(tn);
+        var j = 0;
+        while (j <= 100) { emit(svara_prosody_f0_at(t, f64_div(f64_from(j), f64_from(100)))); j = j + 1; }
+        tn = tn + 1;
+    }
+    return 0;
+}
+fn sec_traj() {
+    var t = traj_of(0.08, SR);
+    fmt_int(svara_trajectory_total_samples(t)); println("");
+    var s = 0;
+    while (s < svara_trajectory_total_samples(t)) { emit_target(svara_trajectory_formants_at(t, s)); s = s + 97; }
+    svara_trajectory_apply_speaking_rate(t, 1.25);
+    fmt_int(svara_trajectory_total_samples(t)); println("");
+    return 0;
+}
+fn sec_bridge() {
+    var i = 0;
+    while (i <= 400) { bridges(f64_div(f64_from(i - 100), f64_from(100))); i = i + 1; }
+    return 0;
+}
+fn sec_misc() {
+    var r = svara_rng_new(SVARA_RNG_DEFAULT_SEED);
+    var i = 0;
+    while (i < 2000) { emit(svara_rng_next_u32(r)); emit(svara_rng_next_f32(r)); i = i + 1; }
+    var sm = svara_smooth_with_time(0, 0.01, SR);
+    svara_smooth_set_target(sm, F64_ONE);
+    i = 0;
+    while (i < 2000) { emit(svara_smooth_next(sm)); i = i + 1; }
+    return 0;
+}
+fn grid_val(i) {
+    if (i == 0) { return 0; }
+    if (i == 1) { return F64_HALF; }
+    if (i == 2) { return F64_ONE; }
+    if (i == 3) { return f64_from(2); }
+    return f64_neg(F64_ONE);
+}
+fn contour3(a, b, c) {
+    var p = vec_new();
+    vec_push(p, svara_pt_new(0, a)); vec_push(p, svara_pt_new(F64_HALF, b)); vec_push(p, svara_pt_new(F64_ONE, c));
+    return svara_prosody_make(p, F64_ONE, F64_ONE);
+}
+fn sec_contours() {
+    var a = 0;
+    while (a < 5) {
+        var b = 0;
+        while (b < 5) {
+            var c = 0;
+            while (c < 5) {
+                var pc = contour3(grid_val(a), grid_val(b), grid_val(c));
+                var k = 0;
+                while (k <= 20) { emit(svara_prosody_f0_at(pc, f64_div(f64_from(k), f64_from(20)))); k = k + 1; }
+                c = c + 1;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return 0;
+}
+fn jd(to_json, ptr) {
+    var sb = str_builder_new();
+    var r = callptr(to_json, ptr, sb);
+    var js = str_builder_build(sb);
+    syscall(1, 1, str_data(js), str_len(js));
+    println("");
+    return str_data(js);
+}
+fn jval(i) {
+    if (i == 0) { return 0; }
+    if (i == 1) { return F64_HALF; }
+    if (i == 2) { return f64_from(440); }
+    if (i == 3) { return 0x3E7AD7F29ABCAF48; }   # 1e-7
+    if (i == 4) { return 0x430C6BF526340000; }   # 1e15
+    if (i == 5) { return f64_div(0, 0); }
+    if (i == 6) { return SV_POS_INF; }
+    if (i == 7) { return SV_NEG_INF; }
+    if (i == 8) { return 0x8000000000000000; }   # -0
+    if (i == 9) { return f64_div(F64_ONE, f64_from(3)); }
+    if (i == 10) { return 0x7FEFFFFFFFFFFFFF; }  # f64::MAX
+    if (i == 11) { return 1; }                   # denormal
+    return f64_neg(0x3FF8000000000000);          # -1.5
+}
+fn sec_json() {
+    var i = 0;
+    while (i < 13) {
+        var f = svara_formant_new(jval(i), f64_from(90), F64_ONE);
+        var d = jd(&SvFormant_to_json, f);
+        var g = SvFormant_from_json_str(d);
+        d = jd(&SvFormant_to_json, g);
+        emit(SvFormant_frequency(g));
+        var pt = svara_pt_new(jval(i), jval(12 - i));
+        d = jd(&SvF0Point_to_json, pt);
+        var q = SvF0Point_from_json_str(d);
+        d = jd(&SvF0Point_to_json, q);
+        emit(SvF0Point_time(q)); emit(SvF0Point_value(q));
+        i = i + 1;
+    }
+    var v = 0;
+    while (v < 3) {
+        var d2 = jd(&SvVoiceProfile_to_json, voice_of(v));
+        var vp = SvVoiceProfile_from_json_str(d2);
+        d2 = jd(&SvVoiceProfile_to_json, vp);
+        var d3 = jd(&SvVowelTarget_to_json, svara_phoneme_formants(v));
+        d3 = jd(&SvVowelTarget_to_json, SvVowelTarget_from_json_str(d3));
+        v = v + 1;
+    }
+    var voice = svara_voice_new_male();
+    var e = 0;
+    var d4 = jd(&SvEffortParams_to_json, svara_effort_params(SVARA_EFFORT_WHISPER));
+    d4 = jd(&SvEffortParams_to_json, SvEffortParams_from_json_str(d4));
+    d4 = jd(&SvPhonemeEvent_to_json, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY, SVARA_TONE_RISING));
+    d4 = jd(&SvPhonemeEvent_to_json, SvPhonemeEvent_from_json_str(d4));
+    d4 = jd(&SvVOT_to_json, svara_vot_for_plosive(SVARA_PH_PLOSIVE_P));
+    d4 = jd(&SvVOT_to_json, SvVOT_from_json_str(d4));
+    d4 = jd(&SvNasalization_to_json, svara_nasalization_for_nasal(SVARA_PH_NASAL_M));
+    d4 = jd(&SvNasalization_to_json, SvNasalization_from_json_str(d4));
+    d4 = jd(&SvRenderProgress_to_json, svara_render_progress_new(1, 3, 1000));
+    d4 = jd(&SvRenderProgress_to_json, SvRenderProgress_from_json_str(d4));
+    d4 = jd(&SvSmoothedParam_to_json, svara_smooth_new(F64_HALF, SR));
+    d4 = jd(&SvSmoothedParam_to_json, SvSmoothedParam_from_json_str(d4));
+    var rg = svara_rng_new(7);
+    var w = svara_rng_next_u32(rg);
+    d4 = jd(&SvRng_to_json, rg);
+    d4 = jd(&SvRng_to_json, SvRng_from_json_str(d4));
+    d4 = jd(&SvProsodyContour_to_json, svara_prosody_from_pattern(1, f64_from(120)));
+    d4 = jd(&SvProsodyContour_to_json, SvProsodyContour_from_json_str(d4));
+    d4 = jd(&SvPhonemeSequence_to_json, mk_seq(0.06, 1));
+    d4 = jd(&SvPhonemeSequence_to_json, SvPhonemeSequence_from_json_str(d4));
+    var smp = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.01);
+    var spec = svara_spectral_analyze(smp, SR);
+    d4 = jd(&SvSpectrum_to_json, spec);
+    d4 = jd(&SvSpectrum_to_json, SvSpectrum_from_json_str(d4));
+    var g2 = svara_glottal_new(f64_from(130), SR);
+    var gi = 0;
+    while (gi < 50) { w = svara_glottal_next_sample(g2); gi = gi + 1; }
+    d4 = jd(&SvGlottalState_to_json, svara_glottal_save(g2));
+    d4 = jd(&SvGlottalState_to_json, SvGlottalState_from_json_str(d4));
+    var t = svara_tract_new(SR);
+    var e2 = svara_tract_set_vowel(t, 1);
+    d4 = jd(&SvVocalTractState_to_json, svara_tract_save(t));
+    d4 = jd(&SvVocalTractState_to_json, SvVocalTractState_from_json_str(d4));
+    var tj = traj_of(0.08, SR);
+    d4 = jd(&SvTrajectoryState_to_json, svara_trajectory_save(tj));
+    d4 = jd(&SvTrajectoryState_to_json, SvTrajectoryState_from_json_str(d4));
+    d4 = jd(&SvKeypointState_to_json, svara_keypoint_save(vec_get(svara_trajectory_keypoints(tj), 0)));
+    d4 = jd(&SvKeypointState_to_json, SvKeypointState_from_json_str(d4));
+    var ctx = svara_synthctx_new(voice, SR);
+    d4 = jd(&SvSynthCtxState_to_json, svara_synthctx_save(ctx));
+    d4 = jd(&SvSynthCtxState_to_json, SvSynthCtxState_from_json_str(d4));
+    var pl = svara_pool_new(voice, SR);
+    var n = svara_pool_render(pl, SVARA_PH_VOWEL_A, voice, 0.005);
+    d4 = jd(&SvSynthesisPoolState_to_json, svara_pool_save(pl));
+    d4 = jd(&SvSynthesisPoolState_to_json, SvSynthesisPoolState_from_json_str(d4));
+    var b = svara_batch_new(voice, SR);
+    svara_batch_push(b, SVARA_PH_VOWEL_A, 0.005, SVARA_STRESS_PRIMARY);
+    d4 = jd(&SvBatchRendererState_to_json, svara_batch_save(b));
+    d4 = jd(&SvBatchRendererState_to_json, SvBatchRendererState_from_json_str(d4));
+    var o = svara_batch_render_all(b);
+    d4 = jd(&SvRenderOutputState_to_json, svara_render_output_save(o));
+    d4 = jd(&SvRenderOutputState_to_json, SvRenderOutputState_from_json_str(d4));
+    return 0;
+}
+fn sec_batch() {
+    var voice = svara_voice_new_male();
+    var b = svara_batch_new(voice, SR);
+    svara_batch_push(b, SVARA_PH_VOWEL_A, 0.05, SVARA_STRESS_PRIMARY);
+    svara_batch_push(b, SVARA_PH_FRIC_S, 0.05, SVARA_STRESS_UNSTRESSED);
+    svara_batch_push(b, SVARA_PH_VOWEL_I, 0.05, SVARA_STRESS_SECONDARY);
+    var o = svara_batch_render_all(b);
+    if (svara_is_err(o) == 1) { out_code(o); return 0; }
+    emit_vec(SvRenderOutput_samples(o));
+    return 0;
+    return 0;
+}
+
+fn x_val(i) {
+    if (i == 0) { return f64_div(0, 0); }
+    if (i == 1) { return SV_POS_INF; }
+    if (i == 2) { return SV_NEG_INF; }
+    if (i == 3) { return 0; }
+    if (i == 4) { return f64_neg(F64_ONE); }
+    if (i == 5) { return 0x7FEFFFFFFFFFFFFF; }   # f64::MAX
+    if (i == 6) { return 0x43E0000000000000; }   # 2^63
+    if (i == 7) { return 0x43E158E460913D00; }   # 1e19
+    if (i == 8) { return 0x41E65A0BC0000000; }   # 3e9
+    if (i == 9) { return 1; }                    # smallest denormal
+    return 0xC3E158E460913D00;                   # -1e19
+}
+fn sum_vec(r) {
+    if (svara_is_err(r) == 1) { println("err"); fmt_int(r); println(""); return 0; }
+    if (r == 0) { println("null"); return 0; }
+    var n = vec_len(r); fmt_int(n); println("");
+    var h = 0; var nf = 0; var i = 0;
+    while (i < n) {
+        var s = vec_get(r, i);
+        h = (h * 31) + s;
+        if (svara_is_finite(s) == 0) { nf = nf + 1; }
+        i = i + 1;
+    }
+    emit(h); fmt_int(nf); println("");
+    return 0;
+}
+fn sum_buf(b, n) {
+    fmt_int(n); println("");
+    if (n <= 0) { return 0; }
+    var h = 0; var nf = 0; var i = 0;
+    while (i < n) {
+        var s = load64(b + i * 8);
+        h = (h * 31) + s;
+        if (svara_is_finite(s) == 0) { nf = nf + 1; }
+        i = i + 1;
+    }
+    emit(h); fmt_int(nf); println("");
+    return 0;
+}
+fn run_glottal(g) {
+    if (svara_is_err(g) == 1) { out_code(g); return 0; }
+    var i = 0;
+    while (i < 64) { emit(svara_glottal_next_sample(g)); i = i + 1; }
+    return 0;
+}
+fn voice_case(e, x) {
+    var v = svara_voice_new_male();
+    if (e == 12) { v = svara_voice_with_f0(v, x); }
+    if (e == 13) { v = svara_voice_with_breathiness(v, x); }
+    if (e == 14) { v = svara_voice_with_vibrato_rate(v, x); }
+    if (e == 15) { v = svara_voice_with_vibrato_depth(v, x); }
+    if (e == 16) { v = svara_voice_with_jitter(v, x); }
+    if (e == 17) { v = svara_voice_with_shimmer(v, x); }
+    if (e == 18) { v = svara_voice_with_formant_scale(v, x); }
+    if (e == 19) { v = svara_voice_with_f0_range(v, x); }
+    if (e == 20) { v = svara_voice_with_bandwidth_widening(v, x); }
+    sum_vec(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, v, SR, 0.005));
+    return 0;
+}
+fn tract_case(e, x) {
+    var t = svara_tract_new(SR);
+    if (e == 7) { svara_tract_set_nasal_coupling(t, x); }
+    if (e == 8) { svara_tract_set_lip_radiation(t, x); }
+    if (e == 9) { svara_tract_set_interaction_strength(t, x); }
+    if (e == 10) { svara_tract_set_subglottal_coupling(t, x); }
+    if (e == 11) { svara_tract_set_gain(t, x); }
+    var g = svara_glottal_new(f64_from(120), SR);
+    sum_buf(svara_tract_synthesize(t, g, 256), 256);
+    return 0;
+}
+fn glottal_case(e, x) {
+    var g = svara_glottal_new(f64_from(120), SR);
+    if (e == 46) { out_code(svara_glottal_set_f0(g, x)); }
+    if (e == 47) { out_code(svara_glottal_set_rd(g, x)); }
+    if (e == 48) { svara_glottal_set_vibrato(g, x, 0.1); }
+    if (e == 49) { svara_glottal_set_vibrato(g, f64_from(5), x); }
+    if (e == 50) { svara_glottal_set_spectral_tilt(g, x); }
+    if (e == 51) { svara_glottal_set_diplophonia(g, x); }
+    run_glottal(g);
+    return 0;
+}
+fn hostile(e, x) {
+    var voice = svara_voice_new_male();
+    if (e == 0) { sum_vec(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, x, 0.01)); return 0; }
+    if (e == 1) { sum_vec(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, x)); return 0; }
+    if (e == 2) { sum_vec(svara_phoneme_synthesize(SVARA_PH_PLOSIVE_P, voice, x, 0.01)); return 0; }
+    if (e == 3) { sum_vec(svara_phoneme_synthesize(SVARA_PH_PLOSIVE_P, voice, SR, x)); return 0; }
+    if (e == 4) { run_glottal(svara_glottal_new(x, SR)); return 0; }
+    if (e == 5) { run_glottal(svara_glottal_new(f64_from(120), x)); return 0; }
+    if (e == 6) {
+        var t = svara_tract_new(x);
+        if (svara_is_err(t) == 1) { out_code(t); return 0; }
+        out_code(svara_tract_set_vowel(t, SVARA_VOWEL_A));
+        return 0;
+    }
+    if ((e >= 7) & (e <= 11)) { return tract_case(e, x); }
+    if ((e >= 12) & (e <= 20)) { return voice_case(e, x); }
+    if (e == 21) {
+        var p = svara_pool_new(voice, x);
+        if (svara_is_err(p) == 1) { out_code(p); return 0; }
+        var n = svara_pool_render(p, SVARA_PH_VOWEL_A, voice, 0.005);
+        if (svara_is_err(n) == 1) { out_code(n); return 0; }
+        sum_buf(svara_pool_buffer(p), n); return 0;
+    }
+    if (e == 22) {
+        var p2 = svara_pool_new(voice, SR);
+        var n2 = svara_pool_render(p2, SVARA_PH_VOWEL_A, voice, x);
+        if (svara_is_err(n2) == 1) { out_code(n2); return 0; }
+        sum_buf(svara_pool_buffer(p2), n2); return 0;
+    }
+    if (e == 23) {
+        var c = svara_synthctx_new(voice, x);
+        if (svara_is_err(c) == 1) { out_code(c); return 0; }
+        var n3 = svara_synthctx_synthesize(c, SVARA_PH_VOWEL_A, voice, 0.005, 0);
+        if (svara_is_err(n3) == 1) { out_code(n3); return 0; }
+        sum_buf(svara_synthctx_buffer(c), n3); return 0;
+    }
+    if (e == 24) {
+        var c2 = svara_synthctx_new(voice, SR);
+        var n4 = svara_synthctx_synthesize(c2, SVARA_PH_VOWEL_A, voice, x, 0);
+        if (svara_is_err(n4) == 1) { out_code(n4); return 0; }
+        sum_buf(svara_synthctx_buffer(c2), n4); return 0;
+    }
+    if (e == 25) {
+        var s = svara_spectral_analyze(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.01), x);
+        if (svara_is_err(s) == 1) { out_code(s); return 0; }
+        sum_vec(SvSpectrum_magnitudes(s)); return 0;
+    }
+    if (e == 26) {
+        var s2 = svara_spectral_analyze(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.01), SR);
+        emit(svara_spectrum_magnitude_at(s2, x));
+        var o = alloc(16);
+        emit(svara_spectrum_peak_in_range(s2, x, f64_from(8000), o));
+        emit(svara_spectrum_peak_in_range(s2, 0, x, o));
+        emit(svara_spectrum_band_energy(s2, x, f64_from(8000)));
+        emit(svara_spectrum_band_energy(s2, 0, x));
+        return 0;
+    }
+    if (e == 27) {
+        var t2 = traj_of(x, SR);
+        if (svara_is_err(t2) == 1) { out_code(t2); return 0; }
+        fmt_int(svara_trajectory_total_samples(t2)); println("");
+        emit_target(svara_trajectory_formants_at(t2, 0)); return 0;
+    }
+    if (e == 28) {
+        var t3 = traj_of(0.05, x);
+        if (svara_is_err(t3) == 1) { out_code(t3); return 0; }
+        fmt_int(svara_trajectory_total_samples(t3)); println("");
+        emit_target(svara_trajectory_formants_at(t3, 0)); return 0;
+    }
+    if (e == 29) {
+        var t4 = traj_of(0.05, SR);
+        svara_trajectory_apply_speaking_rate(t4, x);
+        fmt_int(svara_trajectory_total_samples(t4)); println("");
+        emit_target(svara_trajectory_formants_at(t4, 100)); return 0;
+    }
+    if (e == 30) { sum_vec(svara_sequence_render(mk_seq(x, 0), voice, SR)); return 0; }
+    if (e == 31) {
+        var q = mk_seq(0.03, 0); svara_sequence_set_speaking_rate(q, x);
+        sum_vec(svara_sequence_render(q, voice, SR)); return 0;
+    }
+    if (e == 32) {
+        var q2 = mk_seq(0.03, 0); svara_sequence_set_transition_window(q2, x);
+        sum_vec(svara_sequence_render(q2, voice, SR)); return 0;
+    }
+    if (e == 33) {
+        var q3 = mk_seq(0.03, 0); svara_sequence_set_lookahead_onset(q3, x);
+        sum_vec(svara_sequence_render_planned(q3, voice, SR)); return 0;
+    }
+    if (e == 34) { sum_vec(svara_sequence_render_planned(mk_seq(x, 1), voice, SR)); return 0; }
+    if (e == 35) { sum_vec(svara_sequence_render(mk_seq(0.01, 0), voice, x)); return 0; }
+    if (e == 36) { sum_vec(svara_sequence_render_planned(mk_seq(0.01, 1), voice, x)); return 0; }
+    if (e == 37) { emit(svara_prosody_f0_at(svara_prosody_from_pattern(0, x), F64_HALF)); return 0; }
+    if (e == 38) { emit(svara_prosody_f0_at(svara_prosody_from_pattern(1, f64_from(120)), x)); return 0; }
+    if (e == 39) {
+        var pc = svara_prosody_from_pattern(0, f64_from(120));
+        svara_prosody_apply_stress(pc, SVARA_STRESS_PRIMARY, x);
+        svara_prosody_insert_f0_boost(pc, x, 0.2, 0.1);
+        emit(svara_prosody_f0_at(pc, F64_HALF)); return 0;
+    }
+    if (e == 40) {
+        var fv = vec_new(); vec_push(fv, svara_formant_new(x, f64_from(100), F64_ONE));
+        var ff = svara_formant_filter_new(fv, SR);
+        if (svara_is_err(ff) == 1) { out_code(ff); return 0; }
+        emit(svara_formant_filter_process_sample(ff, F64_ONE)); return 0;
+    }
+    if (e == 41) {
+        var fv2 = vec_new(); vec_push(fv2, svara_formant_new(f64_from(500), x, F64_ONE));
+        var ff2 = svara_formant_filter_new(fv2, SR);
+        if (svara_is_err(ff2) == 1) { out_code(ff2); return 0; }
+        emit(svara_formant_filter_process_sample(ff2, F64_ONE)); return 0;
+    }
+    if (e == 42) {
+        var dc = svara_dc_blocker_new(x);
+        emit(svara_dc_blocker_process(dc, F64_ONE)); emit(svara_dc_blocker_process(dc, F64_HALF)); return 0;
+    }
+    if ((e == 43) | (e == 44)) {
+        var pl = svara_pool_new(voice, SR);
+        var nz = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+        if (e == 43) { SvNasalization_set_onset(nz, x); }
+        if (e == 44) { SvNasalization_set_peak_coupling(nz, x); }
+        var nn = svara_pool_render_nasalized(pl, SVARA_PH_VOWEL_A, voice, 0.01, nz);
+        if (svara_is_err(nn) == 1) { out_code(nn); return 0; }
+        sum_buf(svara_pool_buffer(pl), nn); return 0;
+    }
+    if (e == 45) { bridges(x); return 0; }
+    if ((e >= 46) & (e <= 51)) { return glottal_case(e, x); }
+    if (e == 52) { var sm = svara_smooth_with_time(0, x, SR); svara_smooth_set_target(sm, F64_ONE); emit(svara_smooth_next(sm)); return 0; }
+    if (e == 53) { var sn = svara_smooth_with_time(0, 0.01, x); svara_smooth_set_target(sn, F64_ONE); emit(svara_smooth_next(sn)); return 0; }
+    if (e == 54) {
+        var b = svara_batch_new(voice, x);
+        if (svara_is_err(b) == 1) { out_code(b); return 0; }
+        svara_batch_push(b, SVARA_PH_VOWEL_A, 0.005, SVARA_STRESS_PRIMARY);
+        var ob = svara_batch_render_all(b);
+        if (svara_is_err(ob) == 1) { out_code(ob); return 0; }
+        sum_vec(SvRenderOutput_samples(ob)); return 0;
+    }
+    if (e == 56) {
+        var c56 = contour3(F64_ONE, x, F64_ONE);
+        emit(svara_prosody_f0_at(c56, F64_HALF)); emit(svara_prosody_f0_at(c56, 0.25)); return 0;
+    }
+    if (e == 57) {
+        var c57 = svara_prosody_flat();
+        svara_prosody_insert_f0_boost(c57, F64_HALF, x, 0.1);
+        emit(svara_prosody_f0_at(c57, F64_HALF)); emit(svara_prosody_f0_at(c57, 0.45)); return 0;
+    }
+    if (e == 55) {
+        var b2 = svara_batch_new(voice, SR);
+        svara_batch_push(b2, SVARA_PH_VOWEL_A, x, SVARA_STRESS_PRIMARY);
+        var ob2 = svara_batch_render_all(b2);
+        if (svara_is_err(ob2) == 1) { out_code(ob2); return 0; }
+        sum_vec(SvRenderOutput_samples(ob2)); return 0;
+    }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    args_init();
+    var mode = atoi(argv(1));
+    if (mode == 0) {
+        var s = atoi(argv(2));
+        if (s == 0) { sec_phonemes(); } elif (s == 1) { sec_ctx(); } elif (s == 2) { sec_pool(); }
+        elif (s == 3) { sec_glottal(); } elif (s == 4) { sec_tract(); } elif (s == 5) { sec_seq(); }
+        elif (s == 6) { sec_spectrum(); } elif (s == 7) { sec_prosody(); } elif (s == 8) { sec_traj(); }
+        elif (s == 9) { sec_bridge(); } elif (s == 10) { sec_misc(); } elif (s == 11) { sec_batch(); } elif (s == 12) { sec_contours(); } elif (s == 13) { sec_json(); }
+    } else {
+        hostile(atoi(argv(2)), x_val(atoi(argv(3))));
+    }
+    return 0;
+}
+
+var exit_code = main();
+syscall(60, exit_code);

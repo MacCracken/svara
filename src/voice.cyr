@@ -3,7 +3,7 @@
 # distinguishing speakers (f0, formant scaling, breathiness, vibrato, jitter/
 # shimmer); VocalEffort maps a whisper..shout continuum to coordinated glottal
 # parameters. f32 -> f64 throughout. Builders mutate the profile in place and
-# return it (Rust's `mut self` chain). serde dropped (M-serde; roadmap.md).
+# return it (Rust's `mut self` chain).
 #
 # Requires (from the build/test unit): stdlib alloc/math, error.cyr, formant.cyr
 # (VowelTarget + with_bandwidths), glottal.cyr (GlottalSource + SVARA_GLOTTAL_*).

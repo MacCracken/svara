@@ -7,7 +7,7 @@
 #
 # Requires: stdlib alloc/vec/math, hisab (ease_in_out_smooth), error.cyr (SV_EPSILON),
 # formant.cyr (VowelTarget), phoneme.cyr (phoneme_formants, coarticulation_resistance),
-# voice.cyr (apply_formant_scale). serde dropped (M-serde; roadmap.md).
+# voice.cyr (apply_formant_scale). A planner serializes through SvTrajectoryState.
 
 # FormantKeypoint -- target formants at a sample time, with coarticulation resistance.
 #derive(accessors)

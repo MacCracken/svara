@@ -1,464 +1,223 @@
 # svara — Roadmap
 
-> **What is still to do**, in release order. State lives in
-> [`state.md`](state.md); shipped detail lives in [`../../CHANGELOG.md`](../../CHANGELOG.md).
+> **What is still to do**, in release order. State lives in [`state.md`](state.md),
+> and everything shipped lives in [`../../CHANGELOG.md`](../../CHANGELOG.md).
 >
-> Organised by **release**, not by milestone. ⛔ marks work blocked on something
-> outside this repo, with the blocker named; everything else can be started
-> today. Shipped lanes are compressed into the table below, with a few kept in
-> full at the tail — those are the ones where the *plan* was wrong in a way worth
-> remembering.
->
-> **Two lanes are open and one is parked.** 3.6.0 (perf) has work available now.
-> 3.7.0 (retire `rust-old/`) is **parked on dhvani**: everything svara can do is
-> done, and the oracle stays until a downstream consumer builds against the
-> bundle.
+> ⛔ marks work blocked outside this repo, with the blocker named. Everything else
+> can start today.
 
----
-
-## 🔴 P0 — move the synthesis core to f32
-
-**Filed 2026-08-31 by prani**, its downstream consumer, which measured the
-consequence. **Sequenced behind naad**: naad has the same P0, and svara's
-per-sample calls go through naad's filters, so naad converts first.
-
-### The measurement
-
-prani's roadmap 2.0.7 ran its Cyrius port against its frozen Rust oracle on one
-host — same species, same durations, same 44100 Hz. The oracle is prani 1.1.0 on
-**svara 1.0.0 in f32**; the port is prani 2.0.6 on **svara 3.5.4 in f64**:
-
-| | Rust (f32) | Cyrius (f64) | |
-|---|---:|---:|---:|
-| `wolf_howl_1s` | 1.39 ms | 21.9 ms | **15.8× slower** |
-| `songbird_trill_500ms` | 741 µs | 11.6 ms | 15.6× |
-| `snake_hiss_500ms` | 191 µs | 2.73 ms | 14.2× |
-| median, 13 synthesis benchmarks | | | **15.7× slower** |
-| realtime, wolf howl | **719×** | **45.6×** | |
-
-Those benchmarks are prani's, but the work is overwhelmingly **svara's**: every
-one of them runs `svara_glottal_next_sample` and `svara_tract_process_sample`
-per sample, through the formant bank. The 15.7× is largely a measurement of this
-engine.
-
-⚠ Note svara's own 3.5.3 headline — *"0.35 µs/sample, ~64× real-time"* — is the
-same order as the 45.6× measured here through prani, so this is consistent with
-svara's own numbers, not a contradiction of them.
-
-### Why this lands on svara
-
-svara owns the per-sample synthesis surface prani calls: `glottal_next_sample`,
-`tract_process_sample`, the formant bank. Those are f64 on both sides of every
-call, so **prani cannot convert without svara**, and converting only prani would
-mean widening at every per-sample boundary — strictly more work than doing
-nothing.
-
-### The constraint that justified f64 is gone
-
-The ports were written when Cyrius had no f32 math. **ganita 1.1.4 ships a
-23-function f32 scalar tier** — `sin cos exp ln sqrt pow atan2 hypot cbrt floor
-ceil trunc round abs neg min max clamp lerp sign log2 exp2` — already vendored in
-`lib/`. Audit what svara calls against that list first: svara uses more
-transcendentals than prani does, so **check for `tanh`/`sinh`/`cosh`/`asin`/`acos`
-specifically** — those are *not* in the f32 tier, and if the glottal model needs
-them this P0 needs a ganita request attached rather than a straight conversion.
-
-`f32_add`/`f32_mul` are **not** callable — f32 arithmetic dispatches through the
-operators on an `F32_TYID`-typed binding.
-
-### Three reasons, ranked honestly
-
-1. **SIMD width.** cycc has `f32v8` — eight lanes against `f64v4`'s four. The
-   formant bank is the obvious beneficiary; 3.5.0 already collapsed its delay
-   line for a 6% win, and lane width is a bigger lever than that.
-2. **Half the memory traffic** per sample buffer.
-3. **Parity.** svara's own oracle is f32, and every tolerance loosened in its
-   suites exists because of this widening.
-
-⚠ **f32 is not proven to be the cause of the 15.7×**, and this P0 must not
-assume it. Three things differ in that comparison: float width, three major
-versions of the DSP stack, and LLVM `--release` against cycc. **The honest prior
-is that codegen dominates and float width is second.** Measure one hot path
-before converting the engine — a measured "no" is a good outcome and closes the
-question for prani too.
-
-**Blocked on**: naad's f32 conversion (same P0, filed there).
-**Blocks**: prani 2.1.0 Lane A.
-
----
-
-## Shipped
-
-| Release | Date | What |
+| Release | Lane | Status |
 |---|---|---|
-| **0.1.0** | 2026-07-03 | Port scaffold. `cyrius port` ran, Rust moved to `rust-old/`, doc tree laid out. |
-| **3.0.0** | 2026-07-03 | **Full surface parity.** All 19 Rust modules ported bottom-up (16 `.cyr`; `dsp.rs` folded into `error.cyr`, `math.rs` → the `ganita` stdlib), each gated by `.tcyr` tolerance tests. 634 assertions / 18 suites vs Rust's 213 tests, 11 hot-path benches, fmt/lint/docs clean. Locked decisions all honoured: naad-backend only, embedded data tables, tolerance parity, the three v2.0.1 quirks preserved. |
-| **3.0.1** | 2026-07-05 | naad 2.1.0 → 2.1.1 (namespace de-collision). Pin-only. |
-| **3.1.0** | 2026-07-06 | **Control-rate glide coefficients.** `svara_ph_synth_diphthong` re-solved the whole biquad bank every sample; now every 64. `/ai/` **5.42 ms → 0.94 ms (5.8×)**, faster than the Rust oracle. |
-| **3.1.1** | 2026-08-26 | Toolchain pin 6.4.12 → 6.4.13. |
-| **3.1.2** | 2026-08-26 | Toolchain 6.4.13 → **6.5.35**; hisab → 2.11.2, naad → 2.2.1, goonj → 2.0.4, sakshi → 2.4.11. Absorbed naad's `FILTER_* → NAAD_FILTER_*` break. `cyrius audit` works again. |
-| **3.1.3** | 2026-08-26 | **P1 audit sweep.** Five defects reachable through the public API — a SIGSEGV, three process aborts, a silent NaN — plus a constructor returning an error code as a pointer and an infinite loop. Per-sample arena use in `render_planned` **1,121 → 33 B** (34×) untoned, **1,505 → 113 B** (13×) toned. Output bit-for-bit identical. 713 assertions / 20 suites. [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). |
-| **3.2.0** | 2026-08-26 | **Container serde.** Serialized surface 8 → 13 types: SmoothedParam, Rng, F0Point (new), ProsodyContour (`Vec<SvF0Point>`), PhonemeSequence (`Vec<SvPhonemeEvent>`). Round-trips asserted behaviourally — a restored sequence renders bit-identical audio. The boundary is decided in [ADR-0002](../adr/0002-serialization-boundary.md), because the Rust had no skip policy to inherit and the toolchain cannot decode a nested struct field. 745 assertions. |
-| **3.3.0** | 2026-08-26 | **State companions.** The nine engine types ADR-0002 excluded from direct derive each got a flat companion + `save`/`restore`. Derived types 13 → 22, suite 745 → 826. Restore is measured behaviourally, and its two limits (naad's internal state; filter delay lines) are pinned by tests that assert the divergence exists. |
-| **3.3.1** | 2026-08-26 | **Docs, CI, stale claims.** CI ran four steps and none of the gate it documents; it now runs `cyrius audit` + fuzz + deny, asserts the toolchain matches the pin, and checks `dist/` is current. Four Rust-era docs rewritten (incl. the threat model, which asserted mitigations 3.1.3 disproved); four pre-port ADRs re-homed as 0003–0006; `.gitignore` stopped hiding `benches/history.csv`. |
-| **3.3.2** | 2026-08-26 | **Glottal restore is exact.** 3.3.0 documented a limitation that was not real — naad derives accessors on `NoiseGenerator` and `Lfo`, so their state was reachable all along. `SvGlottalState` now carries it; the test flipped from asserting divergence to asserting identity. Lesson recorded in ADR-0002: a foreign type lacks a **codec**, not accessors. |
-| **3.4.0** | 2026-08-26 | **Structured logging (M-log).** sakshi tracing behind `-D LOGGING`, off by default and compiled out when off; four coarse entry points, never per-sample. Spans are token-based because every entry point has early returns. `scripts/check-logging.sh` builds and runs both ways — `cyrius test` does not forward `-D`, so `cyrius audit` only ever compiled the OFF half. |
-| **3.5.0** | 2026-08-26 | **Redundant input delay line collapsed.** The bank's eight per-slot `x1`/`x2` buffers all held the same two values — verified by 28,672 cross-slot comparisons before changing anything. Now two scalars: −6.0% formant `process_sample`, −4.2% `process_block`, bit-identical. A `#inline` experiment was measured, rejected and recorded. |
-| **3.5.1** | 2026-08-26 | **Five oracle test gaps closed** (`tests/oracle.tcyr`, 69 assertions, no defects found) — quality levels had **no** suite or bench at all. Also found that `cyrius audit` prints `scope: src` and never lints tests or benches; CI does now. |
-| **3.5.2** | 2026-08-26 | **The oracle's preserve-first gate.** Five runnable `examples/` (there were none); the third v2.0.1 quirk annotated in code; the recovery incantation (`git show <tag>:rust-old/…`) recorded and verified; and the last NaN hole closed by [ADR-0007](../adr/0007-reject-nan-formant-parameters.md) — a deliberate divergence, since the oracle accepts a NaN formant and emits a buffer of NaN having returned Ok. |
-| **3.5.3** | 2026-08-26 | **Documentation sweep.** The headline perf figure had been wrong since 3.0.0 — "0.56 µs/sample, ~40× real-time" summed glottal + formant + tract, but the tract bench **contains** the formant bank; measured end to end it is **0.35 µs, ~64×**. `SECURITY.md` still said "1.x: Yes" while 3.0.0–3.1.2 carry five reachable defects. Roadmap made future-facing, `rust-old/` parked on dhvani. |
-
-**M-serde (value types) — done 2026-07-03.** Cyrius ships `#derive(Serialize)`
-(emits `Type_to_json` / `_from_json_str` over bayan's typed JSON DOM); toolchain
-6.3.40 added f64-field support. Eight pure-scalar public types derive it with
-round-trip coverage (`tests/serde.tcyr`, 22 tests): `Formant`, `VowelTarget`,
-`VoiceProfile`, `EffortParams`, `PhonemeEvent`, `Nasalization`,
-`VoiceOnsetTime`, `RenderProgress`. The static data tables stayed as embedded
-pure functions — a synth library shouldn't carry a runtime data file, and they
-were never serde in the Rust either. Container types are [3.2.0](#320--container-serde).
+| **3.6.3** | [P(-1) sweep](#363--p-1-sweep): audit, hardening, refactor, optimization, repair | next |
+| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | after 3.6.3 |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory | ready |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | needs a decision per quirk |
+| **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
 ---
 
-## 3.6.0 — hot-path memory and SIMD
+## 3.6.3 — P(-1) sweep
 
-> ⚠ **Not what shipped as 3.6.0.** That number went to the cyrius 6.7.9 toolchain
-> release, because the consumer floor moved. This lane is still open and needs a new
-> number.
+A full pass over the code: audit it, harden it, refactor it, optimize it, and repair
+what turns up. It runs before 3.7.0 because the differential needs the oracle.
 
-**M-perf, what is left.** Three rounds have shipped — 3.1.0's control-rate glides,
-3.1.3's removal of the per-sample allocation, and 3.5.0's collapse of the
-redundant input delay line. A same-machine head-to-head
-([`../benchmarks-rust-v-cyrius.md`](../benchmarks-rust-v-cyrius.md)) put the
-per-DSP-unit gap against the Rust at **10–38×**.
+**Why it earns a release.** naad's sweep fixed 45 defects that its 2,418 assertions
+caught none of, and goonj's found 21 public accessors reading or writing out of
+bounds. svara's last audit was 3.1.3. It has never run a differential against the
+compiled oracle or any fault injection, and its fuzz target is still the scaffold
+stub.
 
-⚠ **Measure the right thing.** A bump allocation is a pointer add, so removing
-1.1 KB of it per sample moved `render_planned` only 20.6 → 18.6 ms — the cost
-that mattered was *arena bytes*, which no timer can see. And a single run on this
-host is not trustworthy: one showed `glottal next_sample` moving 79 → 121 ns on
-untouched code. Build both trees, interleave the runs, take the minimum. Anything
-trading memory for time needs the `tests/allocbudget.tcyr` treatment, not a bench
-row.
+**The bar.** Audio and JSON on valid input do not move, checked with
+`scripts/sweep/compare.py 3.6.2`, and any exception is named in the CHANGELOG. Every
+fix has a test shown to fail without it.
 
-⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample
-quality predicates at **+0.7%** and reverted it; `src/lod.cyr` says so, to stop
-the next person re-trying it. A change with no measured effect does not earn a
-place in the source.
+### Audit
 
-### Ready to start
+- [ ] **Differential against `rust-old/`.** Build the oracle in a scratch copy and
+      drive both sides over every public entry point, comparing outcome class and
+      value: hostile values for each numeric parameter, plus realistic input. goonj's
+      hostile differential barely reached its valid paths, so it had to add realistic
+      scenes before it could trust the result.
+- [ ] **Line by line against `rust-old/`**, one pass per module cluster, each finding
+      reproduced before it is listed: source (`glottal`, `rng`, `smooth`), filter
+      (`formant`, `tract`, `lod`), speech (`phoneme`, `prosody`, `trajectory`,
+      `voice`), render (`sequence`, `pool`, `render`), boundary (`error`, `logging`,
+      `spectral`, `bridge`).
+- [ ] **A real fuzz target.** `tests/svara.fcyr` calls no svara function, so
+      `cyrius fuzz` has passed vacuously in CI since 3.3.1. Drive the public API, and
+      run it under `--poison` and `--bounds`.
+- [ ] **Fault injection.** Refuse the Nth allocation across the render pipelines,
+      singly and for good.
+- [ ] **All-zero sweep.** Every public fn with 0 for every argument. Each returns or
+      faults at the null page, with no hang.
+- [ ] **Execution coverage.** `cyrius coverage --exec` names what no suite runs.
+- [ ] **Independent review of the merged diff**, by a reader who saw none of the work.
 
-- [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates ~16× per note,
-      and `pool.cyr` exists but is **not wired into the render path** — verified:
-      `svara_pool_*` appears only in `src/main.cyr`'s smoke; `sequence.cyr` and
-      `render.cyr` never reference it. 3.1.3 did this for the *per-sample* path;
-      this is the remaining *per-note* one, same measurement method.
-- [ ] **Tract per-sample chain** (~275 ns/sample: formant bank + nasal +
-      subglottal + lip + feedback). The SIMD half is blocked below; what is
-      available now is reducing memory traffic, which is what has actually paid
-      every time.
+### Leads already in hand
 
-### ⛔ Blocked on the Cyrius stdlib
+- **Ownership.** Rust moves or copies what it keeps. `svara_prosody_make` keeps the
+  caller's vec and `svara_sequence_push` keeps the caller's event, so a later write
+  by the caller reaches them. naad found this class across its port and fixed it
+  under its ADR-0005.
+- **No sample-rate ceiling.** `svara_validate_sample_rate` asks only for positive and
+  finite, and a sequence render at 3e9 Hz runs past 40 s. Decide whether to bound it.
+- **`br_in_range` passes NaN**, so `tests/bridge.tcyr`'s range assertions cannot see one.
+- **`#derive` setters are public** and bypass what a real setter validates.
 
-- [ ] **`svara_ph_buf_to_vec` doubles its result vec from empty**, so every render
-      leaves roughly one dead copy of its own output in the arena — ~16 of the 33
-      remaining bytes/sample. Needs `vec_with_capacity` in `lib/vec.cyr`.
-      **Do not hand-build a vec header in svara**: that couples the library to
-      stdlib internals for a 2× win on an already-34×-improved number.
+### Refactor
 
-### ⛔ Blocked on Cyrius SIMD codegen — expected in a later 6.5.x
+- [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
+      repeat each other. Share what is the same, and leave what differs to 3.9.x.
+- [ ] **13 test files define their own `approx`.** Move it to one include.
+- [ ] **Scaffold leftovers.** `tests/svara.bcyr` benches a no-op.
 
-The toolchain is scheduled to improve SIMD in the 6.5.x line. **Revisit all three
-of these when it lands**; until then they are not worth attempting.
+### Optimization
 
-- [ ] **SIMD the formant biquad bank.** Prototyped as a bit-identical `f64v4`
-      (AVX2) 8-slot bank with a `simd_has_avx2()`-guarded fallback. It passed
-      tolerance but bought only **~5%**: the loop is **memory-bound** — the SOA
-      state shuffle and vector-op call overhead dominate, and the ptr/value
-      `f64v4` API cannot keep lane state in registers across samples. Reverted.
-      3.5.0 then got **−6%** from the same insight with no SIMD at all, which is
-      the measure of how little the arithmetic was costing.
-- [ ] **Register-resident block SIMD** — a `process_block` holding the 8-slot
-      state in vector registers across the sample loop. This is the one that needs
-      codegen not round-tripping each `f64v4` op through memory.
-- [ ] **FMA + block audit** — `f64v4_fmadd` in every biquad/mix inner loop, and
-      the glottal→tract→formant chain running in blocks.
+Only what leaves output bit-identical. A change that reshapes a loop belongs to 3.8.x.
 
-**Gate:** tolerance-parity `.tcyr` stays green; any AVX2 path is
-`simd_has_avx2()`-guarded with a scalar fallback byte-identical to today;
-`bench-history.csv` records before/after per-op deltas; no regression on
-non-AVX2 hosts.
+- [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls
+      it per sample.
+- [ ] Whatever the audit turns up. Measure with the counters in
+      `scripts/sweep/compare.py`, because a timer on this host is often unusable.
+- [ ] **Refresh `docs/benchmarks.md` and `benches/history.csv`** on a quiet machine.
+      Both stop at 3.5.3.
+
+### Deliverables
+
+- [ ] **`docs/audit/YYYY-MM-DD-audit.md`**, the security audit, on the threat model
+      rewritten in 3.3.1.
+- [ ] **An ADR for what stays open**: accepted hostile-input gaps and the policy on a
+      refused allocation, as naad's ADR-0006 and ADR-0007 do.
+- [ ] **A "How it was audited" section in the CHANGELOG**, with method and counts.
 
 ---
 
 ## 3.7.0 — retire `rust-old/`
 
-> **Everything svara can do here is done.** The remaining gate is not svara's:
-> **dhvani has not been updated to the Cyrius svara yet.** Until a downstream
-> consumer builds against `dist/svara.cyr`, the oracle stays in the tree. This
-> lane is parked, not in progress.
+The 3.6.3 differential is the oracle's last planned use, which is the order goonj
+took: sweep at 2.1.3, delete at 2.2.0. The port itself is not the obstacle. A
+name-by-name sweep of every Rust `pub` item found zero missing counterparts.
 
-**Why it is parked rather than done.** naad puts it plainly: *"Deleting it is the
-last step of the port, not the first."* goonj records its own oracle as "cleared
-for deletion (verified: build, all suites and the bundle check pass with it
-removed)" and still holds, on the same gate. And naad 2.2.1 — after a complete,
-green, apparently finished port — had to go **back** to the Rust to close 182
-untested public functions, because transcribing expectations from its own output
-would have frozen an existing bug in as correct. svara hit the smaller version of
-that in 3.5.1.
+### The gate, measured 2026-11-07
 
-**The port itself is not the obstacle.** A name-by-name sweep of every Rust `pub`
-item found **zero missing counterparts**; the two apparent gaps are explained
-renames (`DEFAULT_AMPLITUDES: [f32;5]` → `SVARA_AMP_0..4`; `context_mut` folded
-into `svara_pool_context`, Cyrius having no `&`/`&mut` split). Enum parity is
-exact on all ten, `Phoneme` at 101/101. No golden files, data fixtures or licence
-text exist only there.
+This used to read "dhvani has not been updated to the Cyrius svara", which stopped
+being true. dhvani links `dist/svara.cyr` through its `voice_synth` wrapper, and
+prani, shabda and shabdakosh link it too.
 
-### ✅ Preserve-first — complete
+| Consumer | Pins today | Against svara 3.6.1, cyrius 6.7.18, hisab 3.4.1, goonj 2.3.1, naad 2.3.3 |
+|---|---|---|
+| dhvani 2.2.6 | svara 3.5.5, cyrius 6.6.10 | **Builds, and 65 of 65 suites pass**, in a scratch copy. `tests/voice_synth.tcyr` calls svara directly, 61 assertions |
 
-Everything that needed the Rust *readable* was done in 3.2.0–3.5.2, so the
-directory is no longer load-bearing for any scheduled work:
+naad measured the same stack and found no failure that traces to it. What is left for
+dhvani is moving its pins, which is dhvani's to do. They are below the 6.7.2 floor.
 
-- The Rust **serde contract** transcribed (3.2.0) — 30 `Serialize` types, 3
-  `#[serde(default)]`, **zero** `#[serde(skip)]`.
-- The **five oracle test gaps** closed (3.5.1) — `tests/oracle.tcyr`, expectations
-  re-derived from the Rust and cited by line.
-- The **five examples** ported (3.5.2) — `examples/`, built and run by CI.
-- The **third v2.0.1 quirk** annotated in code (3.5.2).
-- The open **NaN-formant parity question** resolved (3.5.2,
-  [ADR-0007](../adr/0007-reject-nan-formant-parameters.md)).
-- The **recovery incantation** recorded and verified (3.5.2):
-  `git show <tag>:rust-old/src/<module>.rs` works from every tag. **Cite a tag,
-  not a bare path**, in anything written from here on.
+- [ ] **Decide whether a measurement in a scratch copy clears the gate**, or whether
+      a consumer has to move its pins first. naad holds on the second reading, and
+      goonj deleted on the first.
 
-### ⛔ The gate — not svara's to close
+### Steps
 
-- [ ] **Consumer-green: dhvani (or vansh) builds and passes against
-      `dist/svara.cyr`.** dhvani still needs updating to the Cyrius svara; that
-      work lives in dhvani's repo, on dhvani's schedule. naad's own roadmap names
-      svara as *its* consumer-green gate, so the same exercise unblocks both.
-      Per naad, it is the exercise that finds surface gaps a library's own suite
-      cannot.
-
-### When the gate clears
-
-- [ ] **Final parity sweep, closed out in the CHANGELOG** — goonj's 2.0.4 was
-      "the last audit run while the Rust oracle was still in the working tree"
-      and found seven behavioural divergences.
-- [ ] **Verify green with it moved aside** (goonj's literal precondition):
-      `cyrius audit` exits 0, every suite passes, `cyrius distlib` and
-      `cyrius bench` run, `./scripts/check-logging.sh` passes.
-- [ ] **Sweep the ~61 non-`dist` references** — rewrite `src/` and `tests/`
-      headers to past tense, fix `docs/benchmarks-rust-v-cyrius.md`'s
-      `cd rust-old && cargo bench`, fix `CONTRIBUTING.md`'s live instruction to
-      cross-check phoneme work against `rust-old/src/phoneme.rs`, drop
-      `.gitignore`'s `rust-old/target/`. Regenerate `dist/svara.cyr`.
-- [ ] **Delete.** Recovers 223 MB of working tree (8,785 tracked lines; the bulk
-      is untracked `target/`).
+- [ ] **An ADR on the model of goonj's ADR-0006**: delete the tree and keep its bar.
+      It names the last tag that has the Rust, keeps the `rust-old/src/x.rs:NN`
+      citations as an audit trail, and gives the recipe to rebuild the oracle.
+- [ ] **Confirm nothing lives only there.** Rust tests never ported, the `Cargo.lock`
+      versions, and files with no counterpart.
+- [ ] **Verify green with it moved aside:** `cyrius audit`, every suite,
+      `cyrius distlib`, `cyrius bench` and `./scripts/check-logging.sh`.
+- [ ] **Rewrite the live instructions**: `CONTRIBUTING.md`'s cross-check,
+      `CLAUDE.md`'s rules, `docs/benchmarks-rust-v-cyrius.md`'s
+      `cd rust-old && cargo bench`, and `.gitignore`'s `rust-old/target/`.
+- [ ] **Delete**, and regenerate `dist/svara.cyr`.
 
 ---
 
-## v1.0 — hardening
+## 3.8.x — performance
 
-- [ ] **Security audit** — `docs/audit/YYYY-MM-DD-audit.md`; the directory does
-      not exist yet. Its prerequisite, the threat-model rewrite, landed in 3.3.1,
-      and `SECURITY.md` was rewritten per-release in 3.5.3.
-- [ ] **Decide the three preserved v2.0.1 quirks** — unapplied per-vowel spectral
-      tilt; `set_speed_quotient` ignored by the Rosenberg pulse; `tone` honoured
-      only by `render_planned`. All three are now annotated at their call sites
-      (3.5.2), so the decision can be made without the oracle. Each needs its own
-      test when fixed.
-- [ ] **Consumer-green** — the same gate as [3.7.0](#370--retire-rust-old).
+prani measured its port 15.7× slower than its Rust oracle, and float width is not the
+cause ([ADR-0008](../adr/0008-the-synthesis-core-stays-f64.md)). naad found the same
+arithmetic costs 22.7 ns through accessors and one call per sample, and 9.5 ns in one
+loop in locals. Shape is the lever svara still has.
+
+⚠ **Measure the right thing.** A bump allocation is a pointer add, so removing 1.1 KB
+of it per sample moved `render_planned` only 20.6 → 18.6 ms. The cost that mattered
+was arena bytes, which no timer can see. Anything trading memory for time needs the
+`tests/allocbudget.tcyr` treatment, and a timing gap needs checking against retired
+instructions.
+
+⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
+predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
+measured effect does not earn a place in the source.
+
+- [ ] **Tract per-sample chain** (about 200 ns/sample: formant bank, nasal, subglottal,
+      lip, feedback). Move the accessors into locals around one loop. Reducing memory
+      traffic is what has paid every time.
+- [ ] **Call naad's block forms** where the tract's feedback allows it.
+      `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
+      2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
+      form owes the path it stands for.
+- [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
+      and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
+      never reference it.
+
+**Gate:** `scripts/sweep/compare.py` shows no moved value, and `tests/allocbudget.tcyr`
+holds.
 
 ---
 
-## Out of scope for v1.0
+## 3.9.x — the preserved Rust quirks
 
-- **Bit-exact cross-arch transcendental output.** Tolerance parity instead —
-  ganita's transcendentals are per-arch. See [`state.md`](state.md).
-- **Non-American-English vowel targets.** The Hillenbrand data is US English;
-  other languages and dialects need their own
+Four behaviours svara keeps because the oracle has them. Each needs a decision,
+recorded in an ADR. A fix changes output, so each one gets a minor of its own and its
+own test.
+
+- [ ] **Unapplied per-vowel spectral tilt.**
+- [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**
+- [ ] **`tone` is honoured only by `render_planned`.**
+- [ ] **Plosive timing depends on the render path.** `svara_ph_synth_plosive` uses the
+      VOT fractions, and `svara_synthctx_plosive` uses a fixed n/3 and n/6. Both match
+      the oracle: `git show 3.5.2:rust-old/src/phoneme.rs`, `synthesize_plosive` and
+      `synthesize_plosive_ctx`.
+
+---
+
+## 3.x.x — SIMD, and work blocked upstream
+
+### SIMD, to be measured again
+
+This used to wait on codegen, and that claim is out of date. naad measured a 64-filter
+bank going from 10.5 to 3.2 ns per filter with `f64v256_*` in structure-of-arrays form,
+3.3×, on cyrius 6.7.18. svara's own prototype bought about 5% through the ptr/value
+`f64v4` API, and 3.5.0 then got 6% with no SIMD at all. Measure before planning.
+
+- [ ] **SIMD the formant bank**, structure-of-arrays over `f64v256_*`. naad leaves SIMD
+      dispatch to dhvani, so agree that first.
+- [ ] **Register-resident block SIMD**, holding the 8-slot state in vector registers
+      across the sample loop.
+- [ ] **FMA and block audit**: `f64v4_fmadd` in the biquad and mix loops, and the
+      glottal → tract → formant chain running in blocks.
+
+**Gate:** tolerance-parity `.tcyr` stays green, any AVX2 path is
+`simd_has_avx2()`-guarded with a scalar fallback byte-identical to today,
+`benches/history.csv` records before and after, and non-AVX2 hosts do not regress.
+
+### ⛔ Blocked upstream
+
+- [ ] ⛔ **`svara_ph_buf_to_vec` doubles its result vec from empty**, so every render
+      leaves about one dead copy of its output in the arena. **Blocked on
+      `vec_with_capacity` in `lib/vec.cyr`**, still absent at cyrius 6.7.18. Do not
+      hand-build a vec header in svara.
+- ⛔ **Codegen.** naad measured 9.5 ns against Rust's 2.8 on the same loop. It is the
+  largest single factor left, and it belongs to cyrius.
+
+---
+
+## Out of scope
+
+- **Moving the core to f32.** Closed by
+  [ADR-0008](../adr/0008-the-synthesis-core-stays-f64.md), which says what would reopen
+  it.
+- **Bit-exact cross-arch transcendental output.** Tolerance parity instead: ganita's
+  transcendentals are per-arch. See [`state.md`](state.md).
+- **Non-American-English vowel targets.** The Hillenbrand data is US English, and other
+  languages and dialects need their own
   ([ADR-0005](../adr/0005-formant-data-source.md)).
-- **Fixing the three v2.0.1 quirks** — deciding them is a v1.0 item; *fixing* one
-  changes output and belongs in a minor of its own, with its own tests.
-
----
-
-## Shipped lanes — what actually happened
-
-Kept because in all three the *plan* was wrong in a way worth remembering, not
-just because the work is done.
-
-## 3.4.0 — structured logging
-
-✅ **Shipped 2026-08-26.** M-log. svara emitted no diagnostics at all; it now
-routes tracing through sakshi, off by default behind `-D LOGGING` and compiled
-out entirely when off. Four coarse entry points instrumented — sequence render,
-batch render, synthesis-context render, pool render — **never per-sample**.
-
-Three things worth carrying forward:
-
-- **Spans are token-based, not paired.** Every instrumented entry point has early
-  returns (`svara_synthctx_synthesize` has seven), and a plain enter/exit pair
-  leaks a span on each of them. sakshi's stack is 16 deep, so leaks would poison
-  the log slowly rather than fail loudly. `svara_span_leave(token)` unwinds to a
-  recorded depth. Asserted with 40 consecutive failing renders.
-- ⚠ **sakshi does not level-gate span events** — `_sk_emit_span` writes
-  regardless of `sakshi_set_level`, because a span is structural rather than a
-  log line. svara gates them itself, or `SVARA_LOG=off` would still stream every
-  ENTER/EXIT pair.
-- ⚠ **`cyrius test` does not forward `-D`.** `cyrius audit` therefore only ever
-  compiles the logging-OFF half. `scripts/check-logging.sh` builds and runs both
-  ways and is wired into CI; without it the whole `#ifdef LOGGING` half of the
-  codebase would be built by nobody. It also asserts structurally that no log or
-  span call sits on the per-sample path — verified to discriminate by injecting
-  one and watching it fail.
-
----
-
-## 3.2.0 — container serde
-
-✅ **Shipped 2026-08-26. M2, delivered — but not as this file described it.** Two of the milestone's
-premises were false and had to be measured:
-
-1. **There was no Rust skip policy to inherit.** The oracle has **30
-   `Serialize`-deriving types, 3 `#[serde(default)]`, and zero `#[serde(skip)]`**.
-   Rust serialized everything because `VocalTract` holds a
-   `naad::filter::BiquadFilter` that is itself `Serialize` in the Rust naad;
-   Cyrius naad exposes opaque handles with no codec, so the policy had to be
-   decided. It is, in [ADR-0002](../adr/0002-serialization-boundary.md).
-2. **The toolchain reaches less than 6.4.13's changelog implies.** `Vec<f64>` and
-   `Vec<flat-derive-struct>` round-trip; a **nested `#derive`-struct field does
-   not, in either direction** — it is laid out inline while
-   `#derive(accessors)` gives it pointer semantics, so the encoder emits the
-   pointer reinterpreted as the first member, and the decoder returns zeros
-   regardless. That rules out 6 of the 9 container types this file named.
-
-**Shipped:** `SvSmoothedParam`, `SvRng`, `SvF0Point` (new — the raw 16-byte
-`(time, value)` pair given a type), `SvProsodyContour` (`Vec<SvF0Point>`),
-`SvPhonemeSequence` (`Vec<SvPhonemeEvent>`). Serialized surface 8 → 13 types;
-suite 713 → 745; every render path still bit-for-bit identical to 3.1.2.
-
-Round-trips are asserted **behaviourally** — a restored `Rng` reproduces 32 draws
-exactly, a restored contour traces the same curve at 21 points, a restored
-`PhonemeSequence` renders bit-identical audio.
-
-`SvProsodyContour`'s interpolation scratch moved to module level: `#derive(Serialize)`
-has no skip attribute, so a scratch pointer would have leaked a heap address into
-the JSON and come back dangling. That also answered the "skip the seven 3.1.3
-scratch fields" item — the other six live on types that are not serialized.
-
-**`Quality` needed no work.** It is a `var SVARA_*` integer, not a struct, and
-already round-trips wherever it appears as a field. Same for the other 12 Rust
-`Serialize` enums.
-
----
-
-## 3.3.0 — state companions for the engine types
-
-✅ **Shipped 2026-08-26.** The nine types ADR-0002 excluded from direct derive
-each got a flat state companion plus `save` / `restore`. Derived types 13 → 22;
-serde suite 54 → 135 assertions; whole suite 745 → 826.
-
-`SvSpectrum` needed no companion — it was already flat and only wanted the
-annotations. `SvFormantFilter` needed none either: its state is
-(formants, sample_rate), and the tract now records its formants, so
-`svara_tract_restore` rebuilds the filter without a separate type.
-
-**Released as a minor, not the planned patch** — ten new public types and sixteen
-new public functions.
-
-⚠ **3.3.0 also shipped a limitation that was not real** — see 3.3.2. It claimed
-naad's `NoiseGenerator` cell and `Lfo` phase could not be read out, and the test
-suite *asserted that divergence*, which made a wrong belief look measured. naad
-derives accessors on both structs. Before concluding a foreign handle is opaque,
-check for accessors: what it lacks is a codec.
-
-Two findings worth carrying forward:
-
-- **The SynthesisContext holds almost nothing across calls.**
-  `svara_synthctx_synthesize` resets the tract and re-applies every glottal
-  parameter from the voice at the top of each call, so its whole persistent state
-  is the noise PRNG and the sample rate. `SvSynthCtxState` is three fields. The
-  same is true of the pool and the batch renderer, which is why all three take
-  the voice as a `restore` argument rather than inlining `SvVoiceProfile`'s nine
-  fields into three more schemas.
-- **A fresh tract used to misreport its own formants** — the constructor built
-  the filter from the schwa targets while setting the record to a zeroed scratch
-  vec, so a new tract claimed five 0 Hz formants. Caught by a control assertion
-  written to prove the *rejection* tests were not vacuous; it failed instead.
-
----
-
-## 3.3.1 — documentation, CI, and stale-claim sweep
-
-✅ **Shipped 2026-08-26.** No source change. Lane was numbered 3.1.4 and was
-overtaken by 3.2.0 and 3.3.0 shipping first.
-
-**The finding with real consequences: CI ran almost none of the gate.**
-`ci.yml` had four steps — install, deps, build, `cyrius test` — while
-`CONTRIBUTING.md` names `cyrius audit` as the pre-PR gate and `state.md`
-documents eight. `release.yml` inherited it, so a release could ship having run
-only the tests. CI now runs `cyrius audit`, `cyrius fuzz` and `cyrius deny`, plus
-a toolchain-matches-the-pin assertion *before* `cyrius deps` (whose failure used
-to surface two steps later as an opaque path error) and a check that `dist/` is
-regenerable and current.
-
-Also done: the four Rust-era docs rewritten (`threat-model.md` — the v1.0 audit
-prerequisite, and the one asserting mitigations 3.1.3 disproved;
-`architecture/overview.md`; `integration-guide.md`; `guides/testing.md`); the
-four pre-port ADRs re-homed to `docs/adr/` as **0003–0006** and indexed;
-`.gitignore`'s Rust-era `*.csv` retired so `benches/history.csv` can finally be
-committed; `CLAUDE.md`'s mission statement written; and the stale claims retired
-(bridge count — README's **19** was right and `state.md` wrong; `benchmarks.md`
-11 → 13 rows; the head-to-head doc dated and its priorities corrected; README's
-consumer tag; `getting-started.md`'s test target).
-
-⚠ **Carried forward: `cyrlint`'s "0 untracked deferrals" is not a completeness
-signal.** It scans only `.cyr` sources, never Markdown, matches twelve literal
-terms, and counts one "tracked" if the *same line* also contains `CHANGELOG`,
-`roadmap`, `docs/`, `issue`, `See `, `v6.` or `v5.` — a substring test, not a
-check that the roadmap says anything. Every item in this lane was invisible to
-it. Do not cite it as evidence that there is no deferred work.
-
----
-
-
----
-
-## Moving the cyrius pin to 6.6.6
-
-**Done.** The pin went past this to `cyrius = "6.6.20"` in 3.5.6. The audit below
-held for the language changes. What it could not see was the matched dep set:
-hisab 3.x and cyrdoc's stricter docs rule each needed work, recorded in the
-CHANGELOG.
-
-**svara needs the pin bump and nothing else.** It synthesises into caller-supplied
-buffers and never touches the filesystem — zero `sys_open` / `file_open` /
-`file_write_all` / `file_read_all` / `file_exists` call sites in `src/` or
-`programs/` — so the Windows `O_APPEND` / `O_TRUNC` data corruption 6.6.6 fixes
-cannot reach it. No `CYRIUS_TARGET_WIN` guard anywhere; CI is `ubuntu-latest`
-only.
-
-The one shape that needed a real look is structs, since svara declares **33** of
-them (formant filters, phoneme descriptors, the synthesis contexts). 6.6.6 now
-rejects copying between two *different* struct/vector types. svara has **zero
-struct-typed `var` declarations** — no `var x: SomeStruct = …` anywhere in
-`src/`, `tests/` or `programs/`; the structs are used purely through offset
-constants and `load64`/`store64`. With no struct-typed variable on either side of
-an assignment, neither the different-struct-copy error nor the by-value >8 B
-deep-copy change has a site to fire on.
-
-Also checked and absent: 0 `async fn`, 0 `operator` fns, 0 `ret2` / `rethi`, no
-SIMD intrinsics, no `: cstring` params. 194 globals, **none** redeclared, so
-6.6.6's "a later redeclaration now wins everywhere" flip and the new
-different-type-co-linked-global error change nothing. No `var` inside a top-level
-block — the 37 candidates in `tests/formant.tcyr` and `tests/phoneme.tcyr` are all
-bodies of `fn`s whose signatures wrap across two lines, not top-level blocks. No
-own `vec_*` definitions, so `assert.cyr`'s new transitive `vec.cyr` include cannot
-collide with the 22 assert call sites. No raw `SYS_STATFS`. `lib/regression.cyr`
-is not vendored — the "regression" grep hits are stale comments in vendored
-`lib/syscalls*.cyr` / `lib/hisab.cyr` and one line in `scripts/bench-history.sh`,
-not calls. `lib/` holds no symlinks and `cyrius.lock` is writable, so 6.6.6's
-fail-hard `cyrius deps` / `publish` is a no-op.
-
-After bumping: `cyrius test`, `cyrius bench` (the synthesis benchmarks are the
-thing most likely to shift under a new compiler), and regenerate `dist/`.

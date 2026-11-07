@@ -9,7 +9,7 @@
 > 5.42 → 0.94 ms (below the Rust oracle's 1.09 ms) and 3.1.3 removed the
 > per-sample allocation. For current Cyrius figures see
 > [`benchmarks.md`](benchmarks.md) and `benches/history.csv`; re-running the Rust
-> side needs `rust-old/`, which is scheduled for retirement (roadmap 3.6.0), so
+> side needs `rust-old/`, which is scheduled for retirement (roadmap 3.7.0), so
 > this table is likely to be the last of its kind.
 >
 > - **Rust**: criterion 0.5, `--release`. Deps from crates.io: hisab 1.2 (`num`,
@@ -103,7 +103,7 @@ the *memory traffic*: (a) collapse the redundant per-slot input delay line — `
 `x2` are identical across all 8 slots since the input is shared, so two scalars
 replace two 8-wide buffers (~16 fewer mem ops/sample); (b) register-resident block
 SIMD, once the codegen keeps `f64v4` state in registers across the sample loop.
-Tracked in roadmap **M-perf**.
+Tracked in the roadmap's performance lane.
 
 ### The diphthong: a shared algorithmic cost — fixed in 3.1.0
 
@@ -126,7 +126,7 @@ unchanged. This is an algorithmic win the language-agnostic Rust path hasn't tak
 
 ### Roadmap
 
-Tracked in [`development/roadmap.md`](development/roadmap.md) 3.5.0. **The
+Tracked in [`development/roadmap.md`](development/roadmap.md) 3.8.x. **The
 priorities in the original version of this section are out of date and inverted:**
 
 - ✅ **Control-rate glide coefficients — shipped 3.1.0.** The diphthong outlier is
@@ -153,5 +153,5 @@ cyrius bench benches/hotpath.bcyr   # Cyrius
 ```
 
 ⚠ The Rust half of that requires `rust-old/` and a cargo toolchain. When the
-oracle is retired (roadmap 3.6.0) it becomes
+oracle is retired (roadmap 3.7.0) it becomes
 `git show 3.3.0:rust-old/benches/benchmarks.rs`, and this table is the archive.

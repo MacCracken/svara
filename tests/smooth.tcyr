@@ -3,6 +3,8 @@
 # serde-roundtrip test is dropped (integer state, no serde). f32 EPSILON
 # tolerances promoted to f64 (SV_EPSILON).
 
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/smooth.cyr"
 

@@ -9,8 +9,8 @@
 #   cyrius build -D LOGGING src/main.cyr build/svara
 #
 # Ports rust-old's `logging` feature (tracing + tracing-subscriber). It also
-# completes the sakshi routing that varna deferred (see docs/development/roadmap.md
-# M-log): varna's own `src/logging.cyr` approximated it with a level-gated stderr
+# completes the sakshi routing that varna deferred (CHANGELOG 3.4.0): varna's own
+# `src/logging.cyr` approximated it with a level-gated stderr
 # writer; svara routes to sakshi proper so spans correlate across the AGNOS stack.
 #
 # WHAT IS INSTRUMENTED: the four coarse entry points -- sequence render, batch

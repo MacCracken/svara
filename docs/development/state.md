@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.6.2** (2026-11-07) — **the roadmap holds only what is left.** No code change:
+every `src/` edit is a comment, and `build/svara` is byte-identical to 3.6.1. The
+f32 P0 is closed ([ADR-0008](../adr/0008-the-synthesis-core-stays-f64.md)), the
+consumer gate is re-measured (dhvani passes 65 of 65 suites against svara 3.6.1 on
+the current stack), test builds are warning-free, and `scripts/sweep/` keeps the
+old-against-new harness. ⚠ `tests/svara.fcyr` turned out to be the scaffold stub, so
+`cyrius fuzz` proves nothing until 3.6.3. **941 assertions / 22 suites**,
+`cyrius audit` exit 0.
+
 **3.6.1** (2026-11-07) — **cyrius 6.7.18 and each dep's newest tag.** hisab 3.4.1,
 goonj 2.3.1, naad 2.3.3, sakshi 2.5.10 (transitive). No API or `src/` change, the
 consumer floor stays 6.7.2, and audio, JSON and hostile-input results are identical
@@ -70,8 +79,8 @@ defects; rewritten per-release with reproducers. Roadmap made future-facing with
 `rust-old/` **parked on dhvani**. Counts re-derived from the tree; every relative
 Markdown link verified.
 
-**3.5.2** (2026-08-26) — **the oracle's preserve-first gate.** Everything
-roadmap 3.6.0 needs before `rust-old/` can go, except consumer-green: five
+**3.5.2** (2026-08-26) — **the oracle's preserve-first gate.** Everything retiring
+`rust-old/` needs before it can go, except consumer-green: five
 runnable `examples/` ported from `rust-old/examples/` (svara had **none**, and CI
 now builds and runs them); the third v2.0.1 quirk annotated in code (`tone` is
 honoured only by `render_planned`) where it had been described only here; the
@@ -237,7 +246,7 @@ parity oracle.
   Cyrius code** (if-chains, like formant's `from_vowel`), NOT externalized data
   files. (Refined 2026-07-03 after reading phoneme.rs — a synth library shouldn't
   carry a runtime data-file dependency; JSON typed-DOM belongs to the actual serde
-  surface, M-serde.) A `#derive(json)` proposal to erase the serde-codec tedium was
+  surface.) A `#derive(json)` proposal to erase the serde-codec tedium was
   filed in the cyrius repo: `docs/development/proposals/2026-07-03-derive-json-codec.md`.
 - **Parity bar**: tolerance parity — port the 213 Rust tests as `.tcyr` with f64
   within-epsilon assertions + benchmark parity. Transcendentals aren't bit-identical across arches.
@@ -277,7 +286,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-939 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
+941 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **oracle** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
@@ -335,12 +344,12 @@ All green on the 6.7.18 pin:
 | fmt | `cyrfmt --check <f>` | clean (43 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (291 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 22/22 suites, 939 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 22/22 suites, 941 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
-| **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
-| fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
+| **CI** | `.github/workflows/ci.yml` | runs audit · fuzz (a stub, below) · deny · pin-check · distlib-current |
+| fuzz | `cyrius fuzz` | ⚠ passes vacuously: `tests/svara.fcyr` is the scaffold stub and calls no svara function (roadmap 3.6.3) |
 | deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
 | **aggregate** | **`cyrius audit`** | **exits 0** — but see below |
@@ -407,22 +416,33 @@ moved `FILTER_* → NAAD_FILTER_*`, `VOICE_* → NAAD_VOICE_*` and six bare help
 `naad_`. Only the two `FILTER_*` constants reached svara. On any future bump,
 diff the used-symbol set against the new bundle before assuming a clean build.
 
-## Deferred work (tracked)
-
-- **serde surface**: ~40 public types + private state structs (Rng, SmoothedParam, …)
-  need JSON codecs or `.cyml` representation. See [`roadmap.md`](roadmap.md) M-serde.
-
 ## Consumers
 
-dhvani (voice AI shell), vansh (voice shell TTS/STT) — will pull `dist/svara.cyr`.
+Five repos vendor `dist/svara.cyr`, as of 2026-11-07:
 
-## Serde — 13 derived types, and a decided boundary
+| Repo | `lib/svara.cyr` | cyrius | svara fns called |
+|---|---|---|---|
+| dhvani | 3.5.5 | 6.6.10 | 5, through `voice_synth` |
+| prani | 3.5.6 | 6.6.20 | 11 |
+| shabda | 3.5.5 | 6.6.3 | 7 |
+| shabdakosh | 3.5.5 | 6.6.3 | none directly |
+| jalwa | 3.5.5 | 6.6.3 | none directly |
+
+⚠ **All five are below the consumer floor of cyrius 6.7.2**, so none can take svara
+3.6.x until it moves its own pin. dhvani was measured in a scratch copy at the current
+stack with svara 3.6.1: it builds, and 65 of 65 suites pass. vansh has no repo here.
+
+## Serde — 22 derived types, and a decided boundary
 
 Cyrius ships `#derive(Serialize)` (emits `Type_to_json` / `_from_json` /
 `_from_json_str` over bayan's typed DOM); 6.3.40 added f64-field support.
 **`bayan` is opt-in** — `include "lib/bayan.cyr"` plus `lib/hashmap.cyr`, not a
 `[deps] stdlib` module — so any entry file that includes a deriving module needs
 both, or the codecs are undefined at link.
+
+The static data tables stay embedded pure functions: a synth library should not carry
+a runtime data file, and they were never serde in the Rust. `Quality` and the other
+Rust `Serialize` enums are integers here, so they round-trip wherever they are fields.
 
 **Derived directly (22).** Configuration and data: `SvFormant`,
 `SvVowelTarget`, `SvVoiceProfile`, `SvEffortParams`, `SvPhonemeEvent`,
@@ -492,27 +512,9 @@ returns an empty vec. Silently. Use `_from_json_str`.
 
 ## Next
 
-3.1.3 is release-ready: ✅ five reachable defects fixed and pinned, ✅ per-sample
-allocation removed from the render loop (34× / 13×), ✅ bit-for-bit parity
-verified against 3.1.2 across ten render paths, ✅ two new suites + ADR-0001,
-✅ distlib regenerated (`dist/svara.cyr`, 4,950 lines at v3.1.3), ✅ full gate
-incl. `cyrius audit` exiting 0, ✅ benchmarks re-run + recorded, ✅ CHANGELOG +
-this file.
-
-**Sequencing lives in [`roadmap.md`](roadmap.md)**, organised by release rather
-than by milestone. Do not duplicate that list here. As of 3.5.3:
-
-- **3.6.0 — hot-path memory and SIMD.** Open, with work available now (pool the
-  per-note buffers). The SIMD items wait on Cyrius codegen that does not
-  round-trip each `f64v4` op through memory — expected in a later 6.5.x.
-- **3.7.0 — retire `rust-old/`.** ⛔ **Parked on dhvani.** Everything svara can do
-  is done (serde contract transcribed, oracle test gaps closed, examples ported,
-  quirks annotated, NaN question resolved, recovery incantation verified). The
-  oracle stays until a downstream consumer builds against `dist/svara.cyr`, and
-  dhvani has not been updated to the Cyrius svara yet. Both siblings hold on the
-  same gate.
-- **v1.0 — hardening.** Security audit doc; decide the three v2.0.1 quirks;
-  consumer-green.
+**Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
+list here. **3.6.3 is next**: the P(-1) sweep, which needs the oracle, so it runs
+before 3.7.0 retires it.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:
@@ -527,5 +529,4 @@ easy to get wrong:
 - **The `rust-old/` port is complete** — a name-by-name sweep of every Rust `pub`
   item found zero missing counterparts, and enum parity is exact on all ten enums
   including `Phoneme` at 101/101. What holds the directory in the tree is the
-  work that still *reads* it, not a gap in the port. See
-  [`roadmap.md`](roadmap.md) 3.5.0.
+  work that still *reads* it, not a gap in the port.

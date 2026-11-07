@@ -99,8 +99,8 @@ AVX2 formant bank was prototyped and reverted — it bought ~5%, because the loo
 is memory-bound (the SOA state shuffle dominates), not compute-bound. 3.5.0 then
 got **−6%** from the same insight without any SIMD, by collapsing the redundant
 per-slot input delay line: all eight biquads share one input, so `x1`/`x2` held
-identical values in every slot. Further SIMD work waits on Cyrius codegen that
-does not round-trip each `f64v4` op through memory (expected in a later 6.5.x).
+identical values in every slot. naad has since measured `f64v256_*` over a
+structure-of-arrays bank at 3.3× on cyrius 6.7.18, so this is worth measuring again.
 See [`../development/roadmap.md`](../development/roadmap.md).
 
 ## Precision and performance

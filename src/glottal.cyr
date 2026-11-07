@@ -11,8 +11,8 @@
 # Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita,
 # hisab, goonj, naad (noise_new/noise_next_sample/NOISE_WHITE, modulation_lfo_new/
 # modulation_lfo_next_value/modulation_lfo_set_frequency/Lfo_set_depth/
-# MODULATION_LFO_SINE), error.cyr, rng.cyr. serde on GlottalSource is dropped
-# (tracked in docs/development/roadmap.md).
+# MODULATION_LFO_SINE), error.cyr, rng.cyr. A GlottalSource serializes through
+# SvGlottalState (docs/adr/0002-serialization-boundary.md).
 
 # Glottal pulse models (was `enum GlottalModel`).
 var SVARA_GLOTTAL_ROSENBERG = 0;

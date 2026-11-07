@@ -1,7 +1,7 @@
 # oracle.tcyr -- scenarios the Rust asserted that the Cyrius port did not.
 #
 # Found by an audit of `rust-old/`'s 213 tests against the port's suites, as the
-# pre-removal gate in docs/development/roadmap.md 3.6.0: these must be closed
+# pre-removal gate for retiring the oracle: these must be closed
 # WHILE the oracle is still readable, because after deletion the expectations
 # could only be transcribed from svara's own output -- which would freeze any
 # existing bug in as "correct". That is naad 2.2.1's lesson, learned there the

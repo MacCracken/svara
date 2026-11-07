@@ -1,8 +1,7 @@
 # svara examples
 
-Runnable programs, ported from `rust-old/examples/` (roadmap 3.6.0's
-preserve-first gate: they had to exist in Cyrius before the Rust oracle could be
-deleted). Each is a standalone entry point — build it like any other:
+Runnable programs, ported from `rust-old/examples/`. They had to exist in Cyrius
+before the Rust oracle could be deleted. Each is a standalone entry point — build it like any other:
 
 ```sh
 cyrius build examples/basic.cyr build/example-basic && ./build/example-basic

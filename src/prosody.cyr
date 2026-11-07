@@ -3,7 +3,7 @@
 # and amplitude. f0 contour = a vec of (time, value) pairs (time in [0,1], value
 # an f0 multiplier), interpolated with hisab monotone-cubic (Fritsch-Carlson, no
 # overshoot). f32 -> f64 throughout. Non-integer contour values use Cyrius f64
-# float literals directly. serde dropped (M-serde; roadmap.md).
+# float literals directly.
 #
 # Requires: stdlib alloc/vec/math/result, hisab (calc_monotone_cubic_checked). No
 # project deps.

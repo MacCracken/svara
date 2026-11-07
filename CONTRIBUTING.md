@@ -69,7 +69,7 @@ Two formatter notes:
 ## Reading the Rust oracle
 
 `rust-old/` is the frozen parity oracle — 8,785 lines, read-only, and scheduled
-for removal (`docs/development/roadmap.md` 3.6.0). Cross-check against it before
+for removal (`docs/development/roadmap.md` 3.7.0). Cross-check against it before
 changing ported behaviour, and **cite a tag, not a bare path**, so the citation
 survives the deletion:
 

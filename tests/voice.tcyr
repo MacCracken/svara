@@ -1,5 +1,5 @@
 # voice.tcyr -- tests for src/voice.cyr. Ports rust-old/src/voice.rs #[test]
-# blocks (serde dropped). Include order: hisab -> goonj -> naad -> error -> rng
+# blocks (serde: tests/serde.tcyr). Include order: hisab -> goonj -> naad -> error -> rng
 # -> formant -> glottal -> voice.
 
 include "lib/hisab.cyr"

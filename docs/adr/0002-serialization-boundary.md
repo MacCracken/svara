@@ -176,8 +176,8 @@ releases).
   externally-authored JSON. Worth a guard if that ever becomes a supported input.
 
 - **Neutral** — the un-derivable engine types still want a flat state companion
-  plus `restore` (decision 3). That work is scoped in the roadmap rather than
-  done here; the boundary in this ADR is what makes it a mechanical exercise.
+  plus `restore` (decision 3). That work shipped in 3.3.0 rather than
+  here; the boundary in this ADR is what makes it a mechanical exercise.
 
 ## Alternatives considered
 
