@@ -1,5 +1,6 @@
 # prosody.tcyr -- tests for src/prosody.cyr. Ports rust-old/src/prosody.rs
-# #[test] blocks (serde dropped). Include: hisab (calc_monotone_cubic) + prosody.
+# #[test] blocks (serde dropped). Include: hisab (calc_monotone_cubic_checked) +
+# prosody.
 
 include "lib/hisab.cyr"
 include "src/error.cyr"
@@ -102,6 +103,41 @@ while (ti < vec_len(tones)) {
     ti = ti + 1;
 }
 assert_eq(tones_ok, 1, "all 9 tones finite + positive across [0,1]");
+
+# Rust's `.unwrap_or(1.0)` keeps Some(0.0). svara read every 0 from hisab as a
+# refusal until hisab 3.4.0's checked form split the two.
+test_group("a 0.0 multiplier is an answer, not a refusal");
+var zp = vec_new();
+vec_push(zp, svara_pt_new(0, F64_ONE));
+vec_push(zp, svara_pt_new(F64_HALF, 0));
+vec_push(zp, svara_pt_new(F64_ONE, F64_ONE));
+var zc = svara_prosody_make(zp, F64_ONE, F64_ONE);
+assert_eq(svara_prosody_f0_at(zc, F64_HALF), 0, "a contour at 0.0 reads 0.0");
+assert_eq(svara_prosody_f0_at(zc, 0), F64_ONE, "control: the first point reads its value");
+var zq = svara_prosody_f0_at(zc, 0.25);
+assert_eq(f64_gt(zq, 0), 1, "control: between the points is above 0.0");
+assert_eq(f64_lt(zq, F64_ONE), 1, "control: between the points is below 1.0");
+
+# The public route to the same value.
+var bz = svara_prosody_flat();
+svara_prosody_insert_f0_boost(bz, F64_HALF, 0, 0.1);
+assert_eq(svara_prosody_f0_at(bz, F64_HALF), 0, "a zero boost reads 0.0 at its peak");
+
+test_group("a refusal still reads as 1.0");
+var span_p = vec_new();
+vec_push(span_p, svara_pt_new(0.2, f64_from(2)));
+vec_push(span_p, svara_pt_new(0.8, f64_from(3)));
+var span_c = svara_prosody_make(span_p, F64_ONE, F64_ONE);
+assert_eq(svara_prosody_f0_at(span_c, 0.1), F64_ONE, "before the first point");
+assert_eq(svara_prosody_f0_at(span_c, 0.9), F64_ONE, "after the last point");
+assert_eq(pr_approx(svara_prosody_f0_at(span_c, 0.2), f64_from(2), TOL_1EM6), 1, "control: on the first point");
+assert_eq(pr_approx(svara_prosody_f0_at(span_c, 0.8), f64_from(3), TOL_1EM6), 1, "control: on the last point");
+
+var rep_p = vec_new();
+vec_push(rep_p, svara_pt_new(F64_HALF, f64_from(2)));
+vec_push(rep_p, svara_pt_new(F64_HALF, f64_from(3)));
+var rep_c = svara_prosody_make(rep_p, F64_ONE, F64_ONE);
+assert_eq(svara_prosody_f0_at(rep_c, F64_HALF), F64_ONE, "a repeated time is refused");
 
 var rc = assert_summary();
 syscall(60, rc);

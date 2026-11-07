@@ -5,7 +5,8 @@
 # overshoot). f32 -> f64 throughout. Non-integer contour values use Cyrius f64
 # float literals directly. serde dropped (M-serde; roadmap.md).
 #
-# Requires: stdlib alloc/vec/math, hisab (calc_monotone_cubic). No project deps.
+# Requires: stdlib alloc/vec/math/result, hisab (calc_monotone_cubic_checked). No
+# project deps.
 
 # IntonationPattern (enum -> ints).
 var SVARA_INTONATION_DECLARATIVE  = 0;
@@ -89,7 +90,8 @@ fn svara_prosody_sort_points(v) {
 }
 
 # f0_at_internal -- monotone-cubic interpolation of the f0 multiplier at t.
-# calc_monotone_cubic returns 0 on error; mirror Rust's unwrap_or(1.0).
+# A refusal reads as 1.0, Rust's unwrap_or(1.0): t outside the contour's span, or
+# abscissae that are not strictly increasing. A real 0.0 is an answer, not a refusal.
 #must_use
 fn svara_prosody_f0_at_internal(self, t) {
     var pts = SvProsodyContour_f0_points(self);
@@ -115,8 +117,9 @@ fn svara_prosody_f0_at_internal(self, t) {
         store64(ys + i * 8, svara_pt_value(p));
         i = i + 1;
     }
-    var r = calc_monotone_cubic(xs, ys, n, tc);
-    if (r == 0) { return F64_ONE; }
+    var r = 0;
+    var tag, err = calc_monotone_cubic_checked(xs, ys, n, tc, &r);
+    if (is_err_result(tag) == 1) { return F64_ONE; }
     return r;
 }
 

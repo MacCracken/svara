@@ -5,7 +5,7 @@ description = "svara — formant and vocal synthesis (glottal source, vocal trac
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/svara"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 entry = "src/main.cyr"
@@ -63,11 +63,10 @@ stdlib = [
 # hisab (FFT / HComplex / compensated sum / easing / interp) — consumed by
 # spectral.cyr (num_fft, num_neumaier_sum). Pinned to the tag naad uses, for a
 # coherent bundle in downstream consumers (dhvani / vansh) that pull both.
-# 3.3.7 is the last hisab on cyrius 6.6.x: it pins exactly 6.6.20, and 3.4.0
-# onward needs 6.7.x.
+# 3.4.0 pins exactly cyrius 6.7.9, and 3.4.1 needs 6.7.18.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "3.3.7"
+tag = "3.4.0"
 modules = ["dist/hisab.cyr"]
 
 # naad — biquad / noise (NoiseGenerator) / LFO (modulation) backends consumed by
@@ -75,13 +74,13 @@ modules = ["dist/hisab.cyr"]
 # bandpass). The dist bundle references goonj (acoustics) + sakshi (logging), which
 # resolve from this manifest; sakshi arrives transitively via hisab. Pinned to the
 # released tags naad uses, for a coherent bundle in downstream consumers. naad
-# 2.2.5 and goonj 2.0.6 pin cyrius 6.6.20 and hisab 3.3.7, so all three agree.
+# 2.3.0 and goonj 2.1.0 pin cyrius 6.7.9 and hisab 3.4.0, so all three agree.
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.2.5"
+tag = "2.3.0"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.0.6"
+tag = "2.1.0"
 modules = ["dist/goonj.cyr"]

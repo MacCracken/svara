@@ -11,18 +11,18 @@ Track upstream dependencies for updates, breaking renames, and compatibility.
 
 | Dep | Pin | What svara consumes |
 |-----|-----|---------------------|
-| [hisab](https://github.com/MacCracken/hisab) | 3.3.7 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| [naad](https://github.com/MacCracken/naad) | 2.2.5 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
-| [goonj](https://github.com/MacCracken/goonj) | 2.0.6 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
+| [hisab](https://github.com/MacCracken/hisab) | 3.4.0 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic_checked` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| [naad](https://github.com/MacCracken/naad) | 2.3.0 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
+| [goonj](https://github.com/MacCracken/goonj) | 2.1.0 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
 
 ## Direct as of 3.4.0
 
 | Dep | Pin | What svara uses |
 |-----|-----|---------------------|
-| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.7 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
+| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.8 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
 
-Pins are chosen to match what the bundles themselves pin — naad 2.2.5 pins hisab
-3.3.7 and goonj 2.0.6; hisab 3.3.7 pins sakshi 2.5.7 — so a downstream consumer
+Pins are chosen to match what the bundles themselves pin — naad 2.3.0 pins hisab
+3.4.0 and goonj 2.1.0; hisab 3.4.0 pins sakshi 2.5.8 — so a downstream consumer
 (dhvani / vansh) that bundles svara **and** naad **and** hisab in one flat
 namespace gets a coherent set rather than two versions of the same symbol.
 
@@ -40,7 +40,16 @@ compare against the snapshot:
 rm cyrius.lock lib/*.cyr
 cyrius deps
 cyrius deps --verify
+cyrius deps --locked
 ```
+
+For a matched set, read each sibling's `cyrius` pin with `git show <tag>:cyrius.cyml`.
+sakshi follows what hisab declares and what the toolchain bundles, not the newest
+tag: 2.5.9 and 2.5.10 also pin 6.7.9, but 6.7.9 bundles 2.5.8.
+
+**Measure the consumer floor at each bump.** It is not the pin. Build a from-scratch
+consumer of `dist/svara.cyr` on older toolchains and record the first that works.
+It is **cyrius 6.7.2** as of 3.6.0.
 
 ## The failure mode this file exists to catch
 
@@ -55,6 +64,7 @@ system to disambiguate, so upstream de-collision work arrives as bare renames:
 | naad 2.2.0 | `VOICE_*` → `NAAD_VOICE_*` | no |
 | naad 2.2.0 | `lerp` / `rms` / `peak` / `normalize` / `chromagram` / `crossfade_equal_power` → `naad_*` | no |
 | naad 2.2.0 | `white_noise_sample`, `U32_MAXF` removed | no |
+| hisab 3.4.0 | `calc_monotone_cubic` → `calc_monotone_cubic_checked(…, out)`, one of 27 retired names | **yes** — `prosody.cyr` |
 
 These break the **build**, which is the good case. The dangerous case is a rename
 that silently *agrees* — naad renamed all eight `FILTER_*` constants precisely
@@ -87,7 +97,12 @@ svara's own definitions, and check every survivor against the *new* bundle. Filt
 the result by hand — bare names like `peak` and `rms` show up as matches while
 being local variables. Signatures matter too, not just presence.
 
-Then run the gate: `cyrius audit` (green as of the 6.6.20 pin), plus the two
+A replacement can change meaning as well as spelling. The old
+`calc_monotone_cubic` returned 0 for a refusal, and svara's handling of that hid a
+real 0.0. The new form split the two, and the migration fixed a parity bug, so read
+what a replacement returns before renaming the call.
+
+Then run the gate: `cyrius audit` (green as of the 6.7.9 pin), plus the two
 things it does **not** cover — `./scripts/check-logging.sh` (it cannot pass `-D`)
 and the untracked-deferral count from `cyrlint` over `tests/` and `benches/` (its
 lint leg sums warnings only). Both run in CI.

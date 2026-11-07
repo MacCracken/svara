@@ -249,7 +249,7 @@ fn main() {
     assert_eq(untoned < 64, 1, "untoned render stays under 64 bytes per sample");
     var toned = marginal_bytes(1);
     assert_eq(toned > 0, 1, "control: the toned budget reads a real number");
-    # The toned path additionally pays for hisab's calc_monotone_cubic, which
+    # The toned path additionally pays for hisab's calc_monotone_cubic_checked, which
     # allocates three internal arrays per call (~80 bytes); that is upstream.
     assert_eq(toned < 192, 1, "toned render stays under 192 bytes per sample");
     assert_eq(toned > untoned, 1, "control: the tone path costs more than the untoned one");

@@ -16,7 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.5.x** | ✅ Yes | current |
+| **3.6.x** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| 3.5.x | ✅ Yes | for consumers still below that cyrius floor |
 | 3.2 – 3.4 | ⚠ Upgrade | no known reachable defects, but missing later hardening |
 | 3.0 – 3.1.2 | ❌ **No** | five defects reachable through the public API — see below |
 | 1.x, 2.x | ❌ No | the Rust line, superseded by the Cyrius port at 3.0.0 |

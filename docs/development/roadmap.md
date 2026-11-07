@@ -121,6 +121,10 @@ were never serde in the Rust either. Container types are [3.2.0](#320--container
 
 ## 3.6.0 — hot-path memory and SIMD
 
+> ⚠ **Not what shipped as 3.6.0.** That number went to the cyrius 6.7.9 toolchain
+> release, because the consumer floor moved. This lane is still open and needs a new
+> number.
+
 **M-perf, what is left.** Three rounds have shipped — 3.1.0's control-rate glides,
 3.1.3's removal of the per-sample allocation, and 3.5.0's collapse of the
 redundant input delay line. A same-machine head-to-head
@@ -162,7 +166,7 @@ place in the source.
 
 ### ⛔ Blocked on hisab
 
-- [ ] **`calc_monotone_cubic` allocates three internal arrays per call** (~80
+- [ ] **`calc_monotone_cubic_checked` allocates three internal arrays per call** (~80
       bytes) — the entire remaining cost of the toned render path. Needs an
       `_into` form upstream, or coefficients computed once per contour. Pinned at
       hisab 2.11.2; revisit on any hisab bump.

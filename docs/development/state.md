@@ -5,6 +5,14 @@
 
 ## Version
 
+**3.6.0** (2026-11-07) — **cyrius 6.7.9 and its matched dep set.** hisab 3.4.0,
+goonj 2.1.0, naad 2.3.0, sakshi 2.5.8 (transitive). It is a minor because the
+consumer floor moves: **consumers now need cyrius 6.7.2 or later**, measured with a
+from-scratch consumer. No API change, and synthesis output is bit-identical to 3.5.6
+across 556,096 values. ⭐ hisab retired `calc_monotone_cubic`, which svara called, and
+moving to the checked form fixed a parity bug: `svara_prosody_f0_at` read a contour
+at exactly 0.0 as 1.0. **937 assertions / 22 suites**, `cyrius audit` exit 0.
+
 **3.5.6** (2026-11-07) — **cyrius 6.6.20 and its matched dep set.** hisab 3.3.7,
 goonj 2.0.6, naad 2.2.5, sakshi 2.5.7 (transitive). No API change. `num_fft` moved
 to `Result`, the one hisab call that needed it; 91 fns gained the doc comment
@@ -198,9 +206,11 @@ parity oracle.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.6.20` (in `cyrius.cyml [package].cyrius` — the single
+- **Cyrius pin**: `6.7.9` (in `cyrius.cyml [package].cyrius` — the single
   source of truth; CI reads it and never hardcodes a version)
-- `lib/` holds 31 stdlib files vendored from `~/.cyrius/versions/6.6.20/lib`
+- **Consumer floor**: cyrius **6.7.2**, measured from `dist/svara.cyr`. It is what
+  a consumer needs, and it is lower than the pin.
+- `lib/` holds 31 stdlib files vendored from `~/.cyrius/versions/6.7.9/lib`
   (verified byte-identical file by file) plus the 4 dependency bundles.
   `cyrius.lock`: 35 deps locked, 4 commit-pinned.
 - **`cyrfmt` canonical continuation indent is 2 spaces per open-paren level**
@@ -260,7 +270,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-927 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
+937 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **oracle** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
@@ -311,14 +321,14 @@ time in this codebase needs the same treatment.
 
 ## Quality gate
 
-All green on the 6.6.20 pin:
+All green on the 6.7.9 pin:
 
 | Gate | Command | Result |
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (43 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (291 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 927 assertions |
+| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 937 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
@@ -362,15 +372,15 @@ this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout)
 
 ## Dependencies
 
-Pinned tags as of **3.5.6**; see [`dependency-watch.md`](dependency-watch.md) for
+Pinned tags as of **3.6.0**; see [`dependency-watch.md`](dependency-watch.md) for
 the upgrade policy and the symbols svara actually consumes.
 
 | Dep | Pin | Declared | What svara uses |
 |---|---|---|---|
-| **hisab** | `3.3.7` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| **naad** | `2.2.5` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
-| **goonj** | `2.0.6` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
-| **sakshi** | `2.5.7` | transitive (via hisab) | nothing directly — goonj's logging backend |
+| **hisab** | `3.4.0` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic_checked` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| **naad** | `2.3.0` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
+| **goonj** | `2.1.0` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
+| **sakshi** | `2.5.8` | transitive (via hisab) | nothing directly — goonj's logging backend |
 
 **stdlib** (`[deps].stdlib`) — syscalls, string, alloc, str, fmt, vec, io, args,
 assert, math, ganita, tagged, result, fnptr, bench. `bayan` + `hashmap` are **opt-in

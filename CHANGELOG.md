@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-11-07 — cyrius 6.7.9, and a contour at 0.0 stops reading as 1.0
+
+Toolchain and dependency release. `cyrius` 6.6.20 -> **6.7.9**, `hisab` 3.3.7 -> **3.4.0**,
+`naad` 2.2.5 -> **2.3.0**, `goonj` 2.0.6 -> **2.1.0**, `sakshi` 2.5.7 -> **2.5.8** (transitive),
+with ganita 1.2.15 from the stdlib snapshot. hisab 3.4.0, goonj 2.1.0 and naad 2.3.0 each pin
+6.7.9 exactly, and the next tag of each needs 6.7.18. It is a minor because the floor for
+consumers moves: **they now need cyrius 6.7.2 or later.**
+
+No API change. Synthesis output is bit-identical to 3.5.6, and one contour result changes,
+below. **937 assertions / 22 suites**; `cyrius audit`, `cyrius fuzz`, `cyrius deny`, the logging
+gate and `cyrius distlib --check` are all clean.
+
+### Fixed
+
+- **`svara_prosody_f0_at` read a contour at exactly 0.0 as 1.0.** `calc_monotone_cubic` returned
+  0 for a refusal, and 0 is also a legal answer, so svara took every 0 for a refusal. Rust's
+  `.unwrap_or(1.0)` keeps `Some(0.0)`, so this was a parity bug carried since the port. It is
+  reachable through caller-built contours and through `svara_prosody_insert_f0_boost` with a
+  boost of 0. Renders are not affected: their contours come from `svara_tone_to_contour` and
+  stay above 0. A zero f0 is refused by `svara_f0_in_range` and ignored, as in Rust, so it
+  cannot reach a division.
+
+### Changed
+
+- **`calc_monotone_cubic` is gone from hisab, and svara moved to
+  `calc_monotone_cubic_checked`.** It is the one of hisab 3.4.0's 27 retired names that svara
+  calls, and the retired name fails the build loudly. The new form separates a refusal from an
+  answer, which is what fixes the bug above. `num_fft`, `num_neumaier_sum` and
+  `ease_in_out_smooth` are byte-identical between hisab 3.3.7 and 3.4.0.
+- **`lib/` and `cyrius.lock` are regenerated from clean.** 32 of the 35 files are byte-identical
+  to the 6.7.9 snapshot and the other three to their tag's `dist/`, and the new
+  `cyrius deps --locked` confirms it. `naad` and `goonj` move only their version lines.
+- **sakshi is 2.5.8, not the newest tag that pins 6.7.9.** 2.5.9 and 2.5.10 pin it too, but 2.5.8
+  is what hisab 3.4.0 declares and what the toolchain bundles.
+- **Build size.** hisab's bundle grows from 2.10 MB to 2.64 MB, and `build/svara` from 2.60 MB to
+  2.94 MB. `dist/svara.cyr` does not carry hisab, so it barely moves.
+
+### Upgrading
+
+- ⚠ **Consumers need cyrius 6.7.2 or later.** sakshi 2.5.8 needs `const`, and goonj pulls sakshi
+  in. Measured with a from-scratch consumer of this bundle: 6.7.2, 6.7.5, 6.7.8 and 6.7.9 build
+  and run; 6.6.20, 6.7.0 and 6.7.1 fail at compile time (`undefined variable 'SK_OUT_STDERR'`).
+  The failure is loud, not silent. Every repo pinning svara today is below the floor.
+- **Move the pins together:** cyrius, hisab 3.4.0, naad 2.3.0 and goonj 2.1.0. A consumer that
+  calls one of hisab's 27 retired names itself gets a build error.
+- A contour at 0.0 now reads as 0.0. A caller that relied on it reading 1.0 will see the change.
+
+### Verified
+
+- **Value sweep, 3.5.6 on 6.6.20 against this tree on 6.7.9.** The same 556,096 values across all
+  101 phonemes, the context and pool paths, glottal models, quality levels, sequences, spectra,
+  prosody, trajectories, bridges and the RNG are **bit-identical**. That sweep moved 451,192
+  values last release, so it can see a change.
+- **Contours, where the code changed.** Of 2,625 crafted values (0, 0.5, 1, 2 and -1 at three
+  points), 165 differ, every one 1.0 -> 0.0 as predicted, and none in any other way.
+- **Hostile inputs, one process per case.** 11 values through 58 entry-point and parameter
+  combinations, 638 cases, including contours and boosts. No exit code, length or error code
+  changed, and the only differences are the two zero cases above. Neither tree aborted. One case
+  times out on both: `render_planned` at a 3e9 Hz sample rate.
+- **The new tests can fail.** Restoring the zero check fails 2 assertions, and dropping the error
+  check fails 3.
+- **The language changes do not reach svara's source:** no lone `!` (a no-op until 6.7.3), no `~`,
+  no unary `-` on a constant, and no reserved word as a name.
+- **Benchmarks are flat**, three interleaved runs on the same machine, minimum of each: geomean
+  0.996, with `render_planned toned` 15,466 -> 15,460 us and every range overlapping.
+- These checks ran on x86_64 only, which is also all CI covers.
+
 ## [3.5.6] - 2026-11-07 — cyrius 6.6.20, and the matched dep set
 
 Toolchain and dependency release. `cyrius` 6.6.3 -> **6.6.20**, `hisab` 2.22.1 ->
