@@ -114,6 +114,28 @@ fn marginal_bytes(toned) {
     return ((c - b) - (b - a)) / (vec_len(r2) - vec_len(r1));
 }
 
+# A flat contour of n evenly spaced points.
+#must_use
+fn flat_contour(n) {
+    var pts = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(pts, svara_pt_new(f64_div(f64_from(i), f64_from(n - 1)), F64_ONE));
+        i = i + 1;
+    }
+    return svara_prosody_make(pts, F64_ONE, F64_ONE);
+}
+
+# Bytes 100 f0_at calls take, after one call sizes svara's own scratch pair.
+#must_use
+fn f0_at_bytes(contour) {
+    var v = svara_prosody_f0_at(contour, F64_HALF);
+    var a = alloc_used();
+    var i = 0;
+    while (i < 100) { v = svara_prosody_f0_at(contour, F64_HALF); i = i + 1; }
+    return alloc_used() - a;
+}
+
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
@@ -249,10 +271,16 @@ fn main() {
     assert_eq(untoned < 64, 1, "untoned render stays under 64 bytes per sample");
     var toned = marginal_bytes(1);
     assert_eq(toned > 0, 1, "control: the toned budget reads a real number");
-    # The toned path additionally pays for hisab's calc_monotone_cubic_checked, which
-    # allocates three internal arrays per call (~80 bytes); that is upstream.
-    assert_eq(toned < 192, 1, "toned render stays under 192 bytes per sample");
-    assert_eq(toned > untoned, 1, "control: the tone path costs more than the untoned one");
+    # hisab 3.4.1 holds calc_monotone_cubic_checked's scratch on its stack up to 16
+    # points, so a tone costs nothing per sample. 3.6.0 measured 115 here against 35.
+    assert_eq(toned, untoned, "a toned render allocates what an untoned one does");
+
+    # ================================================================
+    test_group("f0_at allocates nothing up to hisab's 16 points");
+    # ================================================================
+    assert_eq(f0_at_bytes(svara_tone_to_contour(SVARA_TONE_DIPPING)), 0, "a tone contour allocates nothing");
+    assert_eq(f0_at_bytes(flat_contour(16)), 0, "16 points allocate nothing");
+    assert_eq(f0_at_bytes(flat_contour(17)) > 0, 1, "control: 17 points allocate, so the measure can see it");
 
     # ================================================================
     test_group("render output is unchanged by the reuse");

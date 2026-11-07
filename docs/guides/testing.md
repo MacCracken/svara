@@ -8,7 +8,7 @@
 
 ```bash
 cyrius audit                       # THE gate: fmt · lint · docs · tests · bench
-cyrius tests tests                 # every suite, recursively
+cyrius test tests                  # every suite, recursively
 cyrius test tests/glottal.tcyr     # one suite
 cyrius fuzz                        # tests/svara.fcyr
 cyrius deny src/main.cyr           # dependency policy

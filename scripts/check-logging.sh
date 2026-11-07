@@ -3,7 +3,7 @@
 # suite BOTH with and without `-D LOGGING`.
 #
 # This exists because `cyrius test` does not forward `-D`, so the ordinary
-# runner (`cyrius tests tests`) only ever exercises the logging-off half of
+# runner (`cyrius test tests`) only ever exercises the logging-off half of
 # tests/logging.tcyr. Without this script the entire `#ifdef LOGGING` half of
 # the codebase — the module, and the guarded blocks threaded through four
 # entry points — would be compiled by nobody.

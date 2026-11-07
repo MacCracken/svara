@@ -164,13 +164,6 @@ place in the source.
       **Do not hand-build a vec header in svara**: that couples the library to
       stdlib internals for a 2× win on an already-34×-improved number.
 
-### ⛔ Blocked on hisab
-
-- [ ] **`calc_monotone_cubic_checked` allocates three internal arrays per call** (~80
-      bytes) — the entire remaining cost of the toned render path. Needs an
-      `_into` form upstream, or coefficients computed once per contour. Pinned at
-      hisab 2.11.2; revisit on any hisab bump.
-
 ### ⛔ Blocked on Cyrius SIMD codegen — expected in a later 6.5.x
 
 The toolchain is scheduled to improve SIMD in the 6.5.x line. **Revisit all three

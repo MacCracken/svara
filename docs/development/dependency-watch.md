@@ -11,18 +11,18 @@ Track upstream dependencies for updates, breaking renames, and compatibility.
 
 | Dep | Pin | What svara consumes |
 |-----|-----|---------------------|
-| [hisab](https://github.com/MacCracken/hisab) | 3.4.0 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic_checked` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| [naad](https://github.com/MacCracken/naad) | 2.3.0 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
-| [goonj](https://github.com/MacCracken/goonj) | 2.1.0 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
+| [hisab](https://github.com/MacCracken/hisab) | 3.4.1 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic_checked` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| [naad](https://github.com/MacCracken/naad) | 2.3.3 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
+| [goonj](https://github.com/MacCracken/goonj) | 2.3.1 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
 
 ## Direct as of 3.4.0
 
 | Dep | Pin | What svara uses |
 |-----|-----|---------------------|
-| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.8 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
+| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.10 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
 
-Pins are chosen to match what the bundles themselves pin — naad 2.3.0 pins hisab
-3.4.0 and goonj 2.1.0; hisab 3.4.0 pins sakshi 2.5.8 — so a downstream consumer
+Pins are chosen to match what the bundles themselves pin — naad 2.3.3 pins hisab
+3.4.1 and goonj 2.3.1; hisab 3.4.1 pins sakshi 2.5.10 — so a downstream consumer
 (dhvani / vansh) that bundles svara **and** naad **and** hisab in one flat
 namespace gets a coherent set rather than two versions of the same symbol.
 
@@ -30,7 +30,7 @@ namespace gets a coherent set rather than two versions of the same symbol.
 
 The Cyrius pin in `cyrius.cyml [package].cyrius` is the single source of truth.
 CI reads it and hands it to the canonical installer — never hardcode a version in
-YAML. Bumping it re-vendors the 31 stdlib files in `lib/` via `cyrius deps`.
+YAML. Bumping it re-vendors the 32 stdlib files in `lib/` via `cyrius deps`.
 
 `cyrius deps` keeps old commit rows in `cyrius.lock` beside the new ones, and leaves
 stdlib files the pin no longer declares. Regenerate from clean on a bump, then
@@ -45,11 +45,12 @@ cyrius deps --locked
 
 For a matched set, read each sibling's `cyrius` pin with `git show <tag>:cyrius.cyml`.
 sakshi follows what hisab declares and what the toolchain bundles, not the newest
-tag: 2.5.9 and 2.5.10 also pin 6.7.9, but 6.7.9 bundles 2.5.8.
+tag: 2.5.9 and 2.5.10 also pin 6.7.9, but 6.7.9 bundles 2.5.8. At 6.7.18 the newest
+tag and the bundled copy agree on 2.5.10.
 
 **Measure the consumer floor at each bump.** It is not the pin. Build a from-scratch
 consumer of `dist/svara.cyr` on older toolchains and record the first that works.
-It is **cyrius 6.7.2** as of 3.6.0.
+It is **cyrius 6.7.2** as of 3.6.1.
 
 ## The failure mode this file exists to catch
 
@@ -81,7 +82,13 @@ A toolchain change can reach past a green suite too. cyrius 6.6.8 made `f64_to`
 saturate, and naad and goonj both had guards that only worked because the old
 sentinel was negative. Their suites stayed green over the resulting aborts. Compare
 values old tree against new, and push NaN, ±inf and out-of-range inputs through the
-public entry points, one process per case.
+public entry points, one process per case. Compare the JSON too: a sample sweep
+never sees a serialization change, and bayan moves with the toolchain, not with a
+pin in `cyrius.cyml`.
+
+A timing gap on a loaded machine is not evidence. Check it with retired
+instructions, which do not depend on load. Equal instructions and a small cycle
+gap means layout, as at 3.6.1, and a change in instructions means codegen.
 
 ## Checking a bump
 
@@ -102,7 +109,7 @@ A replacement can change meaning as well as spelling. The old
 real 0.0. The new form split the two, and the migration fixed a parity bug, so read
 what a replacement returns before renaming the call.
 
-Then run the gate: `cyrius audit` (green as of the 6.7.9 pin), plus the two
+Then run the gate: `cyrius audit` (green as of the 6.7.18 pin), plus the two
 things it does **not** cover — `./scripts/check-logging.sh` (it cannot pass `-D`)
 and the untracked-deferral count from `cyrlint` over `tests/` and `benches/` (its
 lint leg sums warnings only). Both run in CI.

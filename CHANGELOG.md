@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] - 2026-11-07 — cyrius 6.7.18, the newest deps, and a toned render stops allocating
+
+Toolchain and dependency release. `cyrius` 6.7.9 -> **6.7.18**, `hisab` 3.4.0 -> **3.4.1**,
+`naad` 2.3.0 -> **2.3.3**, `goonj` 2.1.0 -> **2.3.1**, `sakshi` 2.5.8 -> **2.5.10** (transitive);
+ganita stays 1.2.15. Each is its project's newest tag, and they agree: hisab, goonj and naad each
+pin exactly 6.7.18, and sakshi 2.5.10 is what hisab declares and the toolchain bundles.
+
+No API change and no source change in `src/`. Audio, JSON and every hostile-input result are
+identical to 3.6.0, and `dist/svara.cyr` differs only in its version line. The consumer floor stays
+cyrius 6.7.2. **939 assertions / 22 suites**; `cyrius audit`, `cyrius fuzz`, `cyrius deny`, the
+logging gate and `cyrius distlib --check` are all clean.
+
+### Changed
+
+- **A toned render stops allocating per sample.** hisab 3.4.1 keeps
+  `calc_monotone_cubic_checked`'s scratch on its stack up to 16 points, and every tone contour has
+  at most 5. A toned `render_planned` falls from 115 to 35 bytes per sample, the same as an untoned
+  one, and `svara_prosody_f0_at` from 80 bytes a call to 0. A contour past 16 points still
+  allocates, at 464 bytes a call for 20. This closes the roadmap's "blocked on hisab" item.
+- **`tests/allocbudget.tcyr` pins that exactly.** Its control "the tone path costs more than the
+  untoned one" became false, so it is replaced: a toned render must equal an untoned one, 16 points
+  must allocate nothing, and 17 must allocate, which proves the measure can see a cost. On 3.6.0
+  the first two fail, at 115 against 35 and at 36,800 bytes against 0.
+- **`cyrius tests` is gone, and the docs now say `cyrius test tests`.** cyrius removed the verb at
+  6.7.12. CI never called it: `cyrius audit` runs the suites itself.
+- **`lib/` and `cyrius.lock` are regenerated from clean.** `lib/simd.cyr` joins `lib/`, pulled in by
+  goonj. 33 of the 36 files are byte-identical to the 6.7.18 snapshot and the other three to their
+  tag's `dist/`, and `cyrius deps --locked` confirms it.
+- **Build size.** hisab's bundle grows from 2.64 MB to 3.66 MB, and `build/svara` from 2.94 MB to
+  4.05 MB.
+
+### Verified
+
+- **Value sweep, 3.6.0 on 6.7.9 against this tree on 6.7.18.** All 558,721 values are bit-identical,
+  including the 2,625 crafted contours 3.6.0 changed.
+- **JSON, new at this release.** Every earlier sweep compared samples and scalars and never the
+  serialized form, and bayan moves from 1.5.13 to 1.11.1 across these toolchains. All 22
+  `#derive(Serialize)` types were dumped, parsed and dumped again, with NaN, +/-Inf, -0, denormals,
+  1/3 and f64::MAX in the fields. The output is byte-identical.
+- **Hostile inputs, one process per case.** 638 cases give no change in exit code or output. Neither
+  tree aborts, and `render_planned` at a 3e9 Hz sample rate times out on both.
+- **What reaches svara.** Of the 18 dep symbols svara uses, three changed in body:
+  `calc_monotone_cubic_checked` above, `num_fft` (a guard for a negative length) and naad's
+  `noise_new` (a refactor). The `NoiseGenerator` and `Lfo` layouts svara reaches into are unchanged.
+- **Instruction counts are the same.** A first timing pass showed `tract synthesize_into` and
+  `phoneme /a/` about 4.5% slower with disjoint ranges, on a busy machine whose load later reached
+  22 on 16 cores, so each path was re-measured with hardware counters. Retired instructions are
+  0.9985 to 1.0000 of 3.6.0, and 0.980 on the toned path.
+- **Cycles, 15 interleaved rounds on one core:** geomean 0.996. `tract process_sample` is +2.8% and
+  `synthesize_into` +1.9%, the rest flat or lower, and `render_planned` -3.0%. Instructions are
+  equal and the old source on the new compiler shows no such gap (0.994), so this reads as code
+  layout from the larger hisab bundle, not codegen. It was not isolated further.
+- **Consumer floor re-measured** on eight toolchains: 6.7.2 through 6.7.18 build and run, and 6.7.1
+  and older fail at compile time.
+- These checks ran on x86_64 only, which is also all CI covers.
+
 ## [3.6.0] - 2026-11-07 — cyrius 6.7.9, and a contour at 0.0 stops reading as 1.0
 
 Toolchain and dependency release. `cyrius` 6.6.20 -> **6.7.9**, `hisab` 3.3.7 -> **3.4.0**,

@@ -112,27 +112,27 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.6.0"
+tag = "3.6.1"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "3.4.0"
+tag = "3.4.1"
 modules = ["dist/hisab.cyr"]
 
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.3.0"
+tag = "2.3.3"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.1.0"
+tag = "2.3.1"
 modules = ["dist/goonj.cyr"]
 ```
 
-Pin exactly these tags: naad 2.3.0 itself pins hisab 3.4.0 and goonj 2.1.0, so a consumer that
+Pin exactly these tags: naad 2.3.3 itself pins hisab 3.4.1 and goonj 2.3.1, so a consumer that
 bundles svara *and* naad *and* hisab in one flat namespace gets a coherent symbol set rather than
 two versions of the same name. The bundle needs **cyrius 6.7.2 or later**, and anything older fails
 at compile time.
@@ -148,10 +148,10 @@ for the full consumption map and the flat-namespace rename hazard.
 
 | Dep | Pin | What svara uses |
 |---|---|---|
-| [hisab](https://github.com/MacCracken/hisab) | `3.4.0` | `num_fft` + `num_neumaier_sum` (spectral), `calc_monotone_cubic_checked` (prosody), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| [naad](https://github.com/MacCracken/naad) | `2.3.0` | biquads + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract), noise + LFO (glottal) |
-| [goonj](https://github.com/MacCracken/goonj) | `2.1.0` | nothing directly — the naad bundle references it, so it must resolve |
-| [sakshi](https://github.com/MacCracken/sakshi) | `2.5.8` | structured logging under `-D LOGGING` (`src/logging.cyr`); also transitive via hisab and goonj's backend |
+| [hisab](https://github.com/MacCracken/hisab) | `3.4.1` | `num_fft` + `num_neumaier_sum` (spectral), `calc_monotone_cubic_checked` (prosody), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| [naad](https://github.com/MacCracken/naad) | `2.3.3` | biquads + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract), noise + LFO (glottal) |
+| [goonj](https://github.com/MacCracken/goonj) | `2.3.1` | nothing directly — the naad bundle references it, so it must resolve |
+| [sakshi](https://github.com/MacCracken/sakshi) | `2.5.10` | structured logging under `-D LOGGING` (`src/logging.cyr`); also transitive via hisab and goonj's backend |
 
 **No feature flags**, but one compile-time switch. Cyrius has no feature system, and the port
 collapsed the Rust CFG split: svara carries only the naad-backend path (naad's biquad / noise /

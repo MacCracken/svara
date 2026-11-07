@@ -54,7 +54,7 @@ live in `$HOME/.cyrius/bin`:
 cyrfmt --check src/phoneme.cyr        # formatting (per file)
 cyrlint src/phoneme.cyr               # 0 warnings, 0 untracked deferrals
 cyrdoc --check src/phoneme.cyr        # 0 undocumented public functions
-cyrius tests tests                    # every .tcyr suite, recursively
+cyrius test tests                     # every .tcyr suite, recursively
 cyrius fuzz                           # tests/svara.fcyr
 cyrius deny src/main.cyr              # dependency policy
 cyrius bench                          # auto-discovers benches/*.bcyr
