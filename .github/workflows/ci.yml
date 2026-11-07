@@ -75,11 +75,11 @@ jobs:
         run: cyrius deny src/main.cyr
 
       - name: Lint tests and benches
-        # `cyrius audit` prints `scope: src` — its fmt/lint/docs legs cover
-        # src/ ONLY. tests/*.tcyr and benches/*.bcyr are compiled by the tests
-        # leg but never linted, so an over-long line or an untracked deferral in
-        # a test file passed the whole gate. Found in 3.5.1, when a new suite
-        # had five >120-char lines and `cyrius audit` still reported lint clean.
+        # `cyrius audit` now walks tests/ and benches/ for fmt, lint and docs,
+        # but its lint leg sums warnings only, so an untracked deferral in a test
+        # file would still pass it. Its scope used to be src/ ONLY: found in
+        # 3.5.1, when a new suite had five >120-char lines and `cyrius audit`
+        # still reported lint clean.
         run: |
           set -e
           fail=0

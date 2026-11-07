@@ -278,6 +278,8 @@ fn svara_tract_set_formants_from_target(self, target) {
     return svara_tract_set_formants(self, own);
 }
 
+# set_vowel -- retarget the tract at `vowel`. Returns what
+# svara_tract_set_formants_from_target returns: 0, or a neg error.
 #must_use
 fn svara_tract_set_vowel(self, vowel) {
     return svara_tract_set_formants_from_target(self, svara_vowel_target_from_vowel(vowel));
@@ -328,8 +330,10 @@ fn svara_tract_set_quality(self, quality) {
     SvVocalTract_set_quality(self, quality);
 }
 
+# current quality level (SVARA_QUALITY_*).
 #must_use
 fn svara_tract_quality(self) { return SvVocalTract_quality(self); }
+# sample rate in Hz this tract was built for.
 #must_use
 fn svara_tract_sample_rate(self) { return SvVocalTract_sample_rate(self); }
 

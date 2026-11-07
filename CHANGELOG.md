@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.6] - 2026-11-07 — cyrius 6.6.20, and the matched dep set
+
+Toolchain and dependency release. `cyrius` 6.6.3 -> **6.6.20**, `hisab` 2.22.1 ->
+**3.3.7**, `naad` 2.2.4 -> **2.2.5**, `goonj` 2.0.4 -> **2.0.6**, `sakshi` 2.5.1 ->
+**2.5.7** (transitive), with ganita 1.2.14 from the stdlib snapshot. This is the matched
+set for 6.6.20: hisab 3.3.7, goonj 2.0.6 and naad 2.2.5 each pin it exactly, sakshi 2.5.7
+is the copy the toolchain bundles, and the next tag of hisab, goonj and naad needs cyrius
+6.7.x.
+
+No API change. **927 assertions / 22 suites**; `cyrius audit`, `cyrius fuzz`, `cyrius deny`,
+the logging gate and `cyrius distlib --check` are all clean.
+
+### Changed
+
+- **`num_fft` moved to `Result`, the one hisab call that needed it.** hisab 3.0.0 made it
+  return a `Result`, and `if (num_fft(data, fft_size) != 0)` still compiled, because a
+  `Result` in comparison position degrades to its tag. It kept working only because `Ok`'s
+  tag is 0. It is now `var t, e = num_fft(...)` plus `is_err_result(t)`, and `result` joins
+  `[deps] stdlib`. The other three hisab fns svara calls return plain values and are
+  `public` under hisab 3.3's `private` bundle, so nothing else moved.
+- **91 fns gained a doc comment, 69 in `src/` and 22 in `tests/`.** cyrdoc used to count
+  `#must_use` as documentation (`src/voice.cyr`: 0 undocumented on 6.6.3, 11 on 6.6.20), and
+  the audit's docs leg now walks `tests/` and `benches/` too. `cyrius audit` failed on this,
+  and CI runs it.
+- **`cyrius.lock` is regenerated from clean.** `cyrius deps` keeps old commit rows beside the
+  new ones, which is how the lock came to say naad 2.2.2 while `lib/` held 2.2.4. It now has
+  exactly four commit rows and `cyrius deps --verify` passes all 35 files.
+- **`lib/` equals a clean resolve at the pin.** `callback.cyr` goes; `alloc_cx.cyr` and
+  `poison.cyr` arrive. 32 of the 35 files are byte-identical to the 6.6.20 snapshot, and the
+  other three are byte-identical to their tag's `dist/`.
+- **`dist/svara.deps` shrinks from 17 leaves to 1 (`bayan`)**, and `dist/svara.cyr` gains a
+  `# Requires` block. This is `cyrius distlib` >= 6.6.18 behaviour. A consumer no longer
+  includes `bayan` or `hashmap` by hand to get the JSON codecs.
+- **`CYRIUS_NO_WARN_SHADOW_LIB` is gone from `scripts/check-logging.sh`.** It covered a
+  transitive sakshi that lagged the toolchain's. Both are 2.5.7 now, byte-identical, and the
+  advisory no longer fires.
+- **Samples move by up to 4.3e-14 of peak.** Most sample values differ in their last bits.
+  The likely source is the toolchain's transcendentals: cyrius 6.6.9 took x86 sin and cos off
+  x87 `fsin` / `fcos` for fdlibm ports. The cause was not isolated further.
+- **Comments and ADR-0001 stop describing the old `f64_to`.** Since cyrius 6.6.8 it saturates
+  to the signed range. ADR-0001 gains an amendment: its rule stands, because a negative stays
+  negative and `INT64_MAX` walks past a floor-only guard.
+
+### Upgrading
+
+- **Move the pins together:** cyrius 6.6.20, hisab 3.3.7, naad 2.2.5 and goonj 2.0.6. naad
+  2.2.5 needs hisab 3.x, so svara's bundle cannot sit beside the older set.
+- Golden values taken from an earlier svara may need a tolerance rather than bit equality.
+
+### Verified
+
+- **Value sweep, old tree on 6.6.3 against new tree on 6.6.20.** 556,096 values across all 101
+  phonemes in three voices, the context and pool paths, the four glottal models, the three
+  quality levels, sequences, spectra, prosody, trajectories, all 19 bridges and the RNG. 451,192
+  differ, none by more than 4.3e-14 of peak, with no sign, NaN, Inf or length change. Prosody,
+  trajectory, bridge and RNG output is bit-identical.
+- **Hostile inputs, one process per case.** naad and goonj each found aborts here that their
+  suites stayed green over, so svara was checked directly: 11 values (NaN, +/-Inf, f64::MAX,
+  2^63, 1e19, 3e9, the smallest denormal and more) through 56 entry-point and parameter
+  combinations, 616 cases. No exit code, length, error code or non-finite count changed, and raw
+  floats moved by at most 1.5e-14 relative.
+  Neither tree aborted. One case times out on both: `render_planned` at a 3e9 Hz sample rate.
+- **Benchmarks are flat**, same machine: `tract synthesize_into 1024` 259.0 -> 260.6 us,
+  `/a/` 598.5 -> 592.9 us, `render_planned` 14.0 -> 13.3 ms.
+- **A from-scratch consumer** declaring only hisab, goonj, naad and a minimal stdlib builds and
+  runs `dist/svara.cyr`, including a JSON codec.
+- 6.6.6's struct copy rules miss svara, as the roadmap predicted. Benchmarks and sweeps ran on
+  x86_64 only, which is also all CI covers.
+
 ## [3.5.5] - Unblocked by cyrius 6.6.3
 
 ### Also — the `#inline` markers that never inlined

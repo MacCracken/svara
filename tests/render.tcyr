@@ -22,6 +22,7 @@ include "src/render.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
 
+# 1 if every sample in vec v is finite.
 #must_use
 fn rn_finite(v) {
     var f = 1;
@@ -29,6 +30,7 @@ fn rn_finite(v) {
     while (i < vec_len(v)) { if (svara_is_finite(vec_get(v, i)) == 0) { f = 0; } i = i + 1; }
     return f;
 }
+# 1 if |a - b| < eps.
 #must_use
 fn rn_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 

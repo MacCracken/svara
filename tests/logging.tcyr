@@ -36,6 +36,7 @@ include "src/render.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 
+# Two-vowel sequence, 30 ms each. `voice` is unused.
 #must_use
 fn lg_seq(voice) {
     var s = svara_sequence_new();

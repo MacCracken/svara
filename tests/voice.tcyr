@@ -15,10 +15,12 @@ include "src/voice.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
+# 1 if |a - b| < eps.
 #must_use
 fn v_approx(a, b, eps) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);
 }
+# Energy (sum of squares) of the next n samples from glottal source gs.
 #must_use
 fn v_energy(gs, n) {
     var e = 0;
@@ -30,6 +32,7 @@ fn v_energy(gs, n) {
     }
     return e;
 }
+# 1 if the next n samples from glottal source gs are all finite.
 #must_use
 fn v_all_finite(gs, n) {
     var fin = 1;

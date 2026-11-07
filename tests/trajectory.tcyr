@@ -17,6 +17,7 @@ include "src/voice.cyr"
 include "src/phoneme.cyr"
 include "src/trajectory.cyr"
 
+# 1 if |a - b| < eps.
 #must_use
 fn tr_approx(a, b, eps) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);

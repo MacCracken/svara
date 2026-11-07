@@ -4,7 +4,7 @@
 # (compensated sum of a contiguous f64 buffer). f32 -> f64 throughout (Rust
 # stored f32 magnitudes; the port keeps f64 -- within tolerance parity).
 #
-# Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita,
+# Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita/result,
 # error.cyr, and hisab (lib/hisab.cyr). serde is not on Spectrum in Rust; none added.
 #
 # Sample/magnitude buffers are stdlib vecs holding one f64 bit pattern per slot.
@@ -49,10 +49,10 @@ fn svara_spectrum_bin_frequency(self, bin) {
 #
 # Rust returns `usize`, so a negative or NaN frequency -- or a zero
 # freq_resolution, which makes the quotient +/-inf -- saturates to 0 there. A
-# bare f64_to yields INT64_MIN instead, and every caller below tests only the
-# UPPER bound (as Rust can, on a usize), so that index reached vec_get and
-# aborted the process. Saturate here, at the source, so the callers' single
-# bound is a complete bound again.
+# bare f64_to keeps the sign of a negative quotient instead, and every caller
+# below tests only the UPPER bound (as Rust can, on a usize), so that index
+# reached vec_get and aborted the process. Saturate here, at the source, so the
+# callers' single bound is a complete bound again.
 #inline
 #must_use
 fn svara_spectrum_frequency_bin(self, freq) {
@@ -243,7 +243,8 @@ fn svara_spectral_analyze(samples, sample_rate) {
         i = i + 1;
     }
 
-    if (num_fft(data, fft_size) != 0) { return SVARA_ERR_COMPUTATION; }
+    var fft_tag, fft_err = num_fft(data, fft_size);
+    if (is_err_result(fft_tag) == 1) { return SVARA_ERR_COMPUTATION; }
 
     # magnitude of the positive-frequency bins (0 .. fft_size/2)
     var num_bins = fft_size / 2 + 1;

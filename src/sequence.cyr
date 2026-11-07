@@ -33,6 +33,7 @@ var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 #derive(Serialize)
 struct SvPhonemeEvent { phoneme: i64; duration: f64; stress: i64; tone: i64; }
 
+# phoneme_event_new -- a phoneme, its duration in seconds and its stress. No tone.
 #must_use
 fn svara_phoneme_event_new(phoneme, duration, stress) {
     var e = alloc(sizeof(SvPhonemeEvent));
@@ -43,6 +44,7 @@ fn svara_phoneme_event_new(phoneme, duration, stress) {
     return e;
 }
 
+# phoneme_event_with_tone -- as phoneme_event_new, with a lexical tone.
 #must_use
 fn svara_phoneme_event_with_tone(phoneme, duration, stress, tone) {
     var e = svara_phoneme_event_new(phoneme, duration, stress);
@@ -58,6 +60,7 @@ struct SvPhonemeSequence {
     transition_window: f64; lookahead_onset: f64; speaking_rate: f64;
 }
 
+# sequence_new -- empty: 0.05 s transition window, 0.6 lookahead onset, speaking rate 1.0.
 #must_use
 fn svara_sequence_new() {
     var s = alloc(sizeof(SvPhonemeSequence));
@@ -80,21 +83,27 @@ fn svara_sequence_set_lookahead_onset(s, onset) {
 fn svara_sequence_set_speaking_rate(s, rate) {
     SvPhonemeSequence_set_speaking_rate(s, f64_clamp(rate, 0.5, 3.0));
 }
+# speaking-rate multiplier.
 #must_use
 fn svara_sequence_speaking_rate(s) { return SvPhonemeSequence_speaking_rate(s); }
+# coarticulation transition window in seconds.
 #must_use
 fn svara_sequence_transition_window(s) { return SvPhonemeSequence_transition_window(s); }
 # push -- append a phoneme event to the sequence.
 fn svara_sequence_push(s, event) { vec_push(SvPhonemeSequence_events(s), event); }
+# number of events.
 #must_use
 fn svara_sequence_len(s) { return vec_len(SvPhonemeSequence_events(s)); }
+# 1 if the sequence has no events, 0 otherwise.
 #must_use
 fn svara_sequence_is_empty(s) {
     if (vec_len(SvPhonemeSequence_events(s)) == 0) { return 1; }
     return 0;
 }
+# the sequence's event vec. Borrowed, not a copy.
 #must_use
 fn svara_sequence_events(s) { return SvPhonemeSequence_events(s); }
+# sum of the event durations in seconds, as stored.
 #must_use
 fn svara_sequence_total_duration(s) {
     var events = SvPhonemeSequence_events(s);
@@ -176,6 +185,7 @@ fn svara_seq_durations(seq, in_cluster) {
     return durs;
 }
 
+# seq_phoneme_list -- a fresh vec of each event's phoneme, in order.
 #must_use
 fn svara_seq_phoneme_list(seq) {
     var events = SvPhonemeSequence_events(seq);
@@ -312,7 +322,7 @@ fn svara_sequence_render(seq, voice, sample_rate) {
 
     var cfs = vec_new();
     # transition_window is caller-set (floored at 0.001 but not capped above),
-    # so saturate as Rust's `as usize` does instead of emitting INT64_MIN.
+    # so saturate as Rust's `as usize` does rather than casting it bare.
     var min_cf = svara_count_from_f64(f64_mul(SvPhonemeSequence_transition_window(seq), sample_rate));
     i = 0;
     while (i < n - 1) {

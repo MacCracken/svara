@@ -5,6 +5,19 @@
 
 ## Version
 
+**3.5.6** (2026-11-07) — **cyrius 6.6.20 and its matched dep set.** hisab 3.3.7,
+goonj 2.0.6, naad 2.2.5, sakshi 2.5.7 (transitive). No API change. `num_fft` moved
+to `Result`, the one hisab call that needed it; 91 fns gained the doc comment
+cyrdoc no longer takes `#must_use` for; `cyrius.lock` and `lib/` regenerated from
+clean. ⭐ naad and goonj each found aborts their suites stayed green over at this
+same step, so svara was checked directly: 616 hostile cases and 556,096 values, old
+tree against new. Nothing changed but rounding, at most 4.3e-14 of peak.
+**927 assertions / 22 suites**, `cyrius audit` exit 0.
+
+**3.5.5** (2026-09-12) — **cyrius 6.6.3.** 6.6.2 could not compile the project: its
+declaration scan stopped at the first `#inline`. naad moved to 2.2.4, and svara's
+12 `#inline` markers that never inlined were removed.
+
 **3.5.4** (2026-08-31) — **two memory-safety repairs, same family:** a
 dependency's return value believed rather than checked. Together they meant
 **every sample rate in (1000, 7500] aborted the process** — `svara_tract_new`
@@ -185,11 +198,11 @@ parity oracle.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.5.35` (in `cyrius.cyml [package].cyrius` — the single
+- **Cyrius pin**: `6.6.20` (in `cyrius.cyml [package].cyrius` — the single
   source of truth; CI reads it and never hardcodes a version)
-- `lib/` holds 29 stdlib files vendored from `~/.cyrius/versions/6.5.35/lib`
+- `lib/` holds 31 stdlib files vendored from `~/.cyrius/versions/6.6.20/lib`
   (verified byte-identical file by file) plus the 4 dependency bundles.
-  `cyrius.lock`: 33 deps locked, 4 commit-pinned.
+  `cyrius.lock`: 35 deps locked, 4 commit-pinned.
 - **`cyrfmt` canonical continuation indent is 2 spaces per open-paren level**
   (4 also accepted). 6.5.28 fixed the formatter, which had never tracked
   parentheses; the pre-6.5.28 8-space convention is retired.
@@ -247,7 +260,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-917 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
+927 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **oracle** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
@@ -298,16 +311,16 @@ time in this codebase needs the same treatment.
 
 ## Quality gate
 
-All green on the 6.5.35 pin:
+All green on the 6.6.20 pin:
 
 | Gate | Command | Result |
 |---|---|---|
-| fmt | `cyrfmt --check <f>` | clean (40 files) |
+| fmt | `cyrfmt --check <f>` | clean (43 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (284 public fns across 18 modules) |
-| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 917 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (291 fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius tests tests` / bare `cyrius test` | 22/22 suites, 927 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
-| **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | ⚠ NOT covered by `cyrius audit`, whose scope is `src` |
+| **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
 | **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
 | fuzz | `cyrius fuzz` | 1/1 (`tests/svara.fcyr`) |
@@ -349,21 +362,22 @@ this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout)
 
 ## Dependencies
 
-Pinned tags as of **3.1.2**; see [`dependency-watch.md`](dependency-watch.md) for
+Pinned tags as of **3.5.6**; see [`dependency-watch.md`](dependency-watch.md) for
 the upgrade policy and the symbols svara actually consumes.
 
 | Dep | Pin | Declared | What svara uses |
 |---|---|---|---|
-| **hisab** | `2.11.2` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| **naad** | `2.2.1` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
-| **goonj** | `2.0.4` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
-| **sakshi** | `2.4.11` | transitive (via hisab) | nothing directly — goonj's logging backend |
+| **hisab** | `3.3.7` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| **naad** | `2.2.5` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
+| **goonj** | `2.0.6` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
+| **sakshi** | `2.5.7` | transitive (via hisab) | nothing directly — goonj's logging backend |
 
 **stdlib** (`[deps].stdlib`) — syscalls, string, alloc, str, fmt, vec, io, args,
-assert, math, ganita, tagged, fnptr, bench. `bayan` + `hashmap` are **opt-in via
-explicit `include`**, not stdlib entries (auto-vendor fails for them); every
+assert, math, ganita, tagged, result, fnptr, bench. `bayan` + `hashmap` are **opt-in
+via explicit `include`**, not stdlib entries (auto-vendor fails for them); every
 entry file that includes a `#derive(Serialize)` module also includes those two so
-the codecs are callable and warning-free.
+the codecs are callable and warning-free. Consumers of `dist/svara.cyr` need
+neither: the bundle's `# Requires` block names `bayan`.
 
 > Decision (2026-07-03): glottal's noise + vibrato use the **full naad bundle**
 > (per user choice), pulling goonj + sakshi transitively — maximally faithful to

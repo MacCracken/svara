@@ -21,6 +21,7 @@ include "src/sequence.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
+# 1 if every sample in vec v is finite.
 #must_use
 fn sq_all_finite(v) {
     var f = 1;
@@ -28,6 +29,7 @@ fn sq_all_finite(v) {
     while (i < vec_len(v)) { if (svara_is_finite(vec_get(v, i)) == 0) { f = 0; } i = i + 1; }
     return f;
 }
+# 1 if any sample's magnitude exceeds TOL_1EM6.
 #must_use
 fn sq_any_nonsilent(v) {
     var a = 0;

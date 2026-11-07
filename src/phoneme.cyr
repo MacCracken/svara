@@ -240,6 +240,7 @@ var SV_PH_035 = 0x3FD6666666666666;   # 0.35
 fn svara_ph_vt(f1, f2, f3, f4, f5) {
     return svara_vowel_target_new(f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5));
 }
+# ph_vtb -- vowel target from integer Hz: formants f1..f5, then bandwidths b1..b5.
 #must_use
 fn svara_ph_vtb(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
     return svara_vowel_target_with_bandwidths(
@@ -457,6 +458,7 @@ fn svara_phoneme_height_adjusted_amplitudes(p, out) {
 #derive(Serialize)
 struct SvVOT { closure_fraction: f64; burst_fraction: f64; aspiration_fraction: f64; }
 
+# vot_for_plosive -- closure, burst and aspiration fractions of a plosive's duration.
 #must_use
 fn svara_vot_for_plosive(p) {
     var self = alloc(sizeof(SvVOT));
@@ -639,6 +641,7 @@ fn svara_ph_fricative_formants(phoneme) {
 
 # ---- per-class synthesis (return raw buffer of n f64, or neg error) --------
 
+# vowel: the voice's glottal source through a tract with height-adjusted formant amplitudes.
 #must_use
 fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -665,6 +668,7 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# diphthong: glottal source through a tract gliding from the phoneme's target to its end target.
 #must_use
 fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n) {
     var start = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -700,6 +704,8 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# plosive: silent closure, noise burst and decaying aspiration at its VOT fractions, then
+# breathy voicing if voiced, else low-level filtered noise.
 #must_use
 fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n) {
     var buf = svara_alloc_samples(n);
@@ -770,6 +776,7 @@ fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# fricative: filtered noise, mixed with the glottal source through the tract if voiced.
 #must_use
 fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -804,6 +811,7 @@ fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# nasal: glottal source through the tract at 0.8 nasal coupling, at the phoneme's place.
 #must_use
 fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -825,6 +833,7 @@ fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# approximant: glottal source through the tract, with breathiness floored at 0.1.
 #must_use
 fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -843,6 +852,7 @@ fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# affricate: silent closure (n/4), noise burst (n/8), then frication, mixed with voicing if voiced.
 #must_use
 fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n) {
     var buf = svara_alloc_samples(n);
@@ -889,6 +899,7 @@ fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# trill: glottal source through the tract, amplitude-modulated at 15-25 Hz by trill type.
 #must_use
 fn svara_ph_synth_trill(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -915,6 +926,7 @@ fn svara_ph_synth_trill(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# click: silence, then from 60% of n a filtered noise burst with a squared decay.
 #must_use
 fn svara_ph_synth_click(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -940,6 +952,8 @@ fn svara_ph_synth_click(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# ejective: silent closure (40%), noise burst (20%), then a decaying release, through the
+# fricative filter for ejective s and ch.
 #must_use
 fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -991,6 +1005,7 @@ fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n) {
     return buf;
 }
 
+# implosive: silent closure (n/3), then creaky voicing through the tract at half amplitude.
 #must_use
 fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
@@ -1027,7 +1042,7 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal) {
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     # `nasal` is caller-supplied, so onset can be NaN or huge -- saturate as
-    # Rust's `as usize` does rather than letting f64_to emit INT64_MIN.
+    # Rust's `as usize` does rather than letting f64_to keep a negative value.
     var onset_sample = svara_count_from_f64(f64_mul(SvNasalization_onset(nasal), f64_from(n)));
     var ramp_len = n - onset_sample;
     if (ramp_len < 1) { ramp_len = 1; }
@@ -1098,7 +1113,7 @@ fn svara_phoneme_synthesize(phoneme, voice, sample_rate, duration) {
     if (f64_le(sample_rate, 0) == 1) { return SVARA_ERR_ARTICULATION; }
     # Rust checks only `sample_rate <= 0.0` here, so a NaN or +inf rate reaches
     # the cast; `as usize` saturates it (NaN -> 0 -> empty vec). svara_count_from_f64
-    # reproduces that -- a bare f64_to would yield INT64_MIN. See error.cyr.
+    # reproduces that -- a bare f64_to would not bound it. See error.cyr.
     var n = svara_count_from_f64(f64_mul(duration, sample_rate));
     if (n == 0) { return vec_new(); }
     var data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n);
@@ -1158,8 +1173,10 @@ fn svara_synthctx_new(voice, sample_rate) {
     return self;
 }
 
+# sample rate in Hz this context was built for.
 #must_use
 fn svara_synthctx_sample_rate(self) { return SvSynthCtx_sample_rate(self); }
+# the context's reused sample buffer. The next render overwrites it.
 #must_use
 fn svara_synthctx_buffer(self) { return SvSynthCtx_buffer(self); }
 
@@ -1269,6 +1286,8 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
     return SVARA_ERR_NONE;
 }
 
+# nasal into the context's buffer: tract at 0.8 nasal coupling, at the phoneme's place. Returns
+# SVARA_ERR_NONE or a neg error, as every per-class synthctx fn does.
 #must_use
 fn svara_synthctx_nasal(self, phoneme, voice, n) {
     var tract = SvSynthCtx_tract(self);
@@ -1285,6 +1304,7 @@ fn svara_synthctx_nasal(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# fricative into the context's buffer: filtered noise, plus tract voicing if voiced.
 #must_use
 fn svara_synthctx_fricative(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
@@ -1317,6 +1337,8 @@ fn svara_synthctx_fricative(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# plosive into the context's buffer: silent closure (n/3), noise burst (n/6), then breathy
+# voicing if voiced, else filtered noise. Fixed fractions, not svara_vot_for_plosive's.
 #must_use
 fn svara_synthctx_plosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
@@ -1361,6 +1383,8 @@ fn svara_synthctx_plosive(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# affricate into the context's buffer: silent closure (n/4), noise burst (n/8), then frication,
+# mixed with voicing if voiced.
 #must_use
 fn svara_synthctx_affricate(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
@@ -1423,6 +1447,7 @@ fn svara_synthctx_approx(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# click into the context's buffer: silence, then from 60% of n a noise burst with a squared decay.
 #must_use
 fn svara_synthctx_click(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
@@ -1445,6 +1470,7 @@ fn svara_synthctx_click(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# ejective into the context's buffer: silent closure (40%), noise burst (20%), decaying release.
 #must_use
 fn svara_synthctx_ejective(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
@@ -1493,6 +1519,7 @@ fn svara_synthctx_ejective(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
+# implosive into the context's buffer: silent closure (n/3), then creaky voicing at half amplitude.
 #must_use
 fn svara_synthctx_implosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);

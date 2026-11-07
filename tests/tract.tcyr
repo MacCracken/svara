@@ -17,6 +17,7 @@ include "src/tract.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
+# 1 if |a - b| < eps.
 #must_use
 fn approx(a, b, eps) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);

@@ -43,11 +43,13 @@ var SV_NEG_INF = 0xFFF0000000000000;   # -inf
 # the hazard class this block exists to close (goonj ADR-0002 names it; svara
 # carried four instances of it through 3.1.2):
 #
-#  1. Rust's float -> int `as` casts SATURATE (since 1.45): NaN -> 0, negative
-#     -> 0, overflow -> MAX. Cyrius `f64_to` does NOT -- it returns INT64_MIN
-#     for NaN, +/-inf and anything outside i64, and otherwise truncates toward
-#     zero. So the Rust idiom `let n = (duration * sample_rate) as usize;` ports
-#     to a line that looks right and yields INT64_MIN for a NaN sample rate.
+#  1. Rust's float -> unsigned `as` casts SATURATE (since 1.45): NaN -> 0,
+#     negative -> 0, overflow -> MAX. Cyrius `f64_to` saturates to the SIGNED
+#     range (since cyrius 6.6.8): NaN -> 0, >= 2^63 -> INT64_MAX, < -2^63 ->
+#     INT64_MIN, and otherwise truncates toward zero. So the Rust idiom
+#     `let n = (duration * sample_rate) as usize;` ports to a line that looks
+#     right and yields a negative count for a negative duration, and INT64_MAX,
+#     which walks past any floor-only guard, for an overflowing one.
 #  2. `usize` cannot be negative, so Rust writes a bounds check as a SINGLE
 #     upper-bound test. In signed i64 that keeps only half the bound.
 #

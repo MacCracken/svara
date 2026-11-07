@@ -5,7 +5,7 @@ description = "svara — formant and vocal synthesis (glottal source, vocal trac
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/svara"
 language = "cyrius"
-cyrius = "6.6.3"
+cyrius = "6.6.20"
 
 [build]
 entry = "src/main.cyr"
@@ -39,7 +39,8 @@ modules = [
 
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives
 # the transcendentals svara's DSP leans on (sin/cos/exp/ln/pow/sqrt/tanh/…);
-# tagged for the few Option-shaped returns; bench for .bcyr harnesses.
+# tagged for the few Option-shaped returns; result for hisab's fallible returns
+# (`num_fft`, since hisab 3.0.0); bench for .bcyr harnesses.
 [deps]
 stdlib = [
     "syscalls",
@@ -54,6 +55,7 @@ stdlib = [
     "math",
     "ganita",
     "tagged",
+    "result",
     "fnptr",
     "bench",
 ]
@@ -61,22 +63,25 @@ stdlib = [
 # hisab (FFT / HComplex / compensated sum / easing / interp) — consumed by
 # spectral.cyr (num_fft, num_neumaier_sum). Pinned to the tag naad uses, for a
 # coherent bundle in downstream consumers (dhvani / vansh) that pull both.
+# 3.3.7 is the last hisab on cyrius 6.6.x: it pins exactly 6.6.20, and 3.4.0
+# onward needs 6.7.x.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "2.22.1"
+tag = "3.3.7"
 modules = ["dist/hisab.cyr"]
 
 # naad — biquad / noise (NoiseGenerator) / LFO (modulation) backends consumed by
 # glottal.cyr (aspiration noise + vibrato) and tract.cyr (nasal notch, subglottal
 # bandpass). The dist bundle references goonj (acoustics) + sakshi (logging), which
 # resolve from this manifest; sakshi arrives transitively via hisab. Pinned to the
-# released tags naad uses, for a coherent bundle in downstream consumers.
+# released tags naad uses, for a coherent bundle in downstream consumers. naad
+# 2.2.5 and goonj 2.0.6 pin cyrius 6.6.20 and hisab 3.3.7, so all three agree.
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.2.4"
+tag = "2.2.5"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.0.4"
+tag = "2.0.6"
 modules = ["dist/goonj.cyr"]

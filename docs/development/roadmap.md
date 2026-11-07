@@ -424,3 +424,44 @@ it. Do not cite it as evidence that there is no deferred work.
 
 ---
 
+
+---
+
+## Moving the cyrius pin to 6.6.6
+
+**Done.** The pin went past this to `cyrius = "6.6.20"` in 3.5.6. The audit below
+held for the language changes. What it could not see was the matched dep set:
+hisab 3.x and cyrdoc's stricter docs rule each needed work, recorded in the
+CHANGELOG.
+
+**svara needs the pin bump and nothing else.** It synthesises into caller-supplied
+buffers and never touches the filesystem — zero `sys_open` / `file_open` /
+`file_write_all` / `file_read_all` / `file_exists` call sites in `src/` or
+`programs/` — so the Windows `O_APPEND` / `O_TRUNC` data corruption 6.6.6 fixes
+cannot reach it. No `CYRIUS_TARGET_WIN` guard anywhere; CI is `ubuntu-latest`
+only.
+
+The one shape that needed a real look is structs, since svara declares **33** of
+them (formant filters, phoneme descriptors, the synthesis contexts). 6.6.6 now
+rejects copying between two *different* struct/vector types. svara has **zero
+struct-typed `var` declarations** — no `var x: SomeStruct = …` anywhere in
+`src/`, `tests/` or `programs/`; the structs are used purely through offset
+constants and `load64`/`store64`. With no struct-typed variable on either side of
+an assignment, neither the different-struct-copy error nor the by-value >8 B
+deep-copy change has a site to fire on.
+
+Also checked and absent: 0 `async fn`, 0 `operator` fns, 0 `ret2` / `rethi`, no
+SIMD intrinsics, no `: cstring` params. 194 globals, **none** redeclared, so
+6.6.6's "a later redeclaration now wins everywhere" flip and the new
+different-type-co-linked-global error change nothing. No `var` inside a top-level
+block — the 37 candidates in `tests/formant.tcyr` and `tests/phoneme.tcyr` are all
+bodies of `fn`s whose signatures wrap across two lines, not top-level blocks. No
+own `vec_*` definitions, so `assert.cyr`'s new transitive `vec.cyr` include cannot
+collide with the 22 assert call sites. No raw `SYS_STATFS`. `lib/regression.cyr`
+is not vendored — the "regression" grep hits are stale comments in vendored
+`lib/syscalls*.cyr` / `lib/hisab.cyr` and one line in `scripts/bench-history.sh`,
+not calls. `lib/` holds no symlinks and `cyrius.lock` is writable, so 6.6.6's
+fail-hard `cyrius deps` / `publish` is a no-op.
+
+After bumping: `cyrius test`, `cyrius bench` (the synthesis benchmarks are the
+thing most likely to shift under a new compiler), and regenerate `dist/`.

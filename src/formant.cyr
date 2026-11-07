@@ -32,6 +32,8 @@ var SVARA_AMP_4 = 0x3FC999999999999A;   # 0.2
 #derive(Serialize)
 struct SvFormant { frequency: f64; bandwidth: f64; amplitude: f64; }
 
+# formant_new -- center frequency (Hz), bandwidth (Hz), linear amplitude. Stored as given:
+# svara_formant_filter_new is what validates them.
 #must_use
 fn svara_formant_new(frequency, bandwidth, amplitude) {
     var self = alloc(sizeof(SvFormant));
@@ -382,6 +384,7 @@ fn svara_formant_bank_reset(self) {
 #derive(accessors)
 struct SvDcBlocker { alpha; x_prev; y_prev; }
 
+# dc_blocker_new -- one-pole DC blocker with its corner near 20 Hz at `sample_rate`.
 #must_use
 fn svara_dc_blocker_new(sample_rate) {
     var self = alloc(sizeof(SvDcBlocker));

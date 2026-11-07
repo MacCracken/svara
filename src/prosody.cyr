@@ -38,6 +38,7 @@ var SVARA_STRESS_UNSTRESSED = 2;
 #derive(Serialize)
 struct SvF0Point { time: f64; value: f64; }
 
+# pt_new -- an f0 contour point: normalized time and f0 multiplier.
 #must_use
 fn svara_pt_new(t, v) {
     var p = alloc(sizeof(SvF0Point));
@@ -45,8 +46,10 @@ fn svara_pt_new(t, v) {
     SvF0Point_set_value(p, v);
     return p;
 }
+# normalized time of a contour point.
 #must_use
 fn svara_pt_time(p) { return SvF0Point_time(p); }
+# f0 multiplier of a contour point.
 #must_use
 fn svara_pt_value(p) { return SvF0Point_value(p); }
 
@@ -117,6 +120,7 @@ fn svara_prosody_f0_at_internal(self, t) {
     return r;
 }
 
+# f0_at -- f0 multiplier at normalized time `t`; see svara_prosody_f0_at_internal.
 #must_use
 fn svara_prosody_f0_at(self, t) { return svara_prosody_f0_at_internal(self, t); }
 

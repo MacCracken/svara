@@ -112,34 +112,32 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.5.2"
+tag = "3.5.6"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "2.11.2"
+tag = "3.3.7"
 modules = ["dist/hisab.cyr"]
 
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.2.1"
+tag = "2.2.5"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.0.4"
+tag = "2.0.6"
 modules = ["dist/goonj.cyr"]
 ```
 
-Pin exactly these tags: naad 2.2.1 itself pins hisab 2.11.2 and goonj 2.0.4, so a consumer that
+Pin exactly these tags: naad 2.2.5 itself pins hisab 3.3.7 and goonj 2.0.6, so a consumer that
 bundles svara *and* naad *and* hisab in one flat namespace gets a coherent symbol set rather than
 two versions of the same name.
 
-`bayan` and `hashmap` are **opt-in via explicit `include`**, not `[deps].stdlib` entries. Include
-both before the svara bundle if you use the `#derive(Serialize)` JSON codecs (or simply to build
-warning-free — the derived `Type_to_json` / `_from_json` bodies reference bayan whether or not you
-call them).
+`dist/svara.cyr` names what it needs in its own `# Requires` block, so a consumer gets `bayan` and
+the `#derive(Serialize)` JSON codecs without including anything by hand.
 
 ## Dependencies
 
@@ -149,10 +147,10 @@ for the full consumption map and the flat-namespace rename hazard.
 
 | Dep | Pin | What svara uses |
 |---|---|---|
-| [hisab](https://github.com/MacCracken/hisab) | `2.11.2` | `num_fft` + `num_neumaier_sum` (spectral), `calc_monotone_cubic` (prosody), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| [naad](https://github.com/MacCracken/naad) | `2.2.1` | biquads + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract), noise + LFO (glottal) |
-| [goonj](https://github.com/MacCracken/goonj) | `2.0.4` | nothing directly — the naad bundle references it, so it must resolve |
-| [sakshi](https://github.com/MacCracken/sakshi) | `2.4.11` | structured logging under `-D LOGGING` (`src/logging.cyr`); also transitive via hisab and goonj's backend |
+| [hisab](https://github.com/MacCracken/hisab) | `3.3.7` | `num_fft` + `num_neumaier_sum` (spectral), `calc_monotone_cubic` (prosody), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| [naad](https://github.com/MacCracken/naad) | `2.2.5` | biquads + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract), noise + LFO (glottal) |
+| [goonj](https://github.com/MacCracken/goonj) | `2.0.6` | nothing directly — the naad bundle references it, so it must resolve |
+| [sakshi](https://github.com/MacCracken/sakshi) | `2.5.7` | structured logging under `-D LOGGING` (`src/logging.cyr`); also transitive via hisab and goonj's backend |
 
 **No feature flags**, but one compile-time switch. Cyrius has no feature system, and the port
 collapsed the Rust CFG split: svara carries only the naad-backend path (naad's biquad / noise /

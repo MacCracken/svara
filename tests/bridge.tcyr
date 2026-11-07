@@ -11,8 +11,10 @@ include "src/bridge.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
 
+# 1 if |a - b| < eps.
 #must_use
 fn br_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
+# 1 unless x compares outside [lo, hi]. A NaN passes.
 #must_use
 fn br_in_range(x, lo, hi) {
     if (f64_lt(x, lo) == 1) { return 0; }

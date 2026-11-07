@@ -102,6 +102,8 @@ fn svara_pool_render_nasalized(p, phoneme, voice, duration, nasal) {
     return n;
 }
 
+# render -- svara_pool_render_nasalized with no nasalization. Returns the sample count or a
+# neg error.
 #must_use
 fn svara_pool_render(p, phoneme, voice, duration) {
     return svara_pool_render_nasalized(p, phoneme, voice, duration, 0);
@@ -131,10 +133,13 @@ fn svara_pool_render_batch(p, phonemes, durations, voice) {
 # buffer holding the most recent render's samples.
 #must_use
 fn svara_pool_buffer(p) { return svara_synthctx_buffer(SvSynthesisPool_ctx(p)); }
+# phonemes rendered so far, counting each phoneme of a batch.
 #must_use
 fn svara_pool_render_count(p) { return SvSynthesisPool_render_count(p); }
+# longest single render so far, in samples.
 #must_use
 fn svara_pool_peak_samples(p) { return SvSynthesisPool_peak_samples(p); }
+# the pool's synthesis context. Borrowed: the pool still owns it.
 #must_use
 fn svara_pool_context(p) { return SvSynthesisPool_ctx(p); }
 

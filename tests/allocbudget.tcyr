@@ -83,6 +83,7 @@ fn samples_same(a, b) {
     return 1;
 }
 
+# Two-event sequence, `dur` seconds each, with lexical tones when toned == 1.
 #must_use
 fn mk_seq(dur, toned) {
     var s = svara_sequence_new();

@@ -15,6 +15,7 @@
 #derive(Serialize)
 struct SvRenderProgress { phoneme_index: i64; total_phonemes: i64; samples_rendered: i64; }
 
+# render_progress_new -- phoneme index, total phonemes, samples rendered so far.
 #must_use
 fn svara_render_progress_new(phoneme_index, total_phonemes, samples_rendered) {
     var p = alloc(sizeof(SvRenderProgress));
@@ -40,6 +41,7 @@ fn svara_render_progress_fraction(p) {
 #derive(accessors)
 struct SvRenderOutput { samples; progress; }
 
+# render_output_new -- pairs a samples vec<f64> with its SvRenderProgress. Stores both pointers.
 #must_use
 fn svara_render_output_new(samples, progress) {
     var o = alloc(sizeof(SvRenderOutput));
@@ -124,6 +126,8 @@ fn svara_batch_restore(st, voice) {
 #derive(accessors)
 struct SvBatchRenderer { events; ctx; voice; sample_rate; }
 
+# batch_new -- an empty batch renderer for a clone of `voice`. Returns the renderer, or a neg
+# error if no synthesis context can be built at `sample_rate`.
 #must_use
 fn svara_batch_new(voice, sample_rate) {
     var ctx = svara_synthctx_new(voice, sample_rate);
@@ -148,8 +152,10 @@ fn svara_batch_extend(r, events) {
 }
 # clear -- drop all queued events (reuse the renderer for a fresh utterance).
 fn svara_batch_clear(r) { SvBatchRenderer_set_events(r, vec_new()); }
+# number of queued events.
 #must_use
 fn svara_batch_len(r) { return vec_len(SvBatchRenderer_events(r)); }
+# 1 if no events are queued, 0 otherwise.
 #must_use
 fn svara_batch_is_empty(r) {
     if (vec_len(SvBatchRenderer_events(r)) == 0) { return 1; }

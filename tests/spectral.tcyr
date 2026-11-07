@@ -9,6 +9,7 @@ include "src/spectral.cyr"
 var TOL_001 = 0x3F847AE147AE147B;         # 0.01 (RMS tolerance)
 var FRAC_1_SQRT_2 = 0x3FE6A09E667F3BCC;   # 1/sqrt(2) ~ 0.70710678 (unit-sine RMS)
 
+# 1 if |a - b| < eps.
 #must_use
 fn approx(a, b, eps) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);

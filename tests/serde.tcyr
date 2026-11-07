@@ -41,6 +41,7 @@ include "src/render.cyr"
 
 var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3 (6-decimal text round-trip tolerance)
 
+# 1 if |a - b| < eps.
 #must_use
 fn se_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 # serialize `ptr` via `to_json` fn-ptr into JSON, return the cstr.

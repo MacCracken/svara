@@ -4,7 +4,7 @@
 # Rust encodes two guarantees Cyrius has no equivalent for, and the port dropped
 # both silently because the ported line LOOKS correct:
 #   1. float -> int `as` casts SATURATE (NaN -> 0, negative -> 0, overflow -> MAX);
-#      Cyrius `f64_to` returns INT64_MIN for all three.
+#      Cyrius `f64_to` saturates only to the signed range, so a negative stays negative.
 #   2. `usize` cannot be negative, so Rust writes a bounds check as a SINGLE
 #      upper-bound test; in signed i64 that is only half a bound.
 # Plus one inverted range test (`!(a..=b).contains(&x)` is TRUE for NaN, so Rust
@@ -41,6 +41,7 @@ include "src/sequence.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 
+# A NaN: 0.0 / 0.0.
 #must_use
 fn hd_nan() { return f64_div(0, 0); }
 
@@ -53,7 +54,7 @@ fn main() {
     # ================================================================
     test_group("f64 -> count saturates like Rust's `as usize`");
     # ================================================================
-    # A bare f64_to returns INT64_MIN for every one of these.
+    # A bare f64_to gives INT64_MAX for +inf and keeps the negatives negative.
     assert_eq(svara_count_from_f64(nan), 0, "NaN -> 0");
     assert_eq(svara_count_from_f64(SV_POS_INF), SV_MAX_SAMPLES + 1, "+inf -> over cap");
     assert_eq(svara_count_from_f64(SV_NEG_INF), 0, "-inf -> 0");
@@ -127,7 +128,7 @@ fn main() {
     assert_eq(svara_is_err(spec), 0, "control: analyze succeeds on a 512-sample sine");
 
     var neg_hz = f64_neg(f64_from(1000));
-    # f64_to gave INT64_MIN, which then reached vec_get and killed the process.
+    # A bare f64_to gives a negative index, which reaches vec_get and kills the process.
     assert_eq(svara_spectrum_frequency_bin(spec, neg_hz), 0, "negative Hz -> bin 0");
     assert_eq(svara_spectrum_frequency_bin(spec, nan), 0, "NaN Hz -> bin 0");
     assert_eq(svara_spectrum_frequency_bin(spec, SV_NEG_INF), 0, "-inf Hz -> bin 0");

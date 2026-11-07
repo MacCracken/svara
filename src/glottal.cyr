@@ -328,14 +328,18 @@ fn svara_glottal_set_vibrato(self, rate, depth) {
 # ---- getters --------------------------------------------------------------
 #must_use
 fn svara_glottal_model(self) { return SvGlottalSource_model(self); }
+# current Rd, the LF-model voice-quality parameter.
 #must_use
 fn svara_glottal_rd(self) { return SvGlottalSource_rd(self); }
+# current fundamental frequency in Hz.
 #inline
 #must_use
 fn svara_glottal_f0(self) { return SvGlottalSource_f0(self); }
+# sample rate in Hz this source was built for.
 #inline
 #must_use
 fn svara_glottal_sample_rate(self) { return SvGlottalSource_sample_rate(self); }
+# current glottal period in samples, as an f64 (not rounded).
 #inline
 #must_use
 fn svara_glottal_period_samples(self) { return SvGlottalSource_current_period(self); }

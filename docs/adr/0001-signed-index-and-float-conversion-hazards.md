@@ -156,3 +156,23 @@ the directory goes.
   `frequency_bin`.** Rejected: three call sites today, and the next one added
   would have to remember. Saturating the producer makes the consumers correct by
   construction and matches the Rust signature.
+
+## Amendment: cyrius 6.6.8 made `f64_to` saturate
+
+Mechanism 1 records what was measured when this was written. Since cyrius 6.6.8,
+`f64_to` gives the same integer on every target: `NaN → 0`, at or past `2^63 →
+INT64_MAX`, below `-2^63 → INT64_MIN`, and otherwise it truncates toward zero.
+
+**The decision stands.** The cast now saturates to the *signed* range, which is
+not Rust's `as usize`:
+
+- A negative value stays negative, so mechanism 2 is untouched: a bare cast still
+  hands `vec_get` an index that aborts.
+- An overflow is now `INT64_MAX`, which walks past a floor-only guard such as
+  `if (n < 1)`. naad and goonj both had guards that only worked because the old
+  sentinel was negative, and both suites stayed green over the resulting aborts.
+
+svara had no such guard, because rule 1 bounds in f64 before the cast. Moving to
+6.6.20 was checked with 616 NaN, ±inf and out-of-range cases through the public
+entry points, old tree against new: no exit code, length, error code or
+non-finite count changed.

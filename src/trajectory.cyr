@@ -13,6 +13,7 @@
 #derive(accessors)
 struct SvFormantKeypoint { time; target; resistance; }
 
+# keypoint_new -- target formants at sample `time`, with coarticulation `resistance`.
 #must_use
 fn svara_keypoint_new(time, target, resistance) {
     var k = alloc(sizeof(SvFormantKeypoint));
@@ -168,10 +169,13 @@ fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     return self;
 }
 
+# length of the planned trajectory in samples.
 #must_use
 fn svara_trajectory_total_samples(self) { return SvTrajectoryPlanner_total_samples(self); }
+# number of keypoints in the plan.
 #must_use
 fn svara_trajectory_num_keypoints(self) { return vec_len(SvTrajectoryPlanner_keypoints(self)); }
+# the plan's keypoint vec. Borrowed, not a copy.
 #must_use
 fn svara_trajectory_keypoints(self) { return SvTrajectoryPlanner_keypoints(self); }
 

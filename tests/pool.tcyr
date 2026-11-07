@@ -18,6 +18,7 @@ include "src/pool.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
 
+# 1 if all n samples in buf are finite.
 #must_use
 fn pl_finite(buf, n) {
     var f = 1;
