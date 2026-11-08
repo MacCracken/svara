@@ -64,9 +64,16 @@ fn svara_lf_params_from_rd(rd, out) {
     store64(out + 16, ee);
 }
 
+# Three f64s for apply_rd's LF params. Read straight back into the source, so one
+# buffer serves every source.
+var _sv_glottal_rd_out = 0;
+
 # apply_rd -- compute + store LF params on the source.
 fn svara_glottal_apply_rd(self, rd) {
-    var out = alloc(24);
+    # One scratch triple for every call: this ran on each new, set_rd and
+    # set_creaky, and the bump allocator never frees.
+    if (_sv_glottal_rd_out == 0) { _sv_glottal_rd_out = alloc(24); }
+    var out = _sv_glottal_rd_out;
     svara_lf_params_from_rd(rd, out);
     SvGlottalSource_set_lf_ta(self, load64(out));
     SvGlottalSource_set_lf_te(self, load64(out + 8));
@@ -205,6 +212,15 @@ fn svara_glottal_save(self) {
 # trusted. The naad handles are constructed fresh and then re-parameterised.
 #must_use
 fn svara_glottal_restore(st) {
+    # Refuse what Rust's serde refuses: no document, a model outside the enum, a
+    # diplophonia phase that is not a bool, and a non-finite vibrato rate, which
+    # serde_json writes as null and cannot read back.
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
+    var model = SvGlottalState_model(st);
+    if ((model < SVARA_GLOTTAL_ROSENBERG) | (model > SVARA_GLOTTAL_CREAKY)) { return SVARA_ERR_COMPUTATION; }
+    var dp = SvGlottalState_diplo_phase(st);
+    if ((dp != 0) & (dp != 1)) { return SVARA_ERR_COMPUTATION; }
+    if (svara_is_finite(SvGlottalState_vibrato_rate(st)) == 0) { return SVARA_ERR_COMPUTATION; }
     var g = svara_glottal_new(SvGlottalState_f0(st), SvGlottalState_sample_rate(st));
     if (svara_is_err(g) == 1) { return g; }
     SvGlottalSource_set_model(g, SvGlottalState_model(st));
@@ -286,6 +302,9 @@ fn svara_glottal_set_diplophonia(self, amount) {
 
 # set_model -- select the excitation model (SVARA_GLOTTAL_*).
 fn svara_glottal_set_model(self, model) {
+    # Rust's model is an enum, so an out-of-range value cannot reach it. Keep the
+    # current model rather than adopt one no branch handles.
+    if ((model < SVARA_GLOTTAL_ROSENBERG) | (model > SVARA_GLOTTAL_CREAKY)) { return 0; }
     SvGlottalSource_set_model(self, model);
 }
 

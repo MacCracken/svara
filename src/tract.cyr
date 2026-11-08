@@ -179,6 +179,14 @@ fn svara_tract_save(self) {
 # constructors rather than trusted.
 #must_use
 fn svara_tract_restore(st) {
+    # Refuse what Rust's serde refuses: no document, a missing formant list, and a
+    # quality or nasal place outside its enum.
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
+    if (svara_vec_all_set(SvVocalTractState_formants(st)) == 0) { return SVARA_ERR_COMPUTATION; }
+    var q = SvVocalTractState_quality(st);
+    if ((q < SVARA_QUALITY_FULL) | (q > SVARA_QUALITY_MINIMAL)) { return SVARA_ERR_COMPUTATION; }
+    var np = SvVocalTractState_nasal_place(st);
+    if ((np < SVARA_NASAL_BILABIAL) | (np > SVARA_NASAL_NEUTRAL)) { return SVARA_ERR_COMPUTATION; }
     var self = svara_tract_new(SvVocalTractState_sample_rate(st));
     if (svara_is_err(self) == 1) { return self; }
     var e = svara_tract_set_formants(self, SvVocalTractState_formants(st));
@@ -252,30 +260,19 @@ fn svara_tract_record_formants(self, formants) {
     return 0;
 }
 
-# set_formants_from_target -- as above, from a VowelTarget. Fills the tract's own
-# formant vec in place rather than allocating a fresh one per call, so
-# set_formants sees its own vec and record_formants is a no-op.
+var _sv_tract_target_scratch = 0;
+
+# set_formants_from_target -- as above, from a VowelTarget. Builds the five
+# formants in a module scratch vec, so set_formants validates them before the
+# tract's record changes. Writing into the record first left a rejected target
+# there, and a record of six to eight formants kept its upper slots, so the bank
+# went on ringing at formants the vowel does not have. The filter copies values
+# and keeps no pointer to the vec, so one scratch serves every tract.
 #must_use
 fn svara_tract_set_formants_from_target(self, target) {
-    var own = SvVocalTract_formants(self);
-    # svara_vowel_target_to_formants_into writes FIVE formants unconditionally and
-    # documents that precondition (formant.cyr). This call site could violate it:
-    # svara_tract_new falls back to a SINGLE 500 Hz formant when the sample rate
-    # cannot carry the five-formant schwa (its F5 is 3750 Hz, so anything at or
-    # below 7500 Hz), and stores that one-element vec as the tract's record. The
-    # write then ran off the end of the vec and ABORTED the process with
-    # "vec: index out of bounds" -- with no error code for the caller to check,
-    # since the tract itself had been returned as valid.
-    #
-    # Build a fresh five instead and let set_formants -> filter_rebuild validate
-    # it against the sample rate. rebuild validates BEFORE mutating, so a rate
-    # that cannot carry five formants now returns SVARA_ERR_INVALID_FORMANT and
-    # leaves the fallback bank untouched -- a checkable failure instead of a crash.
-    if (vec_len(own) < SVARA_VOWEL_FORMANT_COUNT) {
-        return svara_tract_set_formants(self, svara_vowel_target_to_formants(target));
-    }
-    svara_vowel_target_to_formants_into(target, own);
-    return svara_tract_set_formants(self, own);
+    if (_sv_tract_target_scratch == 0) { _sv_tract_target_scratch = svara_formant_scratch_vec(); }
+    svara_vowel_target_to_formants_into(target, _sv_tract_target_scratch);
+    return svara_tract_set_formants(self, _sv_tract_target_scratch);
 }
 
 # set_vowel -- retarget the tract at `vowel`. Returns what
@@ -300,9 +297,14 @@ fn svara_tract_set_lip_radiation(self, coefficient) {
 # without this a tract could not report its own configuration and
 # svara_tract_restore could not reproduce it.
 fn svara_tract_set_nasal_place(self, place) {
+    if ((place < SVARA_NASAL_BILABIAL) | (place > SVARA_NASAL_NEUTRAL)) { return 0; }
     var freq = svara_nasal_place_antiformant_frequency(place);
     var q = f64_div(freq, f64_from(SV_T_NASAL_BW));
-    filter_biquad_set_params(SvVocalTract_nasal_antiformant(self), freq, q, 0);
+    # Record the place only if naad retuned the notch: at a low sample rate it can
+    # refuse, and save would then capture a notch the tract does not have. Rust keeps
+    # no place field; it serializes the filter itself.
+    var e = filter_biquad_set_params(SvVocalTract_nasal_antiformant(self), freq, q, 0);
+    if (naad_is_err(e) == 1) { return 0; }
     SvVocalTract_set_nasal_place(self, place);
 }
 
@@ -327,6 +329,8 @@ fn svara_tract_set_gain(self, gain) {
 
 # set_quality -- level-of-detail tier (SVARA_QUALITY_*) gating optional stages.
 fn svara_tract_set_quality(self, quality) {
+    # Rust's quality is an enum. Keep the current one rather than mix tiers.
+    if ((quality < SVARA_QUALITY_FULL) | (quality > SVARA_QUALITY_MINIMAL)) { return 0; }
     SvVocalTract_set_quality(self, quality);
 }
 

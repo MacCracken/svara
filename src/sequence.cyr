@@ -51,6 +51,42 @@ fn svara_phoneme_event_with_tone(phoneme, duration, stress, tone) {
     return e;
 }
 
+# phoneme_event_is_valid -- 1 if the event's phoneme, stress and tone are each a
+# value of its Rust enum (a tone may also be SVARA_TONE_NONE), else 0. A decoded
+# event can carry any integer, and Rust's serde refuses an unknown variant.
+#must_use
+fn svara_phoneme_event_is_valid(e) {
+    if (svara_phoneme_is_valid(SvPhonemeEvent_phoneme(e)) == 0) { return 0; }
+    var st = SvPhonemeEvent_stress(e);
+    if ((st < SVARA_STRESS_PRIMARY) | (st > SVARA_STRESS_UNSTRESSED)) { return 0; }
+    var tn = SvPhonemeEvent_tone(e);
+    if ((tn < SVARA_TONE_NONE) | (tn > SVARA_TONE_HIGH_FALLING)) { return 0; }
+    return 1;
+}
+
+# phoneme_event_copy -- a fresh event with `e`'s fields. Rust's PhonemeEvent is a
+# value, so a sequence or renderer keeps its own and a caller's later write to `e`
+# changes nothing there.
+#must_use
+fn svara_phoneme_event_copy(e) {
+    var c = alloc(sizeof(SvPhonemeEvent));
+    SvPhonemeEvent_set_phoneme(c, SvPhonemeEvent_phoneme(e));
+    SvPhonemeEvent_set_duration(c, SvPhonemeEvent_duration(e));
+    SvPhonemeEvent_set_stress(c, SvPhonemeEvent_stress(e));
+    SvPhonemeEvent_set_tone(c, SvPhonemeEvent_tone(e));
+    return c;
+}
+
+# phoneme_events_copy -- a fresh vec of copies of every event in `events`.
+#must_use
+fn svara_phoneme_events_copy(events) {
+    var c = vec_new();
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) { vec_push(c, svara_phoneme_event_copy(vec_get(events, i))); i = i + 1; }
+    return c;
+}
+
 # PhonemeSequence -- ordered events + coarticulation params.
 #derive(accessors)
 #derive(Serialize)
@@ -88,8 +124,8 @@ fn svara_sequence_speaking_rate(s) { return SvPhonemeSequence_speaking_rate(s); 
 # coarticulation transition window in seconds.
 #must_use
 fn svara_sequence_transition_window(s) { return SvPhonemeSequence_transition_window(s); }
-# push -- append a phoneme event to the sequence.
-fn svara_sequence_push(s, event) { vec_push(SvPhonemeSequence_events(s), event); }
+# push -- append a copy of a phoneme event to the sequence.
+fn svara_sequence_push(s, event) { vec_push(SvPhonemeSequence_events(s), svara_phoneme_event_copy(event)); }
 # number of events.
 #must_use
 fn svara_sequence_len(s) { return vec_len(SvPhonemeSequence_events(s)); }
@@ -201,7 +237,8 @@ fn svara_seq_sigmoid_fade(t) {
 }
 
 # crossfade_segments_variable -- blend adjacent sample vecs with per-boundary
-# crossfade lengths (sigmoid). Returns the concatenated/blended sample vec.
+# crossfade lengths (sigmoid). Returns the concatenated/blended sample vec, or
+# SVARA_ERR_COMPUTATION if it would pass SV_MAX_SAMPLES.
 #must_use
 fn svara_seq_crossfade(segments, cf_lengths) {
     var ns = vec_len(segments);
@@ -212,6 +249,8 @@ fn svara_seq_crossfade(segments, cf_lengths) {
     while (i < ns) {
         var seg = vec_get(segments, i);
         var seglen = vec_len(seg);
+        # A vec holds at most SV_MAX_SAMPLES; past it vec_push ends the process.
+        if (seglen > SV_MAX_SAMPLES - vec_len(output)) { return SVARA_ERR_COMPUTATION; }
         var cf_next = 0;
         if (i < vec_len(cf_lengths)) { cf_next = vec_get(cf_lengths, i); }
         var cf_prev = 0;
@@ -356,6 +395,11 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
     var in_cluster = svara_seq_detect_clusters(events);
     var durs = svara_seq_durations(seq, in_cluster);
     var pl = svara_seq_phoneme_list(seq);
+    var pv = 0;
+    while (pv < vec_len(pl)) {
+        if (svara_phoneme_is_valid(vec_get(pl, pv)) == 0) { return SVARA_ERR_INVALID_PHONEME; }
+        pv = pv + 1;
+    }
     var nasals = svara_detect_nasalization(pl);
 
     var plan = svara_trajectory_plan(pl, durs, voice, sample_rate);

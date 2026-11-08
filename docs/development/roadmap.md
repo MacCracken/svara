@@ -8,95 +8,20 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.6.3** | [P(-1) sweep](#363--p-1-sweep): audit, hardening, refactor, optimization, repair | next |
-| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | after 3.6.3 |
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory | ready |
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | needs a decision per quirk |
+| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate needs a decision |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | ready |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
-
----
-
-## 3.6.3 — P(-1) sweep
-
-A full pass over the code: audit it, harden it, refactor it, optimize it, and repair
-what turns up. It runs before 3.7.0 because the differential needs the oracle.
-
-**Why it earns a release.** naad's sweep fixed 45 defects that its 2,418 assertions
-caught none of, and goonj's found 21 public accessors reading or writing out of
-bounds. svara's last audit was 3.1.3. It has never run a differential against the
-compiled oracle or any fault injection, and its fuzz target is still the scaffold
-stub.
-
-**The bar.** Audio and JSON on valid input do not move, checked with
-`scripts/sweep/compare.py 3.6.2`, and any exception is named in the CHANGELOG. Every
-fix has a test shown to fail without it.
-
-### Audit
-
-- [ ] **Differential against `rust-old/`.** Build the oracle in a scratch copy and
-      drive both sides over every public entry point, comparing outcome class and
-      value: hostile values for each numeric parameter, plus realistic input. goonj's
-      hostile differential barely reached its valid paths, so it had to add realistic
-      scenes before it could trust the result.
-- [ ] **Line by line against `rust-old/`**, one pass per module cluster, each finding
-      reproduced before it is listed: source (`glottal`, `rng`, `smooth`), filter
-      (`formant`, `tract`, `lod`), speech (`phoneme`, `prosody`, `trajectory`,
-      `voice`), render (`sequence`, `pool`, `render`), boundary (`error`, `logging`,
-      `spectral`, `bridge`).
-- [ ] **A real fuzz target.** `tests/svara.fcyr` calls no svara function, so
-      `cyrius fuzz` has passed vacuously in CI since 3.3.1. Drive the public API, and
-      run it under `--poison` and `--bounds`.
-- [ ] **Fault injection.** Refuse the Nth allocation across the render pipelines,
-      singly and for good.
-- [ ] **All-zero sweep.** Every public fn with 0 for every argument. Each returns or
-      faults at the null page, with no hang.
-- [ ] **Execution coverage.** `cyrius coverage --exec` names what no suite runs.
-- [ ] **Independent review of the merged diff**, by a reader who saw none of the work.
-
-### Leads already in hand
-
-- **Ownership.** Rust moves or copies what it keeps. `svara_prosody_make` keeps the
-  caller's vec and `svara_sequence_push` keeps the caller's event, so a later write
-  by the caller reaches them. naad found this class across its port and fixed it
-  under its ADR-0005.
-- **No sample-rate ceiling.** `svara_validate_sample_rate` asks only for positive and
-  finite, and a sequence render at 3e9 Hz runs past 40 s. Decide whether to bound it.
-- **`br_in_range` passes NaN**, so `tests/bridge.tcyr`'s range assertions cannot see one.
-- **`#derive` setters are public** and bypass what a real setter validates.
-
-### Refactor
-
-- [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
-      repeat each other. Share what is the same, and leave what differs to 3.9.x.
-- [ ] **13 test files define their own `approx`.** Move it to one include.
-- [ ] **Scaffold leftovers.** `tests/svara.bcyr` benches a no-op.
-
-### Optimization
-
-Only what leaves output bit-identical. A change that reshapes a loop belongs to 3.8.x.
-
-- [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls
-      it per sample.
-- [ ] Whatever the audit turns up. Measure with the counters in
-      `scripts/sweep/compare.py`, because a timer on this host is often unusable.
-- [ ] **Refresh `docs/benchmarks.md` and `benches/history.csv`** on a quiet machine.
-      Both stop at 3.5.3.
-
-### Deliverables
-
-- [ ] **`docs/audit/YYYY-MM-DD-audit.md`**, the security audit, on the threat model
-      rewritten in 3.3.1.
-- [ ] **An ADR for what stays open**: accepted hostile-input gaps and the policy on a
-      refused allocation, as naad's ADR-0006 and ADR-0007 do.
-- [ ] **A "How it was audited" section in the CHANGELOG**, with method and counts.
 
 ---
 
 ## 3.7.0 — retire `rust-old/`
 
-The 3.6.3 differential is the oracle's last planned use, which is the order goonj
-took: sweep at 2.1.3, delete at 2.2.0. The port itself is not the obstacle. A
-name-by-name sweep of every Rust `pub` item found zero missing counterparts.
+3.6.3 ran the differential, the oracle's last planned use, which is the order goonj
+took: sweep at 2.1.3, delete at 2.2.0. Every divergence it found is recorded in
+[ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md). The port itself is not
+the obstacle. A name-by-name sweep of every Rust `pub` item found zero missing
+counterparts.
 
 ### The gate, measured 2026-11-07
 
@@ -158,6 +83,26 @@ measured effect does not earn a place in the source.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
+- [ ] **`render_planned` recomputes per-event values on every sample.** Hoist what is
+      fixed for the event out of the sample loop.
+- [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls
+      it per sample.
+- [ ] **A voice is cloned, and a progress object built, per event.**
+- [ ] **`set_formants_from_target` copies into the tract's record on every sample.**
+      3.6.3 builds the target in scratch so a rejected one cannot reach the record,
+      then copies it over. That costs `render_planned` 4.3% of its instructions,
+      measured against the old write-in-place path. Validate the five target values
+      first, then write in place.
+
+### Refactors the 3.6.3 sweep left
+
+Each changes the shape of a hot path, so each needs the measurement above.
+
+- [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
+      repeat each other. Share what is the same, and leave what differs to 3.9.x.
+- [ ] **13 test files define their own `approx`.** Move it to one include.
+- [ ] **The crossfade's fade-out loop is written twice**, and the stress table four
+      times.
 
 **Gate:** `scripts/sweep/compare.py` shows no moved value, and `tests/allocbudget.tcyr`
 holds.
@@ -166,9 +111,9 @@ holds.
 
 ## 3.9.x — the preserved Rust quirks
 
-Four behaviours svara keeps because the oracle has them. Each needs a decision,
-recorded in an ADR. A fix changes output, so each one gets a minor of its own and its
-own test.
+Four behaviours svara keeps because the oracle has them, and one where svara left the
+oracle without a decision. Each needs a decision, recorded in an ADR. A fix changes
+output, so each one gets a minor of its own and its own test.
 
 - [ ] **Unapplied per-vowel spectral tilt.**
 - [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**
@@ -177,6 +122,12 @@ own test.
       VOT fractions, and `svara_synthctx_plosive` uses a fixed n/3 and n/6. Both match
       the oracle: `git show 3.5.2:rust-old/src/phoneme.rs`, `synthesize_plosive` and
       `synthesize_plosive_ctx`.
+- [ ] **The diphthong glide is 7× to 69× louder than Rust's.** Since 3.1.0 svara
+      rebuilds the formant bank every 64 samples. Rust rebuilds it, and resets its
+      state, on every sample, so its resonance never builds. 3.1.0 called the change
+      perceptually identical without measuring the oracle. Matching Rust means a filter
+      reset per sample. See
+      [ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md), RN-DIV.
 
 ---
 
@@ -208,6 +159,12 @@ bank going from 10.5 to 3.2 ns per filter with `f64v256_*` in structure-of-array
       hand-build a vec header in svara.
 - ⛔ **Codegen.** naad measured 9.5 ns against Rust's 2.8 on the same loop. It is the
   largest single factor left, and it belongs to cyrius.
+- [ ] ⛔ **The generated JSON decoder hangs on a stray `}` in a vec of structs.**
+      `svara_validate_json` guards it since 3.6.3, and callers must call it.
+      Blocked on cyrius `docs/development/issues/2026-11-07-derive-serialize-vec-struct-element-loop-hangs-on-stray-brace.md`.
+      When the fix ships, run the issue's repro against that release, and run the
+      fuzz target once with the check removed to confirm the decoder itself holds.
+      Keep the check either way: it refuses only text svara never writes.
 
 ---
 

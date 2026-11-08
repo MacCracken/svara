@@ -28,8 +28,11 @@ security-relevant summary:
   determines whether a bad index is a clean crash or silent corruption.
 - **`alloc` returns 0 on failure**, it does not abort. An unchecked allocation
   followed by a write is a write to address 0 and upward.
-- **`f64_to` does not saturate.** NaN, ±inf and out-of-range all yield
-  `INT64_MIN`, where Rust's `as` casts give 0 or `MAX`.
+- **`f64_to` saturates to the signed range** (since cyrius 6.6.8): NaN gives 0,
+  and out-of-range gives `INT64_MAX` or `INT64_MIN`. Rust's `as usize` gives 0 or
+  `MAX`, so a negative value stays negative here and walks past a floor-only guard.
+  [*Corrected 3.6.3: this said `f64_to` did not saturate, which stopped being true
+  at 6.6.8.*]
 - **No unsigned types.** A Rust bounds check written as one `<` test on a `usize`
   is only half a bound in signed `i64`.
 - **No panic.** A Rust `.expect()` has no equivalent unless one is written.
@@ -62,7 +65,20 @@ NaN. The claim was written for the Rust and inherited without being re-tested.
 - Constructors that cannot build their object return a negative `SVARA_ERR_*`
   rather than storing an error code where a pointer belongs.
 - `restore` on every state companion validates its input: a state that has been
-  through JSON is externally-authored data.
+  through JSON is externally-authored data. Since 3.6.3 that includes a null
+  state, a missing vec field and an out-of-range enum. An explicit `null` for a
+  vec decodes as an empty list, which `restore` cannot tell from `[]` (ADR-0009).
+  `restore` cannot defend a decode that never returns. The cyrius 6.7.18 derive
+  decoder loops forever on a vec of structs holding a stray `}`, and reads past an
+  unterminated key. `svara_validate_json` (3.6.3) checks the text first and accepts
+  only what svara's writer produces. Of 70,000 damaged documents, it accepted
+  6,179, and every one decoded with no hang or fault (ADR-0009, Upstream).
+- Objects copy what they keep from a caller (3.6.3), so a later write by the
+  caller cannot reach them.
+- Where a refused allocation would have produced a plausible answer, the process
+  ends instead (`svara_alloc_refused`, 3.6.3). Under fault injection, 2,056 refused
+  allocations on the release tree gave no silent wrong answer and no hang, and every
+  fault was at the null page.
 
 **Verification, not assertion**: `tests/hardening.tcyr` pins every instance.
 Its discrimination is measured — 9 of 10 public-API probes fail against a 3.1.2
@@ -169,7 +185,9 @@ surface.
 | | Trust | Note |
 |---|---|---|
 | Public API parameters (`f0`, `duration`, `sample_rate`, formants, nasalization) | **Untrusted** | validated per §1 |
-| Decoded state (`*_from_json_str`, any `*State`) | **Untrusted** | `restore` validates rather than trusts |
+| JSON text from outside svara | **Untrusted** | `svara_validate_json` before any decode; the generated decoder can hang or overread on what it refuses ([ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md)) |
+| Decoded state (any `*State`, then `restore`) | **Untrusted** | `restore` validates rather than trusts |
+| A configuration type decoded directly (`SvPhonemeSequence_from_json_str`, …) | **Out of contract** | not validated; a missing key decodes to 0 ([ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md)) |
 | Caller-supplied buffers (`*_into`) | **Untrusted size** | the caller owns and bounds them |
 | Internal module boundaries, private helpers | Trusted | single-namespace library, no isolation available |
 | hisab / naad / goonj / sakshi bundles | **Trusted by construction** | compiled as svara's own source; see §4 |

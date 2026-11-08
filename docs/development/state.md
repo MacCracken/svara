@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.6.3** (2026-11-07) — **the P(-1) sweep.** The first audit since 3.1.3 and the
+first against the compiled oracle: six cluster audits, a real fuzz target, fault
+injection, an all-zero sweep, coverage and an independent review. 39 findings: 30
+repaired (1 P0, 4 P1, 13 P2, 12 P3), each with a test that fails without it, 8
+recorded in [ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md), 1 upstream
+(the cyrius derive decoder hangs on a stray `}` in a vec of structs; `svara_validate_json` guards it). Report: [`docs/audit/2026-11-07-audit.md`](../audit/2026-11-07-audit.md).
+Audio on valid input is unchanged across 558,721 values. Context, pool and batch
+states gain `glottal` and `tract` fields, and 3.6.2 documents still restore.
+**1,127 assertions / 23 suites**, `cyrius audit` exit 0.
+
 **3.6.2** (2026-11-07) — **the roadmap holds only what is left.** No code change:
 every `src/` edit is a comment, and `build/svara` is byte-identical to 3.6.1. The
 f32 P0 is closed ([ADR-0008](../adr/0008-the-synthesis-core-stays-f64.md)), the
@@ -286,24 +296,28 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-941 `.tcyr` assertions across 22 suites: error / rng / smooth / lod / formant /
+1,127 `.tcyr` assertions across 23 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
-**oracle** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
+**oracle** / **integration** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
 lint-clean, zero build warnings. Run one suite: `cyrius test tests/<mod>.tcyr`;
 the whole tree recursively: `cyrius test tests`. `tests/logging.tcyr` needs
 `./scripts/check-logging.sh` to be exercised with logging ON (58 more
 assertions), because `cyrius test` does not forward `-D`.
 
-Four of them are not parity ports and exist for reasons worth knowing:
+Five of them are not plain parity ports and exist for reasons worth knowing:
 
-- **`hardening.tcyr` (45)** — adversarial inputs for the hazard class in
-  [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md). Its
-  discrimination is **measured, not asserted**: ten public-API probes re-run
-  against a 3.1.2 checkout on the same toolchain give **9 failures** (4 wrong
-  value, 3 process abort, 1 SIGSEGV, 1 hang) and 1 control that passes on both
-  sides. Re-measure this whenever the group is extended — a group where every
-  line flips is a group whose controls are not controls.
+- **`hardening.tcyr` (199)** — adversarial inputs for the hazard class in
+  [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md), and since
+  3.6.3 one group per sweep repair. Its discrimination is **measured, not
+  asserted**: ten public-API probes re-run against a 3.1.2 checkout on the same
+  toolchain give **9 failures** (4 wrong value, 3 process abort, 1 SIGSEGV, 1 hang)
+  and 1 control that passes on both sides, and every 3.6.3 group was run against
+  the code with its fix reverted and failed. Re-measure this whenever the group is
+  extended — a group where every line flips is a group whose controls are not
+  controls.
+- **`integration.tcyr` (26)** — the 16 Rust integration tests, 10 of which were
+  never ported before 3.6.3.
 - **`oracle.tcyr` (69)** — five scenarios the Rust asserted and the port
   asserted nowhere, found by auditing `rust-old/`'s 213 tests against the Cyrius
   suites. Every expected value is **re-derived from the Rust and cited by line**,
@@ -312,7 +326,7 @@ Four of them are not parity ports and exist for reasons worth knowing:
 - **`logging.tcyr` (12 off / 58 on)** — the `-D LOGGING` contract. The OFF half
   asserts the four instrumented entry points still behave identically, which is
   what proves the `#ifdef` blocks in their return paths changed nothing.
-- **`allocbudget.tcyr` (34)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (41)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
@@ -324,10 +338,11 @@ Four of them are not parity ports and exist for reasons worth knowing:
 13 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
-per-call clock overhead: glottal ~82 ns, formant ~179 ns, tract ~295 ns/sample —
-the full glottal → tract chain **≈ 0.35 µs/sample (~64× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
-~874 µs, `/s/` ~461 µs, `/ai/` ~918 µs, 3-phoneme sequence ~3.37 ms,
-`render_planned` ~18.7 ms (~21.4 ms toned) (x86_64, 2026-08-26, cycc 6.5.35).
+per-call clock overhead: glottal ~46 ns, formant ~130 ns, tract ~197 ns/sample —
+the full glottal → tract chain **≈ 0.25 µs/sample (~91× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
+~591 µs, `/s/` ~343 µs, `/ai/` ~628 µs, 3-phoneme sequence ~2.38 ms,
+`render_planned` ~13.5 ms (~16.6 ms toned) (x86_64, 2026-11-07, cyrius 6.7.18,
+svara 3.6.3, lowest of three runs).
 
 ⚠ **The allocation budget is deliberately NOT benchmarked.** A bump allocation is
 a pointer add, so removing 1.1 KB of it per sample moved `render_planned` only
@@ -343,14 +358,15 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (43 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (291 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 22/22 suites, 941 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 23/23 suites, 1,127 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
-| **CI** | `.github/workflows/ci.yml` | runs audit · fuzz (a stub, below) · deny · pin-check · distlib-current |
-| fuzz | `cyrius fuzz` | ⚠ passes vacuously: `tests/svara.fcyr` is the scaffold stub and calls no svara function (roadmap 3.6.3) |
-| deny | `cyrius deny src/main.cyr` | 21 deps, 0 violations |
+| **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
+| fuzz | `cyrius fuzz` (+ `--poison`, `--bounds`) | 2,400 cases in 15 groups over the public API, 0 failures in each mode; each JSON case also decodes 8 byte-damaged documents that `svara_validate_json` accepts; replay one with `./fz <case>` |
+| coverage | `cyrius coverage --exec` | 273/307 fns executed (88%); logging's 16 need `-D LOGGING`, `svara_alloc_refused` exits, and 17 others no suite enters |
+| deny | `cyrius deny src/main.cyr` | 23 deps, 0 violations |
 | bench | `cyrius bench` | 2/2 bench files |
 | **aggregate** | **`cyrius audit`** | **exits 0** — but see below |
 
@@ -513,8 +529,8 @@ returns an empty vec. Silently. Use `_from_json_str`.
 ## Next
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
-list here. **3.6.3 is next**: the P(-1) sweep, which needs the oracle, so it runs
-before 3.7.0 retires it.
+list here. **3.7.0 is next**: retiring `rust-old/`. The 3.6.3 sweep was the oracle's
+last planned use, and its gate still needs a decision.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

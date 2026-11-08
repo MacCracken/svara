@@ -273,7 +273,10 @@ fn main() {
     assert_eq(toned > 0, 1, "control: the toned budget reads a real number");
     # hisab 3.4.1 holds calc_monotone_cubic_checked's scratch on its stack up to 16
     # points, so a tone costs nothing per sample. 3.6.0 measured 115 here against 35.
-    assert_eq(toned, untoned, "a toned render allocates what an untoned one does");
+    # Within one byte: both are whole-byte averages over the same samples, so a few
+    # hundred bytes in total can land them either side of an integer.
+    assert_eq(toned - untoned <= 1, 1, "a toned render allocates within a byte per sample of an untoned one");
+    assert_eq(untoned - toned <= 1, 1, "control: and not less");
 
     # ================================================================
     test_group("f0_at allocates nothing up to hisab's 16 points");
@@ -296,6 +299,33 @@ fn main() {
     var t2 = svara_sequence_render_planned(sqt, voice, SR);
     assert_eq(samples_same(t1, t2), 1, "toned render_planned is deterministic across calls");
     assert_eq(samples_same(o1, t1), 0, "control: the toned render differs from the untoned one");
+    # ================================================================
+    test_group("spectral queries allocate nothing per call");
+    # ================================================================
+    # Each used to take fresh scratch: rms_level 8 KB a call on 1024 samples.
+    var frame = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, f64_div(f64_from(1024), SR));
+    var spec = svara_spectral_analyze(frame, SR);
+    var w = svara_spectral_rms_level(frame);
+    w = svara_spectrum_total_energy(spec);
+    w = svara_spectrum_band_energy(spec, f64_from(100), f64_from(4000));
+    var wf = svara_spectrum_estimate_formants(spec, 5);
+    var before = alloc_used();
+    var q = 0;
+    while (q < 50) {
+        w = svara_spectral_rms_level(frame);
+        w = svara_spectrum_total_energy(spec);
+        w = svara_spectrum_band_energy(spec, f64_from(100), f64_from(4000));
+        q = q + 1;
+    }
+    assert_eq(alloc_used() - before, 0, "rms_level, total_energy and band_energy allocate nothing");
+    var fb = alloc_used();
+    wf = svara_spectrum_estimate_formants(spec, 5);
+    assert_eq(alloc_used() - fb < 256, 1, "estimate_formants allocates only its result");
+    var ab = alloc_used();
+    var spec2 = svara_spectral_analyze(frame, SR);
+    assert_eq(alloc_used() - ab < 32688, 1, "analyze allocates less than its old 32,688 bytes");
+    assert_eq(svara_is_err(spec2), 0, "control: the second analyze succeeds");
+
     return assert_summary();
 }
 

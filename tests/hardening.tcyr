@@ -38,12 +38,42 @@ include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 
 # A NaN: 0.0 / 0.0.
 #must_use
 fn hd_nan() { return f64_div(0, 0); }
+
+# A fresh glottal state at 120 Hz.
+#must_use
+fn hd_gstate() { return svara_glottal_save(svara_glottal_new(f64_from(120), SR)); }
+
+# A fresh tract state.
+#must_use
+fn hd_tstate() { return svara_tract_save(svara_tract_new(SR)); }
+
+# 1 if the first 64 samples of two tracts fed the same impulse are identical.
+#must_use
+fn hd_same_tract(a, b) {
+    var i = 0;
+    var same = 1;
+    while (i < 64) {
+        var x = F64_ONE;
+        if (i > 0) { x = 0; }
+        if (svara_tract_process_sample(a, x) != svara_tract_process_sample(b, x)) { same = 0; }
+        i = i + 1;
+    }
+    return same;
+}
+
+# A progress callback that counts its calls in `user` and returns a negative value.
+fn hd_cb_negative(user, progress) {
+    store64(user, load64(user) + 1);
+    return f64_neg(F64_ONE);
+}
 
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
@@ -253,6 +283,463 @@ fn main() {
     var b1201 = svara_tract_new(f64_from(1201));
     assert_eq(svara_is_finite(svara_tract_process_sample(b1201, F64_ONE)), 1,
       "control: the 1201 Hz tract renders a finite sample");
+
+    # ================================================================
+    test_group("bank_update refuses a slot outside the bank");
+    # ================================================================
+    # Rust indexes [f32; 8] and panics. Unchecked, slot 8 landed on b2's slot 0.
+    var bk = svara_formant_bank_new(svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), SR);
+    var b2_before = load64(SvFormantBank_b2(bk));
+    var a1_before = load64(SvFormantBank_a1(bk));
+    assert_eq(svara_formant_bank_update(bk, SVARA_MAX_FORMANTS, f64_from(1000), f64_from(100), F64_ONE, SR),
+      SVARA_ERR_INVALID_FORMANT, "slot 8 is refused");
+    assert_eq(load64(SvFormantBank_b2(bk)), b2_before, "slot 8 leaves b2 alone");
+    assert_eq(svara_formant_bank_update(bk, 0 - 1, f64_from(1000), f64_from(100), F64_ONE, SR),
+      SVARA_ERR_INVALID_FORMANT, "slot -1 is refused");
+    assert_eq(svara_formant_bank_update(bk, 0, f64_from(1000), f64_from(100), F64_ONE, SR), SVARA_ERR_NONE,
+      "control: slot 0 is accepted");
+    assert_eq(load64(SvFormantBank_a1(bk)) != a1_before, 1, "control: slot 0 really changed");
+
+    # ================================================================
+    test_group("parallel phoneme and duration vecs must match");
+    # ================================================================
+    var two_ph = vec_new();
+    vec_push(two_ph, SVARA_PH_VOWEL_A);
+    vec_push(two_ph, SVARA_PH_VOWEL_I);
+    var one_d = vec_new();
+    vec_push(one_d, 0.05);
+    var three_d = vec_new();
+    vec_push(three_d, 0.05);
+    vec_push(three_d, 0.05);
+    vec_push(three_d, 0.05);
+    var two_d = vec_new();
+    vec_push(two_d, 0.05);
+    vec_push(two_d, 0.05);
+    # Short durations used to abort in vec_get; long ones were silently truncated.
+    assert_eq(svara_trajectory_plan(two_ph, one_d, voice, SR), SVARA_ERR_INVALID_DURATION, "plan: fewer durations");
+    assert_eq(svara_trajectory_plan(two_ph, three_d, voice, SR), SVARA_ERR_INVALID_DURATION, "plan: more durations");
+    var eq_plan = svara_trajectory_plan(two_ph, two_d, voice, SR);
+    assert_eq(svara_is_err(eq_plan), 0, "control: plan accepts equal lengths");
+    var bp = svara_pool_new(voice, SR);
+    assert_eq(svara_pool_render_batch(bp, two_ph, one_d, voice), SVARA_ERR_INVALID_DURATION, "batch: fewer durations");
+    assert_eq(svara_pool_render_batch(bp, two_ph, three_d, voice), SVARA_ERR_INVALID_DURATION, "batch: more durations");
+    assert_eq(svara_pool_render_count(bp), 0, "a refused batch renders nothing");
+    var eq_batch = svara_pool_render_batch(bp, two_ph, two_d, voice);
+    assert_eq(svara_is_err(eq_batch), 0, "control: batch accepts equal lengths");
+
+    # ================================================================
+    test_group("restore refuses what Rust's serde refuses");
+    # ================================================================
+    # A decoder gives 0 for a document it cannot read, and 0 for a Vec field the
+    # document lacks. Every restore used to dereference both.
+    assert_eq(svara_glottal_restore(0), SVARA_ERR_COMPUTATION, "glottal: no state");
+    assert_eq(svara_tract_restore(0), SVARA_ERR_COMPUTATION, "tract: no state");
+    assert_eq(svara_keypoint_restore(0), SVARA_ERR_COMPUTATION, "keypoint: no state");
+    assert_eq(svara_trajectory_restore(0), SVARA_ERR_COMPUTATION, "trajectory: no state");
+    assert_eq(svara_pool_restore(0, voice), SVARA_ERR_COMPUTATION, "pool: no state");
+    assert_eq(svara_synthctx_restore(0, voice), SVARA_ERR_COMPUTATION, "context: no state");
+    assert_eq(svara_batch_restore(0, voice), SVARA_ERR_COMPUTATION, "batch: no state");
+    assert_eq(svara_render_output_restore(0), SVARA_ERR_COMPUTATION, "render output: no state");
+
+    var g7 = hd_gstate();
+    SvGlottalState_set_model(g7, 7);
+    assert_eq(svara_glottal_restore(g7), SVARA_ERR_COMPUTATION, "glottal: model 7 refused");
+    var g3 = hd_gstate();
+    SvGlottalState_set_model(g3, SVARA_GLOTTAL_CREAKY);
+    assert_eq(svara_is_err(svara_glottal_restore(g3)), 0, "control: model 3 restores");
+    var gdp = hd_gstate();
+    SvGlottalState_set_diplo_phase(gdp, 2);
+    assert_eq(svara_glottal_restore(gdp), SVARA_ERR_COMPUTATION, "glottal: diplophonia phase 2 refused");
+    SvGlottalState_set_diplo_phase(gdp, 1);
+    assert_eq(svara_is_err(svara_glottal_restore(gdp)), 0, "control: phase 1 restores");
+    var gvr = hd_gstate();
+    SvGlottalState_set_vibrato_rate(gvr, SV_POS_INF);
+    assert_eq(svara_glottal_restore(gvr), SVARA_ERR_COMPUTATION, "glottal: +inf vibrato rate refused");
+    SvGlottalState_set_vibrato_rate(gvr, f64_from(5));
+    assert_eq(svara_is_err(svara_glottal_restore(gvr)), 0, "control: 5 Hz vibrato restores");
+
+    var tnull = hd_tstate();
+    SvVocalTractState_set_formants(tnull, 0);
+    assert_eq(svara_tract_restore(tnull), SVARA_ERR_COMPUTATION, "tract: missing formant list refused");
+    var thole = hd_tstate();
+    vec_set(SvVocalTractState_formants(thole), 1, 0);
+    assert_eq(svara_tract_restore(thole), SVARA_ERR_COMPUTATION, "tract: null formant refused");
+    var tq = hd_tstate();
+    SvVocalTractState_set_quality(tq, 7);
+    assert_eq(svara_tract_restore(tq), SVARA_ERR_COMPUTATION, "tract: quality 7 refused");
+    var tp = hd_tstate();
+    SvVocalTractState_set_nasal_place(tp, 99);
+    assert_eq(svara_tract_restore(tp), SVARA_ERR_COMPUTATION, "tract: nasal place 99 refused");
+    assert_eq(svara_is_err(svara_tract_restore(hd_tstate())), 0, "control: a saved tract restores");
+
+    var tj_ph = vec_new();
+    vec_push(tj_ph, SVARA_PH_VOWEL_A);
+    var tj_d = vec_new();
+    vec_push(tj_d, 0.05);
+    var tjs = svara_trajectory_save(svara_trajectory_plan(tj_ph, tj_d, voice, SR));
+    assert_eq(svara_is_err(svara_trajectory_restore(tjs)), 0, "control: a saved plan restores");
+    SvTrajectoryState_set_keypoints(tjs, 0);
+    assert_eq(svara_trajectory_restore(tjs), SVARA_ERR_COMPUTATION, "trajectory: missing keypoints refused");
+    var bst = svara_batch_save(svara_batch_new(voice, SR));
+    SvBatchRendererState_set_events(bst, 0);
+    assert_eq(svara_batch_restore(bst, voice), SVARA_ERR_COMPUTATION, "batch: missing events refused");
+    var rst = svara_render_output_save(svara_render_output_new(vec_new(), svara_render_progress_new(0, 0, 0)));
+    assert_eq(svara_is_err(svara_render_output_restore(rst)), 0, "control: a saved render output restores");
+    SvRenderOutputState_set_samples(rst, 0);
+    assert_eq(svara_render_output_restore(rst), SVARA_ERR_COMPUTATION, "render output: missing samples refused");
+    # A queued event's phoneme, stress and tone are Rust enums, so serde refuses an
+    # unknown value. Stress 7 used to restore and render as unstressed.
+    var eb = svara_batch_new(voice, SR);
+    svara_batch_push(eb, SVARA_PH_VOWEL_A, 0.01, SVARA_STRESS_PRIMARY);
+    var est = svara_batch_save(eb);
+    assert_eq(svara_is_err(svara_batch_restore(est, voice)), 0, "control: a valid queued event restores");
+    SvPhonemeEvent_set_stress(vec_get(SvBatchRendererState_events(est), 0), 7);
+    assert_eq(svara_batch_restore(est, voice), SVARA_ERR_COMPUTATION, "batch: stress 7 refused");
+    SvPhonemeEvent_set_stress(vec_get(SvBatchRendererState_events(est), 0), SVARA_STRESS_UNSTRESSED);
+    SvPhonemeEvent_set_tone(vec_get(SvBatchRendererState_events(est), 0), 99);
+    assert_eq(svara_batch_restore(est, voice), SVARA_ERR_COMPUTATION, "batch: tone 99 refused");
+    SvPhonemeEvent_set_tone(vec_get(SvBatchRendererState_events(est), 0), SVARA_TONE_NONE);
+    SvPhonemeEvent_set_phoneme(vec_get(SvBatchRendererState_events(est), 0), 0 - 1);
+    assert_eq(svara_batch_restore(est, voice), SVARA_ERR_COMPUTATION, "batch: phoneme -1 refused");
+    SvPhonemeEvent_set_phoneme(vec_get(SvBatchRendererState_events(est), 0), SVARA_PH_SILENCE);
+    SvPhonemeEvent_set_tone(vec_get(SvBatchRendererState_events(est), 0), SVARA_TONE_HIGH_FALLING);
+    assert_eq(svara_is_err(svara_batch_restore(est, voice)), 0, "control: the last value of each enum restores");
+
+    # ================================================================
+    test_group("enum setters keep their value on an out-of-range one");
+    # ================================================================
+    var et = svara_tract_new(SR);
+    svara_tract_set_quality(et, SVARA_QUALITY_REDUCED);
+    svara_tract_set_quality(et, 7);
+    assert_eq(svara_tract_quality(et), SVARA_QUALITY_REDUCED, "quality 7 ignored");
+    svara_tract_set_nasal_place(et, SVARA_NASAL_VELAR);
+    svara_tract_set_nasal_place(et, 99);
+    assert_eq(svara_tract_nasal_place(et), SVARA_NASAL_VELAR, "nasal place 99 ignored");
+    var eg = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_model(eg, SVARA_GLOTTAL_LF);
+    svara_glottal_set_model(eg, 7);
+    assert_eq(svara_glottal_model(eg), SVARA_GLOTTAL_LF, "model 7 ignored");
+
+    # ================================================================
+    test_group("a nasal place naad refused is not saved");
+    # ================================================================
+    # At 5 kHz the velar notch, 3000 Hz, is past nyquist and naad refuses it. The
+    # place used to be recorded anyway, so restore rebuilt a different notch.
+    var lt = svara_tract_new(f64_from(5000));
+    svara_tract_set_nasal_coupling(lt, F64_ONE);
+    svara_tract_set_nasal_place(lt, SVARA_NASAL_ALVEOLAR);
+    svara_tract_set_nasal_place(lt, SVARA_NASAL_VELAR);
+    assert_eq(svara_tract_nasal_place(lt), SVARA_NASAL_ALVEOLAR, "the refused place is not recorded");
+    var lr = svara_tract_restore(svara_tract_save(lt));
+    assert_eq(svara_is_err(lr), 0, "control: the low-rate tract restores");
+    assert_eq(hd_same_tract(lt, lr), 1, "the restored tract sounds like the live one");
+
+    # ================================================================
+    test_group("set_vowel replaces the whole formant set");
+    # ================================================================
+    # A tract that had held eight formants kept slots 6 to 8 after set_vowel.
+    var eight = vec_new();
+    var ei = 0;
+    while (ei < 8) {
+        vec_push(eight, svara_formant_new(f64_from(500 + ei * 1000), f64_from(100), F64_HALF));
+        ei = ei + 1;
+    }
+    var t8 = svara_tract_new(SR);
+    assert_eq(svara_tract_set_formants(t8, eight), SVARA_ERR_NONE, "control: eight formants accepted");
+    assert_eq(svara_tract_set_vowel(t8, SVARA_VOWEL_A), SVARA_ERR_NONE, "set_vowel after eight succeeds");
+    assert_eq(svara_formant_filter_num_formants(SvVocalTract_filter(t8)), 5, "the bank holds five formants");
+    var ta = svara_tract_new(SR);
+    assert_eq(svara_tract_set_vowel(ta, SVARA_VOWEL_A), SVARA_ERR_NONE, "control: a fresh /a/ tract");
+    svara_tract_reset(t8);
+    svara_tract_reset(ta);
+    assert_eq(hd_same_tract(t8, ta), 1, "it sounds like a fresh /a/ tract");
+
+    # ================================================================
+    test_group("a rejected target leaves the tract's record alone");
+    # ================================================================
+    var tr = svara_tract_new(SR);
+    assert_eq(svara_tract_set_vowel(tr, SVARA_VOWEL_A), SVARA_ERR_NONE, "control: /a/ accepted");
+    var f1_a = SvFormant_frequency(vec_get(SvVocalTract_formants(tr), 0));
+    var bad_t = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+    SvVowelTarget_set_f1(bad_t, f64_from(30000));
+    assert_eq(svara_tract_set_formants_from_target(tr, bad_t), SVARA_ERR_INVALID_FORMANT, "f1 past nyquist refused");
+    assert_eq(SvFormant_frequency(vec_get(SvVocalTract_formants(tr), 0)), f1_a, "the record still holds /a/");
+    assert_eq(svara_is_err(svara_tract_restore(svara_tract_save(tr))), 0, "and the tract still restores");
+
+    # ================================================================
+    test_group("estimate_formants breaks ties as Rust's stable sort does");
+    # ================================================================
+    # Peaks at 10, 30, 50 Hz tie at 1 and the 70 Hz peak is 2. Rust keeps the
+    # first of a tie; the selection sort it replaced did not.
+    var tie = alloc(sizeof(SvSpectrum));
+    var tm_ = vec_new();
+    var tv = 0;
+    while (tv < 9) {
+        var mv = 0;
+        if ((tv == 1) | (tv == 3) | (tv == 5)) { mv = F64_ONE; }
+        if (tv == 7) { mv = f64_from(2); }
+        vec_push(tm_, mv);
+        tv = tv + 1;
+    }
+    SvSpectrum_set_magnitudes(tie, tm_);
+    SvSpectrum_set_freq_resolution(tie, f64_from(10));
+    SvSpectrum_set_sample_rate(tie, f64_from(160));
+    var k2 = svara_spectrum_estimate_formants(tie, 2);
+    assert_eq(vec_len(k2), 2, "two formants kept");
+    assert_eq(vec_get(k2, 0), f64_from(10), "k=2: the first of the tie, 10 Hz");
+    assert_eq(vec_get(k2, 1), f64_from(70), "k=2: then 70 Hz");
+    var k3 = svara_spectrum_estimate_formants(tie, 3);
+    assert_eq(vec_get(k3, 0), f64_from(10), "k=3: 10 Hz");
+    assert_eq(vec_get(k3, 1), f64_from(30), "k=3: 30 Hz");
+    assert_eq(vec_get(k3, 2), f64_from(70), "k=3: 70 Hz");
+    assert_eq(vec_len(svara_spectrum_estimate_formants(tie, 0)), 0, "k=0 keeps none");
+
+    # ================================================================
+    test_group("svara keeps its own copy of what it is given");
+    # ================================================================
+    # Rust moves or clones what it keeps. The port kept the caller's pointer.
+    var os = svara_sequence_new();
+    var oe = svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
+    svara_sequence_push(os, oe);
+    SvPhonemeEvent_set_phoneme(oe, SVARA_PH_VOWEL_I);
+    SvPhonemeEvent_set_duration(oe, 0.2);
+    svara_sequence_push(os, oe);
+    var oe0 = vec_get(svara_sequence_events(os), 0);
+    assert_eq(SvPhonemeEvent_phoneme(oe0), SVARA_PH_VOWEL_A, "sequence: the first push keeps /a/");
+    assert_eq(SvPhonemeEvent_duration(oe0), 0.1, "sequence: and its 0.1 s");
+
+    var ob = svara_batch_new(voice, SR);
+    svara_batch_push(ob, SVARA_PH_VOWEL_A, 0.05, SVARA_STRESS_PRIMARY);
+    var obs = svara_batch_save(ob);
+    svara_batch_push(ob, SVARA_PH_VOWEL_I, 0.05, SVARA_STRESS_PRIMARY);
+    assert_eq(vec_len(SvBatchRendererState_events(obs)), 1, "batch: a snapshot does not grow with the queue");
+    var ob1 = svara_batch_restore(obs, voice);
+    var ob2 = svara_batch_restore(obs, voice);
+    svara_batch_push(ob1, SVARA_PH_VOWEL_U, 0.05, SVARA_STRESS_PRIMARY);
+    assert_eq(svara_batch_len(ob2), 1, "batch: two restores from one state are independent");
+    var ext = vec_new();
+    vec_push(ext, svara_phoneme_event_new(SVARA_PH_VOWEL_E, 0.05, SVARA_STRESS_PRIMARY));
+    svara_batch_extend(ob2, ext);
+    SvPhonemeEvent_set_duration(vec_get(ext, 0), 0.5);
+    var ob2e = SvBatchRenderer_events(ob2);
+    assert_eq(SvPhonemeEvent_duration(vec_get(ob2e, 1)), 0.05, "batch: extend copies the caller's events");
+
+    # The P0: extend from the renderer's own queue used to loop until the vec cap.
+    var self_ext = svara_batch_new(voice, SR);
+    svara_batch_push(self_ext, SVARA_PH_VOWEL_A, 0.05, SVARA_STRESS_PRIMARY);
+    svara_batch_extend(self_ext, SvBatchRenderer_events(self_ext));
+    assert_eq(svara_batch_len(self_ext), 2, "batch: extending from its own queue doubles it once");
+
+    var osamp = vec_new();
+    vec_push(osamp, F64_HALF);
+    var oo = svara_render_output_new(osamp, svara_render_progress_new(1, 1, 1));
+    var oost = svara_render_output_save(oo);
+    vec_set(osamp, 0, F64_ONE);
+    assert_eq(vec_get(SvRenderOutputState_samples(oost), 0), F64_HALF, "render output: save copies the samples");
+
+    var opts = vec_new();
+    vec_push(opts, svara_pt_new(0, F64_ONE));
+    vec_push(opts, svara_pt_new(F64_ONE, F64_ONE));
+    var oc1 = svara_prosody_make(opts, F64_ONE, F64_ONE);
+    var oc2 = svara_prosody_make(opts, F64_ONE, F64_ONE);
+    svara_prosody_apply_stress(oc1, SVARA_STRESS_PRIMARY, F64_HALF);
+    assert_eq(vec_len(SvProsodyContour_f0_points(oc2)), 2, "prosody: two contours from one vec are independent");
+    assert_eq(svara_prosody_f0_at(oc2, F64_HALF), F64_ONE, "prosody: and the second stays flat");
+
+    var own_ph = vec_new();
+    vec_push(own_ph, SVARA_PH_VOWEL_A);
+    var own_d = vec_new();
+    vec_push(own_d, 0.05);
+    var oplan = svara_trajectory_restore(svara_trajectory_save(svara_trajectory_plan(own_ph, own_d, voice, SR)));
+    var okps = svara_trajectory_keypoints(oplan);
+    while (vec_len(okps) > 1) { var popped = vec_pop(okps); }
+    var ot = svara_trajectory_formants_at(oplan, 0);
+    var of1 = SvVowelTarget_f1(ot);
+    SvVowelTarget_set_f1(ot, f64_from(9999));
+    assert_eq(SvVowelTarget_f1(svara_trajectory_formants_at(oplan, 0)), of1, "trajectory: one keypoint returns a copy");
+
+    # ================================================================
+    test_group("a progress callback cannot fail the render");
+    # ================================================================
+    # Rust's callback returns (). A negative return used to discard the output and
+    # come back as a value that is not an error code.
+    var cbr = svara_batch_new(voice, SR);
+    svara_batch_push(cbr, SVARA_PH_VOWEL_A, 0.02, SVARA_STRESS_PRIMARY);
+    svara_batch_push(cbr, SVARA_PH_VOWEL_I, 0.02, SVARA_STRESS_PRIMARY);
+    var cb_calls = alloc(8);
+    store64(cb_calls, 0);
+    var cbo = svara_batch_render_with_progress(cbr, &hd_cb_negative, cb_calls);
+    assert_eq(svara_is_err(cbo), 0, "the render still succeeds");
+    assert_eq(vec_len(SvRenderOutput_samples(cbo)) > 0, 1, "and returns its samples");
+    assert_eq(load64(cb_calls), 2, "control: the callback ran once per phoneme");
+
+    # ================================================================
+    test_group("contour points sort as Rust's stable sort does");
+    # ================================================================
+    var sp_v = vec_new();
+    vec_push(sp_v, svara_pt_new(F64_HALF, f64_from(2)));
+    vec_push(sp_v, svara_pt_new(F64_HALF, f64_from(3)));
+    vec_push(sp_v, svara_pt_new(0.3, f64_from(4)));
+    svara_prosody_sort_points(sp_v);
+    assert_eq(svara_pt_time(vec_get(sp_v, 0)), 0.3, "the earliest point first");
+    assert_eq(svara_pt_value(vec_get(sp_v, 1)), f64_from(2), "a tie keeps its order: 2 before 3");
+    assert_eq(svara_pt_value(vec_get(sp_v, 2)), f64_from(3), "and 3 after");
+    var sn_v = vec_new();
+    vec_push(sn_v, svara_pt_new(F64_HALF, F64_ONE));
+    vec_push(sn_v, svara_pt_new(nan, F64_ONE));
+    vec_push(sn_v, svara_pt_new(0.2, F64_ONE));
+    svara_prosody_sort_points(sn_v);
+    assert_eq(svara_pt_time(vec_get(sn_v, 0)), F64_HALF, "a NaN time blocks the sort, as in Rust: 0.5 stays first");
+    assert_eq(svara_pt_time(vec_get(sn_v, 2)), 0.2, "and 0.2 stays last");
+
+    # ================================================================
+    test_group("phoneme ids outside the inventory are refused");
+    # ================================================================
+    # Rust's Phoneme is an enum. Here -1 rendered as a vowel and 101 was voiced.
+    var bad_ids = vec_new();
+    vec_push(bad_ids, 0 - 1);
+    vec_push(bad_ids, SVARA_PHONEME_COUNT);
+    vec_push(bad_ids, 0x7FFFFFFFFFFFFFFF);
+    var bi = 0;
+    while (bi < vec_len(bad_ids)) {
+        var bp = vec_get(bad_ids, bi);
+        assert_eq(svara_phoneme_synthesize(bp, voice, SR, 0.01), SVARA_ERR_INVALID_PHONEME, "one-shot refuses it");
+        assert_eq(svara_phoneme_class(bp), SVARA_CLASS_SILENCE, "it classifies as silence");
+        assert_eq(svara_phoneme_is_voiced(bp), 0, "it is not voiced");
+        bi = bi + 1;
+    }
+    var bctx = svara_synthctx_new(voice, SR);
+    assert_eq(svara_synthctx_synthesize(bctx, 0 - 1, voice, 0.01, 0), SVARA_ERR_INVALID_PHONEME, "context refuses it");
+    var bseq = svara_sequence_new();
+    svara_sequence_push(bseq, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.02, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(bseq, svara_phoneme_event_new(0 - 1, 0.02, SVARA_STRESS_PRIMARY));
+    assert_eq(svara_sequence_render(bseq, voice, SR), SVARA_ERR_INVALID_PHONEME, "render refuses it");
+    assert_eq(svara_sequence_render_planned(bseq, voice, SR), SVARA_ERR_INVALID_PHONEME, "render_planned refuses it");
+    assert_eq(svara_is_err(svara_phoneme_synthesize(SVARA_PH_SILENCE, voice, SR, 0.01)), 0,
+      "control: id 100, silence, renders");
+    assert_eq(svara_phoneme_class(SVARA_PH_VOWEL_A), SVARA_CLASS_VOWEL, "control: id 0 is a vowel");
+
+    # ================================================================
+    test_group("an infinite bandwidth is refused, as ADR-0007 says");
+    # ================================================================
+    var ib = vec_new();
+    vec_push(ib, svara_formant_new(f64_from(700), SV_POS_INF, F64_ONE));
+    assert_eq(svara_formant_filter_new(ib, SR), SVARA_ERR_INVALID_FORMANT, "+inf bandwidth refused");
+    var fb = vec_new();
+    vec_push(fb, svara_formant_new(f64_from(700), f64_from(90), F64_ONE));
+    var ff_ok = svara_formant_filter_new(fb, SR);
+    assert_eq(svara_is_err(ff_ok), 0, "control: 90 Hz accepted");
+    # update keeps the filter's state, and used to take +inf and go NaN for good.
+    assert_eq(svara_formant_filter_update(ff_ok, ib), SVARA_ERR_INVALID_FORMANT, "update refuses +inf too");
+    var nf = vec_new();
+    vec_push(nf, svara_formant_new(hd_nan(), f64_from(90), F64_ONE));
+    assert_eq(svara_formant_filter_update(ff_ok, nf), SVARA_ERR_INVALID_FORMANT, "update refuses a NaN frequency");
+    assert_eq(svara_is_finite(svara_formant_filter_process_sample(ff_ok, F64_ONE)), 1,
+      "the filter refused both, so its next sample is finite");
+    assert_eq(svara_formant_filter_update(ff_ok, fb), SVARA_ERR_NONE, "control: update takes 90 Hz");
+
+    # ================================================================
+    test_group("estimate_formants takes every spectrum analyze returns");
+    # ================================================================
+    # analyze accepts fft_size up to 2^27, which is 2^26 + 1 bins. The peak scratch
+    # was sized by bins and capped at 2^26, so estimate_formants on such a spectrum
+    # ended the process. At most half the bins can be peaks. The grant is virtual
+    # memory the bump allocator does not touch.
+    assert_eq(svara_spectral_peak_slots(67108865), 33554433, "a peak per two bins, plus one");
+    assert_eq(svara_spectral_peak_scratch(67108865) == 0, 0, "the largest analyze output gets its scratch");
+
+    # ================================================================
+    test_group("the envelope refuses a negative length");
+    # ================================================================
+    var env_buf = alloc(80);
+    var ek = 0;
+    while (ek < 10) { store64(env_buf + ek * 8, F64_ONE); ek = ek + 1; }
+    var env_r = svara_ph_apply_envelope(env_buf + 64, 0 - 5);
+    # With n = -5, 3.6.2 wrote slot 8 (the buffer) and slot 2 (48 bytes below it).
+    var env_ok = 1;
+    ek = 0;
+    while (ek < 10) {
+        if (load64(env_buf + ek * 8) != F64_ONE) { env_ok = 0; }
+        ek = ek + 1;
+    }
+    assert_eq(env_ok, 1, "no slot around the buffer changes");
+    assert_eq(load64(env_buf + 16), F64_ONE, "slot 2, below the buffer, is untouched");
+
+    # ================================================================
+    test_group("validate_json refuses what hangs or overreads the decoder");
+    # ================================================================
+    # cyrius 6.7.18's generated decoder never returns on a stray `}` in a vec of
+    # structs, and reads past the NUL on an unterminated key, so these are refused
+    # before any decode. None of the refused documents is decoded here.
+    var vjb = str_builder_new();
+    var vj_r = SvVocalTractState_to_json(svara_tract_save(svara_tract_new(f64_from(16000))), vjb);
+    var vj_doc = str_data(str_builder_build(vjb));
+    assert_eq(svara_validate_json(vj_doc), SVARA_ERR_NONE, "control: a saved tract state passes");
+    var vj_t = svara_tract_restore(SvVocalTractState_from_json_str(vj_doc));
+    assert_eq(svara_is_err(vj_t), 0, "control: and decodes and restores");
+    assert_eq(svara_validate_json("{}"), SVARA_ERR_NONE, "control: an empty object passes");
+    assert_eq(svara_validate_json(" {}\n"), SVARA_ERR_NONE, "control: whitespace around the object passes");
+    assert_eq(svara_validate_json("{\"a\":-1.7976931348623157e+308}"), SVARA_ERR_NONE,
+      "control: the writer's longest number passes");
+    assert_eq(svara_validate_json("{\"a\":[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]}"), SVARA_ERR_NONE,
+      "control: 16 levels of nesting pass");
+    assert_eq(svara_validate_json("{\"a\":null,\"b\":true,\"c\":false,\"d\":[],\"e\":{}}"), SVARA_ERR_NONE,
+      "control: null, true, false and empty containers pass");
+
+    # The hang: a `}` where a vec element should start.
+    assert_eq(svara_validate_json("{\"formants\":[}],\"sample_rate\":44100.0}"), SVARA_ERR_COMPUTATION,
+      "a tract state with a stray brace in its formants");
+    assert_eq(svara_validate_json("{\"events\":[}]}"), SVARA_ERR_COMPUTATION, "a batch state with one in its events");
+    assert_eq(svara_validate_json("{\"f0_points\":[1}]}"), SVARA_ERR_COMPUTATION, "a scalar, then a stray brace");
+    assert_eq(svara_validate_json("{\"f0_points\":[\"time\":0.0,\"value\":0.85}]}"), SVARA_ERR_COMPUTATION,
+      "an element that lost its opening brace");
+    var vj_82 = alloc(64);
+    memcpy(vj_82, "{\"f0_points\":[", 14);
+    store8(vj_82 + 14, 26);
+    memcpy(vj_82 + 15, "\"time\":0.0,\"value\":0.85}]}", 27);
+    store8(vj_82 + 42, 0);
+    assert_eq(svara_validate_json(vj_82), SVARA_ERR_COMPUTATION, "fuzz case 82's shape, with its 0x1a byte");
+    assert_eq(svara_validate_json("{\"a\":[1}}"), SVARA_ERR_COMPUTATION, "a brace closing an array");
+    assert_eq(svara_validate_json("{\"a\":{\"b\":1]}"), SVARA_ERR_COMPUTATION, "a bracket closing an object");
+    assert_eq(svara_validate_json("{\"formants\":["), SVARA_ERR_COMPUTATION, "an array that never closes");
+
+    # The overread: a key with no closing quote.
+    assert_eq(svara_validate_json("{\"k"), SVARA_ERR_COMPUTATION, "an unterminated key");
+    assert_eq(svara_validate_json("{\"formants"), SVARA_ERR_COMPUTATION, "an unterminated field name");
+
+    # What svara never writes, and the decoder does not read as JSON does.
+    assert_eq(svara_validate_json("{\"a\\\":1}"), SVARA_ERR_COMPUTATION, "a backslash in a key");
+    assert_eq(svara_validate_json("{\"a b\":1}"), SVARA_ERR_COMPUTATION, "a space in a key");
+    assert_eq(svara_validate_json("{\"\":1}"), SVARA_ERR_COMPUTATION, "an empty key");
+    assert_eq(svara_validate_json("{\"sample_rate\":\"x\"}"), SVARA_ERR_COMPUTATION, "a string value");
+    assert_eq(svara_validate_json("{\"a\": 1}"), SVARA_ERR_COMPUTATION, "a space between a key and its value");
+    assert_eq(svara_validate_json("{\"a\":\n1}"), SVARA_ERR_COMPUTATION, "a newline between a key and its value");
+    assert_eq(svara_validate_json("{\"a\":[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]}"), SVARA_ERR_COMPUTATION,
+      "17 levels of nesting");
+    assert_eq(svara_validate_json("{\"a\":123456789012345678901234567890123}"), SVARA_ERR_COMPUTATION,
+      "a 33-digit number");
+    var vj_nums = vec_new();
+    vec_push(vj_nums, "{\"a\":01}");
+    vec_push(vj_nums, "{\"a\":1.}");
+    vec_push(vj_nums, "{\"a\":.5}");
+    vec_push(vj_nums, "{\"a\":1e}");
+    vec_push(vj_nums, "{\"a\":+1}");
+    vec_push(vj_nums, "{\"a\":-}");
+    vec_push(vj_nums, "{\"a\":nul}");
+    vec_push(vj_nums, "{\"a\":nulll}");
+    vec_push(vj_nums, "{\"a\":NaN}");
+    var vj_nok = 0;
+    var vj_k = 0;
+    while (vj_k < vec_len(vj_nums)) {
+        if (svara_validate_json(vec_get(vj_nums, vj_k)) == SVARA_ERR_COMPUTATION) { vj_nok = vj_nok + 1; }
+        vj_k = vj_k + 1;
+    }
+    assert_eq(vj_nok, 9, "nine malformed numbers and literals");
+    assert_eq(svara_validate_json("{}x"), SVARA_ERR_COMPUTATION, "content after the object");
+    assert_eq(svara_validate_json("{}{}"), SVARA_ERR_COMPUTATION, "a second object");
+    assert_eq(svara_validate_json("[1]"), SVARA_ERR_COMPUTATION, "an array, not an object");
+    assert_eq(svara_validate_json(""), SVARA_ERR_COMPUTATION, "an empty document");
+    assert_eq(svara_validate_json(0), SVARA_ERR_COMPUTATION, "no document");
 
     return assert_summary();
 }

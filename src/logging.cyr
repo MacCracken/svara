@@ -39,16 +39,34 @@ var _svara_spans_on = 1;
 # level_from_name -- map a level name to a sakshi SK_* level, or SVARA_LOG_OFF.
 # An unrecognised name yields SK_INFO rather than failing: a bad SVARA_LOG value
 # should not silence a program that asked for logging.
+#
+# Case-insensitive, as tracing's level filter is: SVARA_LOG=OFF used to fall
+# through to info, which turned logging on.
 #must_use
 fn svara_log_level_from_name(name) {
-    if (streq(name, "off") == 1) { return SVARA_LOG_OFF; }
-    if (streq(name, "fatal") == 1) { return SK_FATAL; }
-    if (streq(name, "error") == 1) { return SK_ERROR; }
-    if (streq(name, "warn") == 1) { return SK_WARN; }
-    if (streq(name, "info") == 1) { return SK_INFO; }
-    if (streq(name, "debug") == 1) { return SK_DEBUG; }
-    if (streq(name, "trace") == 1) { return SK_TRACE; }
+    if (svara_log_name_is(name, "off") == 1) { return SVARA_LOG_OFF; }
+    if (svara_log_name_is(name, "fatal") == 1) { return SK_FATAL; }
+    if (svara_log_name_is(name, "error") == 1) { return SK_ERROR; }
+    if (svara_log_name_is(name, "warn") == 1) { return SK_WARN; }
+    if (svara_log_name_is(name, "info") == 1) { return SK_INFO; }
+    if (svara_log_name_is(name, "debug") == 1) { return SK_DEBUG; }
+    if (svara_log_name_is(name, "trace") == 1) { return SK_TRACE; }
     return SK_INFO;
+}
+
+# 1 if the NUL-terminated `name` equals the lower-case `lower`, ignoring ASCII case.
+#must_use
+fn svara_log_name_is(name, lower) {
+    var i = 0;
+    while (1 == 1) {
+        var a = load8(name + i);
+        var b = load8(lower + i);
+        if ((a >= 65) & (a <= 90)) { a = a + 32; }
+        if (a != b) { return 0; }
+        if (a == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 # init_with_level -- start logging at an explicit level name. Returns the

@@ -148,12 +148,8 @@ fn svara_vowel_target_from_vowel(vowel) {
 # to_formants -- vec of 5 Formant pointers (F1..F5) with default amplitudes.
 #must_use
 fn svara_vowel_target_to_formants(self) {
-    var out = vec_new();
-    vec_push(out, svara_formant_new(SvVowelTarget_f1(self), SvVowelTarget_b1(self), SVARA_AMP_0));
-    vec_push(out, svara_formant_new(SvVowelTarget_f2(self), SvVowelTarget_b2(self), SVARA_AMP_1));
-    vec_push(out, svara_formant_new(SvVowelTarget_f3(self), SvVowelTarget_b3(self), SVARA_AMP_2));
-    vec_push(out, svara_formant_new(SvVowelTarget_f4(self), SvVowelTarget_b4(self), SVARA_AMP_3));
-    vec_push(out, svara_formant_new(SvVowelTarget_f5(self), SvVowelTarget_b5(self), SVARA_AMP_4));
+    var out = svara_formant_scratch_vec();
+    svara_vowel_target_to_formants_into(self, out);
     return out;
 }
 
@@ -229,18 +225,8 @@ fn svara_vowel_target_interpolate_into(from, to, t, out) {
 # interpolate -- linear blend of two targets; t clamped to [0, 1].
 #must_use
 fn svara_vowel_target_interpolate(from, to, t) {
-    var tc = f64_clamp(t, 0, F64_ONE);
     var r = alloc(sizeof(SvVowelTarget));
-    SvVowelTarget_set_f1(r, f64_lerp(SvVowelTarget_f1(from), SvVowelTarget_f1(to), tc));
-    SvVowelTarget_set_f2(r, f64_lerp(SvVowelTarget_f2(from), SvVowelTarget_f2(to), tc));
-    SvVowelTarget_set_f3(r, f64_lerp(SvVowelTarget_f3(from), SvVowelTarget_f3(to), tc));
-    SvVowelTarget_set_f4(r, f64_lerp(SvVowelTarget_f4(from), SvVowelTarget_f4(to), tc));
-    SvVowelTarget_set_f5(r, f64_lerp(SvVowelTarget_f5(from), SvVowelTarget_f5(to), tc));
-    SvVowelTarget_set_b1(r, f64_lerp(SvVowelTarget_b1(from), SvVowelTarget_b1(to), tc));
-    SvVowelTarget_set_b2(r, f64_lerp(SvVowelTarget_b2(from), SvVowelTarget_b2(to), tc));
-    SvVowelTarget_set_b3(r, f64_lerp(SvVowelTarget_b3(from), SvVowelTarget_b3(to), tc));
-    SvVowelTarget_set_b4(r, f64_lerp(SvVowelTarget_b4(from), SvVowelTarget_b4(to), tc));
-    SvVowelTarget_set_b5(r, f64_lerp(SvVowelTarget_b5(from), SvVowelTarget_b5(to), tc));
+    svara_vowel_target_interpolate_into(from, to, t, r);
     return r;
 }
 
@@ -328,7 +314,11 @@ fn svara_formant_bank_new(formants, sample_rate) {
 }
 
 # bank_update -- recompute coefficients for slot `i` without resetting state.
+# Returns SVARA_ERR_INVALID_FORMANT, writing nothing, for a slot outside the bank.
+# Rust indexes fixed [f32; 8] arrays here and panics; an unchecked store64 would
+# write into the neighbouring buffer instead.
 fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_rate) {
+    if ((i < 0) | (i >= SVARA_MAX_FORMANTS)) { return SVARA_ERR_INVALID_FORMANT; }
     var coeff = SvFormantBank_coeff(self);
     svara_formant_biquad_coeffs(frequency, bandwidth, sample_rate, coeff);
     var off = i * 8;
@@ -337,6 +327,7 @@ fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_ra
     store64(SvFormantBank_a1(self) + off, load64(coeff + 16));
     store64(SvFormantBank_a2(self) + off, load64(coeff + 24));
     store64(SvFormantBank_amp(self) + off, amplitude);
+    return SVARA_ERR_NONE;
 }
 
 # bank_process -- one input sample through all MAX_FORMANTS slots -> weighted sum.
@@ -449,6 +440,9 @@ fn svara_formant_validate(formants, sample_rate) {
         if (freq_ok == 0) { return SVARA_ERR_INVALID_FORMANT; }
         var bw = SvFormant_bandwidth(f);
         if (f64_gt(bw, 0) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+        # ADR-0007 rejects non-finite bandwidths, and +inf passed the test above:
+        # every sample came out NaN from a filter that had returned Ok.
+        if (svara_is_finite(bw) == 0) { return SVARA_ERR_INVALID_FORMANT; }
         i = i + 1;
     }
     return SVARA_ERR_NONE;
@@ -483,13 +477,18 @@ fn svara_formant_filter_rebuild(self, formants) {
     var v = svara_formant_validate(formants, sample_rate);
     if (svara_is_err(v) == 1) { return v; }
     var bank = SvFormantFilter_bank(self);
-    svara_formant_zero_buf(SvFormantBank_b0(bank), SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(SvFormantBank_b2(bank), SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(SvFormantBank_a1(bank), SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(SvFormantBank_a2(bank), SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(SvFormantBank_amp(bank), SVARA_MAX_FORMANTS);
-    svara_formant_bank_reset(bank);
     var n = vec_len(formants);
+    # Zero only the slots the update loop below does not write. It runs once per
+    # sample on the trajectory path, and zeroing all eight cost 5n stores for
+    # values overwritten straight after.
+    var z = n * 8;
+    var rest = SVARA_MAX_FORMANTS - n;
+    svara_formant_zero_buf(SvFormantBank_b0(bank) + z, rest);
+    svara_formant_zero_buf(SvFormantBank_b2(bank) + z, rest);
+    svara_formant_zero_buf(SvFormantBank_a1(bank) + z, rest);
+    svara_formant_zero_buf(SvFormantBank_a2(bank) + z, rest);
+    svara_formant_zero_buf(SvFormantBank_amp(bank) + z, rest);
+    svara_formant_bank_reset(bank);
     SvFormantBank_set_count(bank, n);
     var i = 0;
     while (i < n) {
@@ -503,12 +502,22 @@ fn svara_formant_filter_rebuild(self, formants) {
 }
 
 # update_formants -- new targets for smooth transitions; count must match.
+# Refuses a non-finite frequency or bandwidth before changing any slot, as
+# ADR-0007 decides for every formant parameter. Rust's update_formants checks
+# nothing, so the range checks that new and rebuild make are not added here.
 #must_use
 fn svara_formant_filter_update(self, formants) {
     var bank = SvFormantFilter_bank(self);
     var n = vec_len(formants);
     if (n != SvFormantBank_count(bank)) { return SVARA_ERR_INVALID_FORMANT; }
     var sr = SvFormantFilter_sample_rate(self);
+    var c = 0;
+    while (c < n) {
+        var fc = vec_get(formants, c);
+        if (svara_is_finite(SvFormant_frequency(fc)) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+        if (svara_is_finite(SvFormant_bandwidth(fc)) == 0) { return SVARA_ERR_INVALID_FORMANT; }
+        c = c + 1;
+    }
     var i = 0;
     while (i < n) {
         var f = vec_get(formants, i);

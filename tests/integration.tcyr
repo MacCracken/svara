@@ -1,0 +1,173 @@
+# integration.tcyr -- ports of rust-old/tests/integration.rs.
+#
+# The Rust crate kept these cross-module tests outside src/, so the module-by-module
+# port never reached them: the 3.6.3 audit found 10 with no counterpart and 6 only
+# partly covered. Each test below cites its Rust name.
+# Read the Rust with `git show 3.5.2:rust-old/tests/integration.rs`.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+var TOL_1EM2 = 0x3F847AE147AE147B;   # 0.01
+
+# 1 if `v` is a vec with at least one sample, every one finite.
+#must_use
+fn it_finite(v) {
+    if (svara_is_err(v) == 1) { return 0; }
+    if (vec_len(v) == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (svara_is_finite(vec_get(v, i)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Test entry point — runs this file's suite and returns the assert summary.
+fn main() {
+    alloc_init();
+    var male = svara_voice_new_male();
+    var nan = f64_div(0, 0);
+
+    test_group("the glottal source refuses what Rust's does");
+    # test_glottal_source_rejects_inf_f0 / _negative_f0 / _zero_sample_rate /
+    # _negative_sample_rate / _nan_sample_rate
+    assert_eq(svara_is_err(svara_glottal_new(SV_POS_INF, SR)), 1, "+inf f0");
+    assert_eq(svara_is_err(svara_glottal_new(SV_NEG_INF, SR)), 1, "-inf f0");
+    assert_eq(svara_is_err(svara_glottal_new(f64_from(0 - 100), SR)), 1, "-100 Hz f0");
+    assert_eq(svara_is_err(svara_glottal_new(f64_from(120), 0)), 1, "zero sample rate");
+    assert_eq(svara_is_err(svara_glottal_new(f64_from(120), f64_from(0 - 44100))), 1, "negative sample rate");
+    assert_eq(svara_is_err(svara_glottal_new(f64_from(120), nan)), 1, "NaN sample rate");
+    assert_eq(svara_is_err(svara_glottal_new(f64_from(120), SR)), 0, "control: 120 Hz at 44.1 kHz builds");
+
+    test_group("synthesis and filters refuse NaN");
+    # test_synthesize_phoneme_rejects_nan_duration, test_formant_filter_rejects_nan_sample_rate
+    assert_eq(svara_is_err(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, nan)), 1, "NaN duration");
+    var one = vec_new();
+    vec_push(one, svara_formant_new(f64_from(500), f64_from(80), F64_ONE));
+    assert_eq(svara_is_err(svara_formant_filter_new(one, nan)), 1, "NaN filter sample rate");
+    assert_eq(svara_is_err(svara_formant_filter_new(one, SR)), 0, "control: the same filter at 44.1 kHz");
+
+    test_group("an empty buffer is not a panic");
+    # test_vocal_tract_empty_buffer_no_panic
+    var et = svara_tract_new(SR);
+    var eg = svara_glottal_new(f64_from(120), SR);
+    var eb = alloc(8);
+    svara_tract_synthesize_into(et, eg, eb, 0);
+    assert_eq(svara_is_finite(svara_tract_process_sample(et, F64_ONE)), 1, "the tract still works after it");
+
+    test_group("synthesis is deterministic");
+    # test_deterministic_replay
+    var d1 = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, 0.2);
+    var d2 = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, male, SR, 0.2);
+    assert_eq(vec_len(d1), vec_len(d2), "same length");
+    var dd = 0;
+    var di = 0;
+    while (di < vec_len(d1)) {
+        if (vec_get(d1, di) != vec_get(d2, di)) { dd = dd + 1; }
+        di = di + 1;
+    }
+    assert_eq(dd, 0, "every sample identical");
+    assert_eq(vec_len(d1) > 0, 1, "control: there were samples to compare");
+
+    test_group("every voice and phoneme class renders");
+    # test_child_voice_synthesis
+    assert_eq(it_finite(svara_phoneme_synthesize(SVARA_PH_VOWEL_I, svara_voice_new_child(), SR, 0.2)), 1,
+      "child /i/ renders finite samples");
+    # test_all_vowels_synthesize
+    var vowels = vec_new();
+    vec_push(vowels, SVARA_PH_VOWEL_A);
+    vec_push(vowels, SVARA_PH_VOWEL_E);
+    vec_push(vowels, SVARA_PH_VOWEL_I);
+    vec_push(vowels, SVARA_PH_VOWEL_O);
+    vec_push(vowels, SVARA_PH_VOWEL_U);
+    vec_push(vowels, SVARA_PH_VOWEL_SCHWA);
+    var vi = 0;
+    var vok = 0;
+    while (vi < vec_len(vowels)) {
+        vok = vok + it_finite(svara_phoneme_synthesize(vec_get(vowels, vi), male, SR, 0.1));
+        vi = vi + 1;
+    }
+    assert_eq(vok, 6, "all six vowels render finite samples");
+    # test_all_consonant_classes_synthesize
+    var cons = vec_new();
+    vec_push(cons, SVARA_PH_PLOSIVE_P);
+    vec_push(cons, SVARA_PH_PLOSIVE_B);
+    vec_push(cons, SVARA_PH_FRIC_S);
+    vec_push(cons, SVARA_PH_FRIC_V);
+    vec_push(cons, SVARA_PH_NASAL_M);
+    vec_push(cons, SVARA_PH_NASAL_N);
+    vec_push(cons, SVARA_PH_LATERAL_L);
+    vec_push(cons, SVARA_PH_APPROX_R);
+    vec_push(cons, SVARA_PH_APPROX_W);
+    vec_push(cons, SVARA_PH_AFFR_CH);
+    vec_push(cons, SVARA_PH_AFFR_J);
+    vec_push(cons, SVARA_PH_GLOTTAL_STOP);
+    vec_push(cons, SVARA_PH_TAP_FLAP);
+    var ci = 0;
+    var cok = 0;
+    while (ci < vec_len(cons)) {
+        cok = cok + (1 - svara_is_err(svara_phoneme_synthesize(vec_get(cons, ci), male, SR, 0.08)));
+        ci = ci + 1;
+    }
+    assert_eq(cok, 13, "all thirteen consonants of the Rust list render");
+    # test_diphthong_synthesis
+    var dpi = 0;
+    var dok = 0;
+    while (dpi < 3) {
+        var dp = SVARA_PH_DIPH_AI;
+        if (dpi == 1) { dp = SVARA_PH_DIPH_AU; }
+        if (dpi == 2) { dp = SVARA_PH_DIPH_OI; }
+        dok = dok + it_finite(svara_phoneme_synthesize(dp, male, SR, 0.15));
+        dpi = dpi + 1;
+    }
+    assert_eq(dok, 3, "AI, AU and OI render finite samples");
+
+    test_group("vowel interpolation is exact at its ends and average in the middle");
+    # test_vowel_target_interpolation_midpoint / _endpoints
+    var va = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+    var vb = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+    var mid = svara_vowel_target_interpolate(va, vb, F64_HALF);
+    var want = f64_mul(f64_add(SvVowelTarget_f1(va), SvVowelTarget_f1(vb)), F64_HALF);
+    assert_eq(f64_lt(f64_abs(f64_sub(SvVowelTarget_f1(mid), want)), TOL_1EM2), 1, "the midpoint F1 is the average");
+    var at0 = svara_vowel_target_interpolate(va, vb, 0);
+    assert_eq(SvVowelTarget_f1(at0), SvVowelTarget_f1(va), "t = 0: F1 is from's");
+    assert_eq(SvVowelTarget_f2(at0), SvVowelTarget_f2(va), "t = 0: F2 is from's");
+    assert_eq(SvVowelTarget_f3(at0), SvVowelTarget_f3(va), "t = 0: F3 is from's");
+    var at1 = svara_vowel_target_interpolate(va, vb, F64_ONE);
+    assert_eq(SvVowelTarget_f1(at1), SvVowelTarget_f1(vb), "t = 1: F1 is to's");
+    assert_eq(SvVowelTarget_f2(at1), SvVowelTarget_f2(vb), "t = 1: F2 is to's");
+    assert_eq(SvVowelTarget_f3(at1), SvVowelTarget_f3(vb), "t = 1: F3 is to's");
+
+    test_group("the Rust five-event sequence renders");
+    # test_phoneme_sequence_renders_without_error
+    var s = svara_sequence_new();
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_SECONDARY));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.08, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_E, 0.1, SVARA_STRESS_PRIMARY));
+    assert_eq(it_finite(svara_sequence_render(s, male, SR)), 1, "it renders finite samples");
+
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

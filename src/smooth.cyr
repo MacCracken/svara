@@ -29,11 +29,7 @@ fn svara_smooth_alpha_from_time(time_secs, sample_rate) {
 # new(initial, sample_rate) -- smoother at `initial`, default 5 ms time constant.
 #must_use
 fn svara_smooth_new(initial, sample_rate) {
-    var self = alloc(sizeof(SvSmoothedParam));
-    SvSmoothedParam_set_current(self, initial);
-    SvSmoothedParam_set_target(self, initial);
-    SvSmoothedParam_set_alpha(self, svara_smooth_alpha_from_time(SVARA_DEFAULT_SMOOTH_TIME, sample_rate));
-    return self;
+    return svara_smooth_with_time(initial, SVARA_DEFAULT_SMOOTH_TIME, sample_rate);
 }
 
 # with_time(initial, smooth_time_secs, sample_rate) -- custom time constant.

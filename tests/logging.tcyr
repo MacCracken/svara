@@ -95,6 +95,9 @@ fn main() {
     # ================================================================
     test_group("level names map to sakshi levels");
     # ================================================================
+    assert_eq(svara_log_level_from_name("OFF"), SVARA_LOG_OFF, "OFF, in any case, is off");
+    assert_eq(svara_log_level_from_name("Debug"), SK_DEBUG, "Debug, in any case, is debug");
+    assert_eq(svara_log_level_from_name("offx"), SK_INFO, "control: a longer name is not off");
     assert_eq(svara_log_level_from_name("fatal"), SK_FATAL, "fatal");
     assert_eq(svara_log_level_from_name("error"), SK_ERROR, "error");
     assert_eq(svara_log_level_from_name("warn"), SK_WARN, "warn");

@@ -117,8 +117,14 @@ lint leg sums warnings only). Both run in CI.
 ## Security monitoring
 
 - `cyrius deny <source>` validates the dependency set (currently 23 deps, 0 violations).
-- ⚠ `cyrius fuzz` proves nothing yet: `tests/svara.fcyr` is the scaffold stub and
-  calls no svara function. A real target is the first audit item in roadmap 3.6.3.
+- `cyrius fuzz` drives the public API since 3.6.3: `tests/svara.fcyr` runs 2,400
+  cases in 15 groups, and passes under `--poison` and `--bounds` too. A failing case
+  replays alone with `./fz <case>`. Its JSON group keeps to documents a well-formed
+  writer can produce, because the cyrius 6.7.18 derive decoder never returns on a
+  vec of structs holding a stray `}` (see `docs/audit/2026-11-07-audit.md`). Each
+  JSON case then damages 8 documents byte by byte and decodes only the ones
+  `svara_validate_json` accepts. When a cyrius release fixes the decoder, rerun the
+  repro in its issue file against that release.
 - The toolchain installer verifies a published SHA256 (CVE-21) and, where present,
   an Ed25519 signature over `SHA256SUMS` (CVE-13). Both CI workflows install
   through it rather than hand-rolling `curl` + `tar`.

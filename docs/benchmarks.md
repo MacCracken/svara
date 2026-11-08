@@ -37,23 +37,33 @@ The batch-timed figures themselves did not move when the instrument changed,
 because they never depended on the per-call floor — which is exactly why a stale
 comment here was harmless in effect and still worth deleting.
 
-## Results (x86_64, single core, 2026-08-26, cycc 6.5.35, svara 3.5.3)
+## Results (x86_64, single core, 2026-11-07, cyrius 6.7.18, svara 3.6.3)
 
-| Benchmark | Avg | Notes |
-|---|---|---|
-| glottal `next_sample` (Rosenberg) | ~85 ns | periodic pulse + jitter/shimmer |
-| glottal `next_sample` (whisper) | ~81 ns | noise-only excitation |
-| glottal `next_sample` (creaky) | ~103 ns | LF + irregular period timing |
-| formant filter `process_sample` | ~170 ns | 8× SOA bandpass bank + DC blocker |
-| tract `process_sample` (Full) | ~285 ns | **includes the formant bank**, + nasal + subglottal + lip + feedback |
-| formant filter `process_block` 1024 | ~202 µs | ~197 ns/sample amortized |
-| tract `synthesize_into` 1024 | ~373 µs | **the full chain** — glottal → tract, ~364 ns/sample |
-| phoneme synth /a/ (vowel) | ~849 µs | 0.05 s render (~2205 samples) + alloc |
-| phoneme synth /s/ (fricative) | ~439 µs | noise excitation path |
-| phoneme synth /ai/ (diphthong) | ~897 µs | control-rate formant coefficients (3.1.0) |
-| sequence render (3 phonemes) | ~3.33 ms | per-phoneme synth + variable crossfade |
-| `render_planned` (3 phonemes) | ~18.4 ms | per-sample formant interpolation + tract re-target |
-| `render_planned` toned | ~21.5 ms | as above, plus a per-sample prosody contour lookup |
+Each figure is the lowest of three `cyrius bench` runs, with load near 3.8 on 16 cores.
+
+| Benchmark | Avg | 3.5.3 | Notes |
+|---|---|---|---|
+| glottal `next_sample` (Rosenberg) | ~46 ns | ~85 ns | periodic pulse + jitter/shimmer |
+| glottal `next_sample` (whisper) | ~70 ns | ~81 ns | noise-only excitation |
+| glottal `next_sample` (creaky) | ~62 ns | ~103 ns | LF + irregular period timing |
+| formant filter `process_sample` | ~130 ns | ~170 ns | 8× SOA bandpass bank + DC blocker |
+| tract `process_sample` (Full) | ~197 ns | ~285 ns | **includes the formant bank**, + nasal + subglottal + lip + feedback |
+| formant filter `process_block` 1024 | ~152 µs | ~202 µs | ~148 ns/sample amortized |
+| tract `synthesize_into` 1024 | ~254 µs | ~373 µs | **the full chain** — glottal → tract, ~248 ns/sample |
+| phoneme synth /a/ (vowel) | ~591 µs | ~849 µs | 0.05 s render (~2205 samples) + alloc |
+| phoneme synth /s/ (fricative) | ~343 µs | ~439 µs | noise excitation path |
+| phoneme synth /ai/ (diphthong) | ~628 µs | ~897 µs | control-rate formant coefficients (3.1.0) |
+| sequence render (3 phonemes) | ~2.38 ms | ~3.33 ms | per-phoneme synth + variable crossfade |
+| `render_planned` (3 phonemes) | ~13.5 ms | ~18.4 ms | per-sample formant interpolation + tract re-target |
+| `render_planned` toned | ~16.6 ms | ~21.5 ms | as above, plus a per-sample prosody contour lookup |
+
+⚠ **Most of the gain since 3.5.3 is the toolchain, not svara.** The pin went from
+cycc 6.5.35 to cyrius 6.7.18 in that time. Against 3.6.2 on the same toolchain, 3.6.3
+retires 3.1% *more* instructions in `render_planned` and 2.6% more in the toned
+render, because a correctness fix copies each sample's formant target. Every other
+probe is within 0.01%. `scripts/sweep/compare.py` measures that with retired-
+instruction counters, which this host's timers cannot resolve. See the 3.6.3
+CHANGELOG entry and roadmap 3.8.x.
 
 Per-release deltas are not tracked in this table — `benches/history.csv` has one
 row per benchmark per run, which is the honest place for them. A single run on

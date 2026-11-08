@@ -104,6 +104,9 @@ accessors. That is a trap worth naming.
    handle with no JSON form at all. A consumer rebuilds them from the
    configuration in (1), which is what Rust's "rebuild on load" convention means
    in practice even though Rust never had to write it down.
+   [*Corrected 3.6.3: `Spectrum` does not belong in this list. It is flat and has
+   derived `Serialize` since 3.3.0, with a round-trip test. See
+   [ADR-0009](0009-what-the-3-6-3-audit-leaves-open.md).*]
 
 3. **No hand-written codecs.** Standing since M-serde and unchanged: hand-writing
    what a derive should emit is throwaway work. Where a derive cannot reach a

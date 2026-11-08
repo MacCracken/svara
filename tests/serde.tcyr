@@ -44,12 +44,30 @@ var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3 (6-decimal text round-trip tolerance
 # 1 if |a - b| < eps.
 #must_use
 fn se_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
+# Number of the first n samples of two raw buffers that differ in any bit.
+#must_use
+fn se_buf_diff(a, b, n) {
+    var d = 0;
+    var i = 0;
+    while (i < n) {
+        if (load64(a + i * 8) != load64(b + i * 8)) { d = d + 1; }
+        i = i + 1;
+    }
+    return d;
+}
+
+# Every document se_json writes, so the last group can check each one.
+var se_docs = 0;
+
 # serialize `ptr` via `to_json` fn-ptr into JSON, return the cstr.
 #must_use
 fn se_json(to_json, ptr) {
     var sb = str_builder_new();
     var r = callptr(to_json, ptr, sb);
-    return str_data(str_builder_build(sb));
+    var d = str_data(str_builder_build(sb));
+    if (se_docs == 0) { se_docs = vec_new(); }
+    vec_push(se_docs, d);
+    return d;
 }
 
 alloc_init();
@@ -597,6 +615,79 @@ while (br_i < vec_len(br_s1)) {
     br_i = br_i + 1;
 }
 assert_eq(br_diff, 0, "restored renderer renders bit-identical audio");
+
+# ================================================================
+test_group("a context, pool or renderer resumes mid-utterance");
+# 3.3.0 saved only the noise PRNG, so a restore after a voiced render started from
+# a fresh glottal source and tract and every voiced phoneme rendered differently.
+# Rust serializes the whole SynthesisContext. The /s/ test above could not see it.
+var mu_v = svara_voice_new_male();
+var mu_c = svara_synthctx_new(mu_v, sr_hz);
+var mu_w = svara_synthctx_synthesize(mu_c, SVARA_PH_VOWEL_A, mu_v, 0.0123, 0);
+var mu_st = SvSynthCtxState_from_json_str(se_json(&SvSynthCtxState_to_json, svara_synthctx_save(mu_c)));
+var mu_c2 = svara_synthctx_restore(mu_st, mu_v);
+assert_eq(svara_is_err(mu_c2), 0, "context: restores after a voiced render");
+var mu_n1 = svara_synthctx_synthesize(mu_c, SVARA_PH_VOWEL_A, mu_v, 0.02, 0);
+var mu_n2 = svara_synthctx_synthesize(mu_c2, SVARA_PH_VOWEL_A, mu_v, 0.02, 0);
+assert_eq(mu_n2, mu_n1, "context: same sample count");
+assert_eq(se_buf_diff(svara_synthctx_buffer(mu_c), svara_synthctx_buffer(mu_c2), mu_n1), 0,
+  "context: the restored one continues bit for bit");
+var mu_f = svara_synthctx_new(mu_v, sr_hz);
+var mu_n3 = svara_synthctx_synthesize(mu_f, SVARA_PH_VOWEL_A, mu_v, 0.02, 0);
+assert_eq(se_buf_diff(svara_synthctx_buffer(mu_c), svara_synthctx_buffer(mu_f), mu_n3) > 0, 1,
+  "control: a fresh context does not, so state really carried over");
+
+var mu_p = svara_pool_new(mu_v, sr_hz);
+var mu_pw = svara_pool_render(mu_p, SVARA_PH_VOWEL_A, mu_v, 0.0123);
+var mu_pst = SvSynthesisPoolState_from_json_str(se_json(&SvSynthesisPoolState_to_json, svara_pool_save(mu_p)));
+var mu_p2 = svara_pool_restore(mu_pst, mu_v);
+assert_eq(svara_is_err(mu_p2), 0, "pool: restores after a voiced render");
+var mu_pn = svara_pool_render(mu_p, SVARA_PH_VOWEL_A, mu_v, 0.02);
+var mu_pn2 = svara_pool_render(mu_p2, SVARA_PH_VOWEL_A, mu_v, 0.02);
+assert_eq(se_buf_diff(svara_pool_buffer(mu_p), svara_pool_buffer(mu_p2), mu_pn), 0,
+  "pool: the restored one continues bit for bit");
+assert_eq(mu_pn2, mu_pn, "pool: same sample count");
+
+var mu_b = svara_batch_new(mu_v, sr_hz);
+svara_batch_push(mu_b, SVARA_PH_VOWEL_A, 0.0123, SVARA_STRESS_PRIMARY);
+var mu_bo = svara_batch_render_all(mu_b);
+var mu_bst = SvBatchRendererState_from_json_str(se_json(&SvBatchRendererState_to_json, svara_batch_save(mu_b)));
+var mu_b2 = svara_batch_restore(mu_bst, mu_v);
+assert_eq(svara_is_err(mu_b2), 0, "batch: restores after a render");
+var mu_s1 = SvRenderOutput_samples(svara_batch_render_all(mu_b));
+var mu_s2 = SvRenderOutput_samples(svara_batch_render_all(mu_b2));
+assert_eq(vec_len(mu_s2), vec_len(mu_s1), "batch: same sample count");
+var mu_bd = 0;
+var mu_bi = 0;
+while (mu_bi < vec_len(mu_s1)) {
+    if (vec_get(mu_s1, mu_bi) != vec_get(mu_s2, mu_bi)) { mu_bd = mu_bd + 1; }
+    mu_bi = mu_bi + 1;
+}
+assert_eq(mu_bd, 0, "batch: the restored one continues bit for bit");
+
+# A document saved before 3.6.3 has no glottal or tract, and restores as it did.
+var mu_old = SvSynthCtxState_from_json_str("{\"sample_rate\":44100.0,\"noise_state\":1,\"noise_inc\":3}");
+assert_eq(mu_old != 0, 1, "control: the old document decodes");
+assert_eq(svara_is_err(svara_synthctx_restore(mu_old, mu_v)), 0, "an old context document still restores");
+var mu_two = svara_synthctx_save(mu_c);
+vec_push(SvSynthCtxState_glottal(mu_two), vec_get(SvSynthCtxState_glottal(mu_two), 0));
+assert_eq(svara_synthctx_restore(mu_two, mu_v), SVARA_ERR_COMPUTATION, "two glottal states are refused");
+
+# ================================================================
+test_group("validate_json takes every document svara writes");
+# ================================================================
+# The check refuses what svara's writer cannot produce, so it must take everything
+# the writer did produce in this suite: every state companion and config type.
+var vj_bad = 0;
+var vj_i = 0;
+while (vj_i < vec_len(se_docs)) {
+    if (svara_validate_json(vec_get(se_docs, vj_i)) != SVARA_ERR_NONE) { vj_bad = vj_bad + 1; }
+    vj_i = vj_i + 1;
+}
+assert_eq(vec_len(se_docs) > 20, 1, "control: the suite wrote its documents");
+assert_eq(vj_bad, 0, "every document the suite wrote passes");
+assert_eq(svara_validate_json("{\"sample_rate\":44100.0,\"noise_state\":1,\"noise_inc\":3}"), SVARA_ERR_NONE,
+  "a document saved before 3.6.3 passes");
 
 var rc = assert_summary();
 syscall(60, rc);

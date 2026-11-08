@@ -76,6 +76,7 @@ fn svara_keypoint_save(kp) {
 # keypoint_restore -- rebuild a keypoint, re-creating its VowelTarget.
 #must_use
 fn svara_keypoint_restore(st) {
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
     var t = svara_vowel_target_with_bandwidths(
       SvKeypointState_f1(st), SvKeypointState_f2(st), SvKeypointState_f3(st),
       SvKeypointState_f4(st), SvKeypointState_f5(st),
@@ -105,6 +106,9 @@ fn svara_trajectory_save(self) {
 # legal planner (formants_at falls back to a neutral target).
 #must_use
 fn svara_trajectory_restore(st) {
+    # A document missing `keypoints`, or with a null one, decodes to 0 (ADR-0002).
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
+    if (svara_vec_all_set(SvTrajectoryState_keypoints(st)) == 0) { return SVARA_ERR_COMPUTATION; }
     var self = alloc(sizeof(SvTrajectoryPlanner));
     SvTrajectoryPlanner_set_scratch_a(self, svara_vowel_target_new(0, 0, 0, 0, 0));
     SvTrajectoryPlanner_set_scratch_b(self, svara_vowel_target_new(0, 0, 0, 0, 0));
@@ -121,6 +125,7 @@ fn svara_trajectory_restore(st) {
 }
 
 # plan -- build a trajectory from parallel phonemes (vec<int>) + durations (vec<f64>).
+# Returns SVARA_ERR_INVALID_DURATION if the two vecs differ in length.
 #must_use
 fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     var self = alloc(sizeof(SvTrajectoryPlanner));
@@ -128,6 +133,9 @@ fn svara_trajectory_plan(phonemes, durations, voice, sample_rate) {
     SvTrajectoryPlanner_set_scratch_b(self, svara_vowel_target_new(0, 0, 0, 0, 0));
     var kps = vec_new();
     var np = vec_len(phonemes);
+    # Rust asserts the two lengths equal and panics. Unchecked, a short `durations`
+    # aborted in vec_get and a long one was silently truncated.
+    if (vec_len(durations) != np) { return SVARA_ERR_INVALID_DURATION; }
     if (np == 0) {
         SvTrajectoryPlanner_set_keypoints(self, kps);
         SvTrajectoryPlanner_set_total_samples(self, 0);
@@ -215,17 +223,9 @@ fn svara_traj_cr(a, b, c, d, t) {
 # catmull_rom_vowel -- 4-point Catmull-Rom over all 10 VowelTarget components.
 #must_use
 fn svara_catmull_rom_vowel(p0, p1, p2, p3, t) {
-    return svara_vowel_target_with_bandwidths(
-      svara_traj_cr(SvVowelTarget_f1(p0), SvVowelTarget_f1(p1), SvVowelTarget_f1(p2), SvVowelTarget_f1(p3), t),
-      svara_traj_cr(SvVowelTarget_f2(p0), SvVowelTarget_f2(p1), SvVowelTarget_f2(p2), SvVowelTarget_f2(p3), t),
-      svara_traj_cr(SvVowelTarget_f3(p0), SvVowelTarget_f3(p1), SvVowelTarget_f3(p2), SvVowelTarget_f3(p3), t),
-      svara_traj_cr(SvVowelTarget_f4(p0), SvVowelTarget_f4(p1), SvVowelTarget_f4(p2), SvVowelTarget_f4(p3), t),
-      svara_traj_cr(SvVowelTarget_f5(p0), SvVowelTarget_f5(p1), SvVowelTarget_f5(p2), SvVowelTarget_f5(p3), t),
-      svara_traj_cr(SvVowelTarget_b1(p0), SvVowelTarget_b1(p1), SvVowelTarget_b1(p2), SvVowelTarget_b1(p3), t),
-      svara_traj_cr(SvVowelTarget_b2(p0), SvVowelTarget_b2(p1), SvVowelTarget_b2(p2), SvVowelTarget_b2(p3), t),
-      svara_traj_cr(SvVowelTarget_b3(p0), SvVowelTarget_b3(p1), SvVowelTarget_b3(p2), SvVowelTarget_b3(p3), t),
-      svara_traj_cr(SvVowelTarget_b4(p0), SvVowelTarget_b4(p1), SvVowelTarget_b4(p2), SvVowelTarget_b4(p3), t),
-      svara_traj_cr(SvVowelTarget_b5(p0), SvVowelTarget_b5(p1), SvVowelTarget_b5(p2), SvVowelTarget_b5(p3), t));
+    var out = svara_vowel_target_new(0, 0, 0, 0, 0);
+    svara_catmull_rom_vowel_into(p0, p1, p2, p3, t, out);
+    return out;
 }
 
 # catmull_rom_vowel_into -- svara_catmull_rom_vowel writing into an existing
@@ -316,39 +316,11 @@ fn svara_trajectory_formants_at_into(self, sample, out) {
 # formants_at -- interpolated VowelTarget at a sample position.
 #must_use
 fn svara_trajectory_formants_at(self, sample) {
-    var kps = SvTrajectoryPlanner_keypoints(self);
-    var n = vec_len(kps);
-    if (n == 0) {
-        return svara_vowel_target_new(f64_from(500), f64_from(1500), f64_from(2500), f64_from(3300), f64_from(3750));
-    }
-    if (n == 1) { return SvFormantKeypoint_target(vec_get(kps, 0)); }
-
-    var seg = svara_trajectory_find_segment(self, sample);
-    var k0 = vec_get(kps, seg);
-    var seg1 = seg + 1;
-    if (seg1 > n - 1) { seg1 = n - 1; }
-    var k1 = vec_get(kps, seg1);
-
-    var span = SvFormantKeypoint_time(k1) - SvFormantKeypoint_time(k0);
-    if (span < 1) { span = 1; }
-    var d = sample - SvFormantKeypoint_time(k0);
-    if (d < 0) { d = 0; }
-    var t = f64_clamp(f64_div(f64_from(d), f64_from(span)), 0, F64_ONE);
-
-    if ((seg > 0) & ((seg + 2) < n)) {
-        var km1 = vec_get(kps, seg - 1);
-        var k2 = vec_get(kps, seg + 2);
-        var outer = f64_mul(f64_add(SvFormantKeypoint_resistance(km1), SvFormantKeypoint_resistance(k2)), F64_HALF);
-        var catmull_weight = f64_sub(F64_ONE, outer);
-        if (f64_gt(catmull_weight, 0.05) == 1) {
-            var linear = svara_vowel_target_interpolate(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1), t);
-            var catmull = svara_catmull_rom_vowel(SvFormantKeypoint_target(km1), SvFormantKeypoint_target(k0),
-              SvFormantKeypoint_target(k1), SvFormantKeypoint_target(k2), t);
-            return svara_vowel_target_interpolate(linear, catmull, catmull_weight);
-        }
-    }
-    var t_smooth = ease_in_out_smooth(t);
-    return svara_vowel_target_interpolate(SvFormantKeypoint_target(k0), SvFormantKeypoint_target(k1), t_smooth);
+    # A fresh target, filled by the _into form, which a one-keypoint plan copies
+    # rather than hands out (Rust's target.clone()).
+    var out = svara_vowel_target_new(0, 0, 0, 0, 0);
+    svara_trajectory_formants_at_into(self, sample, out);
+    return out;
 }
 
 # apply_speaking_rate -- Lindblom undershoot: resistance *= 1/rate, clamped [0,1].

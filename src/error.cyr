@@ -92,6 +92,39 @@ fn svara_alloc_samples(n) {
     return alloc(n * 8);
 }
 
+# 1 if `v` is a vec whose every element is set, 0 for a null vec or a null element.
+# A decoded document missing a Vec field gives 0 there (ADR-0002), so restore asks.
+#must_use
+fn svara_vec_all_set(v) {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (vec_get(v, i) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# A fresh vec holding the same words as `v`. For a vec svara keeps: Rust moves or
+# clones what it keeps, so a caller's later write must not reach svara's copy.
+#must_use
+fn svara_vec_copy(v) {
+    var c = vec_new();
+    var i = 0;
+    while (i < vec_len(v)) { vec_push(c, vec_get(v, i)); i = i + 1; }
+    return c;
+}
+
+# End the process over a refused allocation, as Rust's allocator does. For the few
+# places that used to catch the 0 and answer anyway: fault injection found them
+# returning a wrong result as if it were right (0 energy, no formants, an f0
+# multiplier of 1). Elsewhere a refusal already fails stop or returns an error.
+fn svara_alloc_refused() {
+    syscall(SYS_WRITE, 2, "svara: allocation refused\n", 26);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # 1 if `code` is an error (negative), 0 otherwise.
 #must_use
 fn svara_is_err(code) {
@@ -141,6 +174,146 @@ fn svara_validate_sample_rate(sample_rate) {
 fn svara_validate_duration(duration) {
     if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
     if (svara_is_finite(duration) == 0) { return SVARA_ERR_INVALID_DURATION; }
+    return SVARA_ERR_NONE;
+}
+
+# ================================================================
+# JSON documents from outside (3.6.3). The `*_from_json_str` decoders are generated
+# by the cyrius compiler's `#derive(Serialize)`, and at cyrius 6.7.18 two of its
+# defects are reachable from hostile text: a stray `}` in a vec of structs loops
+# forever, and an unterminated key reads past the end of the string. Both are filed
+# in the cyrius repo's docs/development/issues/ (2026-11-07). Both happen inside the
+# decode, before `restore` can refuse anything, so svara checks the text first.
+# ================================================================
+
+# Deepest nesting svara_validate_json accepts. svara's deepest document nests 5
+# deep: a pool or batch state, its vec of tract states, one state, its formant vec,
+# one formant.
+var SV_JSON_MAX_DEPTH = 16;
+
+# Longest number svara_validate_json accepts, in bytes. svara's writer emits at most
+# 24: a sign, 17 significant digits, a point and an exponent.
+var SV_JSON_MAX_NUMBER = 32;
+
+# 1 if byte `c` is a decimal digit.
+fn _sv_json_digit(c) {
+    if ((c >= 48) & (c <= 57)) { return 1; }
+    return 0;
+}
+
+# Position after the JSON whitespace at `d + p`.
+fn _sv_json_ws(d, p) {
+    var c = load8(d + p);
+    while ((c == 32) | (c == 9) | (c == 10) | (c == 13)) { p = p + 1; c = load8(d + p); }
+    return p;
+}
+
+# Position after the number at `d + p`, or -1. JSON's grammar: an optional minus,
+# 0 or a run of digits not starting with 0, an optional fraction, an optional
+# exponent.
+fn _sv_json_number(d, p) {
+    var s = p;
+    if (load8(d + p) == 45) { p = p + 1; }
+    var c = load8(d + p);
+    if (c == 48) { p = p + 1; }
+    elif (_sv_json_digit(c) == 1) { while (_sv_json_digit(load8(d + p)) == 1) { p = p + 1; } }
+    else { return 0 - 1; }
+    if (load8(d + p) == 46) {
+        p = p + 1;
+        if (_sv_json_digit(load8(d + p)) == 0) { return 0 - 1; }
+        while (_sv_json_digit(load8(d + p)) == 1) { p = p + 1; }
+    }
+    c = load8(d + p);
+    if ((c == 101) | (c == 69)) {
+        p = p + 1;
+        c = load8(d + p);
+        if ((c == 43) | (c == 45)) { p = p + 1; }
+        if (_sv_json_digit(load8(d + p)) == 0) { return 0 - 1; }
+        while (_sv_json_digit(load8(d + p)) == 1) { p = p + 1; }
+    }
+    if (p - s > SV_JSON_MAX_NUMBER) { return 0 - 1; }
+    return p;
+}
+
+# Position after the literal `lit` at `d + p`, or -1. Stops at the first byte that
+# differs, so it never reads past the document's NUL.
+fn _sv_json_literal(d, p, lit) {
+    var i = 0;
+    while (load8(lit + i) != 0) {
+        if (load8(d + p + i) != load8(lit + i)) { return 0 - 1; }
+        i = i + 1;
+    }
+    return p + i;
+}
+
+# Position after the key at `d + p` and its closing quote, or -1. svara's keys are
+# field names: letters, digits and `_`, with no escape.
+fn _sv_json_key(d, p) {
+    if (load8(d + p) != 34) { return 0 - 1; }
+    p = p + 1;
+    var s = p;
+    var c = load8(d + p);
+    while (((c >= 97) & (c <= 122)) | ((c >= 65) & (c <= 90)) | (_sv_json_digit(c) == 1) | (c == 95)) {
+        p = p + 1;
+        c = load8(d + p);
+    }
+    if ((p == s) | (c != 34)) { return 0 - 1; }
+    return p + 1;
+}
+
+# Position after the value at `d + p`, or -1. `depth` counts the objects and arrays
+# around it. An object or array must close with its own bracket.
+fn _sv_json_value(d, p, depth) {
+    var c = load8(d + p);
+    if ((c == 123) | (c == 91)) {
+        if (depth >= SV_JSON_MAX_DEPTH) { return 0 - 1; }
+        var close = 93;
+        if (c == 123) { close = 125; }
+        p = p + 1;
+        if (load8(d + p) == close) { return p + 1; }
+        while (1 == 1) {
+            if (c == 123) {
+                p = _sv_json_key(d, p);
+                if (p < 0) { return 0 - 1; }
+                if (load8(d + p) != 58) { return 0 - 1; }
+                p = p + 1;
+            }
+            p = _sv_json_value(d, p, depth + 1);
+            if (p < 0) { return 0 - 1; }
+            var n = load8(d + p);
+            if (n == close) { return p + 1; }
+            if (n != 44) { return 0 - 1; }
+            p = p + 1;
+        }
+    }
+    if ((c == 45) | (_sv_json_digit(c) == 1)) { return _sv_json_number(d, p); }
+    if (c == 110) { return _sv_json_literal(d, p, "null"); }
+    if (c == 116) { return _sv_json_literal(d, p, "true"); }
+    if (c == 102) { return _sv_json_literal(d, p, "false"); }
+    return 0 - 1;
+}
+
+# validate_json -- SVARA_ERR_NONE if `doc` is a document svara's writer could have
+# produced, else SVARA_ERR_COMPUTATION. Call it before any `*_from_json_str` on text
+# svara did not write; a document that passes still goes to `restore`, which checks
+# what it says. `doc` is a NUL-terminated buffer, and 0 is refused.
+#
+# It accepts one object of objects, arrays, numbers, `null`, `true` and `false`,
+# with keys of letters, digits and `_`. It refuses a string value or an escape,
+# because svara's types have no text field and the decoder does not follow escapes.
+# It refuses a bracket that closes the wrong kind, nesting past SV_JSON_MAX_DEPTH, a
+# number longer than SV_JSON_MAX_NUMBER, and anything after the object. Whitespace
+# is allowed only before and after the object: svara writes none inside, and the
+# decoder skips only spaces between a key and its value.
+#must_use
+fn svara_validate_json(doc) {
+    if (doc == 0) { return SVARA_ERR_COMPUTATION; }
+    var p = _sv_json_ws(doc, 0);
+    if (load8(doc + p) != 123) { return SVARA_ERR_COMPUTATION; }
+    p = _sv_json_value(doc, p, 0);
+    if (p < 0) { return SVARA_ERR_COMPUTATION; }
+    p = _sv_json_ws(doc, p);
+    if (load8(doc + p) != 0) { return SVARA_ERR_COMPUTATION; }
     return SVARA_ERR_NONE;
 }
 

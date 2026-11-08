@@ -7,6 +7,7 @@ across a pin bump in naad and goonj, which is why this exists. See README.md.
 
     scripts/sweep/compare.py 3.6.1
     scripts/sweep/compare.py 3.6.1 --only values,json
+    scripts/sweep/compare.py --old-tree /path/to/a/copy
 """
 import argparse
 import concurrent.futures
@@ -57,15 +58,23 @@ def as_f64(token):
         return None
 
 
-def prepare(ref, work):
+def prepare(ref, work, old_tree=None):
     """Materialise both trees and build the harness in each."""
     old, new = os.path.join(work, "old"), os.path.join(work, "new")
     os.makedirs(old)
     os.makedirs(new)
     paths = ["src", "lib", "cyrius.cyml", "cyrius.lock", "VERSION"]
-    archive = subprocess.run(["git", "-C", REPO, "archive", ref] + paths,
-                             capture_output=True, check=True)
-    subprocess.run(["tar", "-x", "-C", old], input=archive.stdout, check=True)
+    if old_tree:
+        for p in paths:
+            src = os.path.join(old_tree, p)
+            if os.path.isdir(src):
+                shutil.copytree(src, os.path.join(old, p))
+            else:
+                shutil.copy(src, old)
+    else:
+        archive = subprocess.run(["git", "-C", REPO, "archive", ref] + paths,
+                                 capture_output=True, check=True)
+        subprocess.run(["tar", "-x", "-C", old], input=archive.stdout, check=True)
     for p in paths:
         src = os.path.join(REPO, p)
         if os.path.isdir(src):
@@ -262,14 +271,17 @@ def compare_counters(work, rounds):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("ref", help="git ref of the old tree, such as a release tag")
+    parser.add_argument("ref", nargs="?", help="git ref of the old tree, such as a release tag")
+    parser.add_argument("--old-tree", help="a directory to use as the old tree instead of a git ref")
     parser.add_argument("--only", default="values,json,hostile,counters", help="comma-separated checks to run")
     parser.add_argument("--rounds", type=int, default=9, help="counter rounds per probe")
     args = parser.parse_args()
+    if not args.ref and not args.old_tree:
+        parser.error("give a git ref or --old-tree")
     only = args.only.split(",")
     work = tempfile.mkdtemp(prefix="svara-sweep-")
     try:
-        prepare(args.ref, work)
+        prepare(args.ref, work, args.old_tree)
         bad = 0
         if "values" in only:
             bad += compare_values(work)

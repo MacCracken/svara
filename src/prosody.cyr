@@ -71,21 +71,29 @@ struct SvProsodyContour { f0_points: Vec<SvF0Point>; duration_scale: f64; amplit
 
 # selection sort a vec of point pointers by ascending time.
 fn svara_prosody_sort_points(v) {
+    # Stable insertion sort by time. Rust sorts with the stable sort_by and
+    # partial_cmp().unwrap_or(Equal), which for a slice this short is insertion
+    # sort: an element moves left only past one it is strictly less than, so ties
+    # keep their order and a NaN time stays where it is. The selection sort this
+    # replaced did neither.
     var n = vec_len(v);
-    var a = 0;
-    while (a < n) {
-        var lo = a;
-        var b = a + 1;
-        while (b < n) {
-            if (f64_lt(svara_pt_time(vec_get(v, b)), svara_pt_time(vec_get(v, lo))) == 1) { lo = b; }
-            b = b + 1;
+    var i = 1;
+    while (i < n) {
+        var cur = vec_get(v, i);
+        var j = i;
+        var moving = 1;
+        while (moving == 1) {
+            moving = 0;
+            if (j > 0) {
+                if (f64_lt(svara_pt_time(cur), svara_pt_time(vec_get(v, j - 1))) == 1) {
+                    vec_set(v, j, vec_get(v, j - 1));
+                    j = j - 1;
+                    moving = 1;
+                }
+            }
         }
-        if (lo != a) {
-            var tmp = vec_get(v, a);
-            vec_set(v, a, vec_get(v, lo));
-            vec_set(v, lo, tmp);
-        }
-        a = a + 1;
+        vec_set(v, j, cur);
+        i = i + 1;
     }
 }
 
@@ -101,9 +109,9 @@ fn svara_prosody_f0_at_internal(self, t) {
     var tc = f64_clamp(t, 0, F64_ONE);
     if (_sv_prosody_cap < n) {
         var nxs = svara_alloc_samples(n);
-        if (nxs == 0) { return F64_ONE; }
+        if (nxs == 0) { svara_alloc_refused(); }
         var nys = svara_alloc_samples(n);
-        if (nys == 0) { return F64_ONE; }
+        if (nys == 0) { svara_alloc_refused(); }
         _sv_prosody_xs = nxs;
         _sv_prosody_ys = nys;
         _sv_prosody_cap = n;
@@ -119,7 +127,11 @@ fn svara_prosody_f0_at_internal(self, t) {
     }
     var r = 0;
     var tag, err = calc_monotone_cubic_checked(xs, ys, n, tc, &r);
-    if (is_err_result(tag) == 1) { return F64_ONE; }
+    if (is_err_result(tag) == 1) {
+        # A refused allocation is not a refusal of the contour: Rust aborts there.
+        if (err == HSB_ERR_ALLOC) { svara_alloc_refused(); }
+        return F64_ONE;
+    }
     return r;
 }
 
@@ -199,8 +211,17 @@ fn svara_prosody_apply_stress(self, stress, position) {
 # build a contour from a points vec + scales.
 #must_use
 fn svara_prosody_make(pts, dur, amp) {
+    # Keep a copy of the points. Rust moves the vec in; keeping the caller's let a
+    # second contour built from it, or the caller, see this one's stress edits.
+    var own = vec_new();
+    var i = 0;
+    while (i < vec_len(pts)) {
+        var p = vec_get(pts, i);
+        vec_push(own, svara_pt_new(svara_pt_time(p), svara_pt_value(p)));
+        i = i + 1;
+    }
     var c = alloc(sizeof(SvProsodyContour));
-    SvProsodyContour_set_f0_points(c, pts);
+    SvProsodyContour_set_f0_points(c, own);
     SvProsodyContour_set_duration_scale(c, dur);
     SvProsodyContour_set_amplitude_scale(c, amp);
     return c;

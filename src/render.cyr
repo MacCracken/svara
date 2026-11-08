@@ -66,7 +66,7 @@ struct SvRenderOutputState {
 #must_use
 fn svara_render_output_save(o) {
     var st = alloc(sizeof(SvRenderOutputState));
-    SvRenderOutputState_set_samples(st, SvRenderOutput_samples(o));
+    SvRenderOutputState_set_samples(st, svara_vec_copy(SvRenderOutput_samples(o)));
     var p = SvRenderOutput_progress(o);
     SvRenderOutputState_set_phoneme_index(st, SvRenderProgress_phoneme_index(p));
     SvRenderOutputState_set_total_phonemes(st, SvRenderProgress_total_phonemes(p));
@@ -75,12 +75,15 @@ fn svara_render_output_save(o) {
 }
 
 # restore -- rebuild a RenderOutput from a state snapshot. The samples vec is
-# adopted, not copied: a state decoded from JSON owns its vec already.
+# copied, so two outputs restored from one state do not share a buffer, and a
+# later write to the state cannot reach the output.
 #must_use
 fn svara_render_output_restore(st) {
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
+    if (SvRenderOutputState_samples(st) == 0) { return SVARA_ERR_COMPUTATION; }
     var p = svara_render_progress_new(SvRenderOutputState_phoneme_index(st),
       SvRenderOutputState_total_phonemes(st), SvRenderOutputState_samples_rendered(st));
-    return svara_render_output_new(SvRenderOutputState_samples(st), p);
+    return svara_render_output_new(svara_vec_copy(SvRenderOutputState_samples(st)), p);
 }
 
 # ================================================================
@@ -94,31 +97,48 @@ fn svara_render_output_restore(st) {
 struct SvBatchRendererState {
     events: Vec<SvPhonemeEvent>;
     sample_rate: f64; noise_state: i64; noise_inc: i64;
+    glottal: Vec<SvGlottalState>; tract: Vec<SvVocalTractState>;
 }
 
-# save -- snapshot a BatchRenderer into its serializable form. The event vec is
-# referenced, not copied: events are immutable value objects here.
+# save -- snapshot a BatchRenderer into its serializable form. The queue and its
+# events are copied. Before 3.6.3 the state held the live queue, so
+# svara_batch_extend(r, svara_batch_save(r)) walked a vec it was appending to.
+# Copying also keeps the state from changing as the renderer drains.
 #must_use
 fn svara_batch_save(r) {
     var st = alloc(sizeof(SvBatchRendererState));
-    SvBatchRendererState_set_events(st, SvBatchRenderer_events(r));
+    SvBatchRendererState_set_events(st, svara_phoneme_events_copy(SvBatchRenderer_events(r)));
     SvBatchRendererState_set_sample_rate(st, SvBatchRenderer_sample_rate(r));
     var n = SvSynthCtx_noise(SvBatchRenderer_ctx(r));
     SvBatchRendererState_set_noise_state(st, SvRng_state(n));
     SvBatchRendererState_set_noise_inc(st, SvRng_inc(n));
+    SvBatchRendererState_set_glottal(st, svara_synthctx_glottal_states(SvBatchRenderer_ctx(r)));
+    SvBatchRendererState_set_tract(st, svara_synthctx_tract_states(SvBatchRenderer_ctx(r)));
     return st;
 }
 
 # restore -- rebuild a BatchRenderer from a state snapshot plus its voice.
-# Returns a renderer pointer or a negative SVARA_ERR_*.
+# Refuses a null state, a missing queue, and an event whose phoneme, stress or tone
+# is outside its enum. Returns a renderer pointer or a negative SVARA_ERR_*.
 #must_use
 fn svara_batch_restore(st, voice) {
+    if (st == 0) { return SVARA_ERR_COMPUTATION; }
+    var evs = SvBatchRendererState_events(st);
+    if (svara_vec_all_set(evs) == 0) { return SVARA_ERR_COMPUTATION; }
+    var ev = 0;
+    while (ev < vec_len(evs)) {
+        if (svara_phoneme_event_is_valid(vec_get(evs, ev)) == 0) { return SVARA_ERR_COMPUTATION; }
+        ev = ev + 1;
+    }
     var r = svara_batch_new(voice, SvBatchRendererState_sample_rate(st));
     if (svara_is_err(r) == 1) { return r; }
-    SvBatchRenderer_set_events(r, SvBatchRendererState_events(st));
+    SvBatchRenderer_set_events(r, svara_phoneme_events_copy(SvBatchRendererState_events(st)));
     var n = SvSynthCtx_noise(SvBatchRenderer_ctx(r));
     SvRng_set_state(n, SvBatchRendererState_noise_state(st));
     SvRng_set_inc(n, SvBatchRendererState_noise_inc(st));
+    var gs = SvBatchRendererState_glottal(st);
+    var e = svara_synthctx_install(SvBatchRenderer_ctx(r), gs, SvBatchRendererState_tract(st));
+    if (svara_is_err(e) == 1) { return e; }
     return r;
 }
 
@@ -146,9 +166,12 @@ fn svara_batch_push(r, phoneme, duration, stress) {
 }
 # extend -- append a vec of pre-built phoneme events to the batch queue.
 fn svara_batch_extend(r, events) {
+    # Copies, as Rust's extend_from_slice does, and counts first: extending a
+    # renderer from its own queue used to loop until the vec hit its cap.
     var dst = SvBatchRenderer_events(r);
+    var n = vec_len(events);
     var i = 0;
-    while (i < vec_len(events)) { vec_push(dst, vec_get(events, i)); i = i + 1; }
+    while (i < n) { vec_push(dst, svara_phoneme_event_copy(vec_get(events, i))); i = i + 1; }
 }
 # clear -- drop all queued events (reuse the renderer for a fresh utterance).
 fn svara_batch_clear(r) { SvBatchRenderer_set_events(r, vec_new()); }
@@ -164,6 +187,7 @@ fn svara_batch_is_empty(r) {
 
 # render_with_progress -- render all queued phonemes; if `cb` != 0, invoke
 # callptr(cb, user, progress) after each phoneme. Returns RenderOutput or neg error.
+# The callback's own return value is ignored.
 #must_use
 fn svara_batch_render_with_progress(r, cb, user) {
     var events = SvBatchRenderer_events(r);
@@ -194,11 +218,14 @@ fn svara_batch_render_with_progress(r, cb, user) {
         var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, dur, vec_get(nasals, i));
         if (svara_is_err(n) == 1) { return n; }
         var buf = svara_synthctx_buffer(ctx);
+        # A vec holds at most SV_MAX_SAMPLES; past it vec_push ends the process.
+        if (n > SV_MAX_SAMPLES - vec_len(output)) { return SVARA_ERR_COMPUTATION; }
         var j = 0;
         while (j < n) { vec_push(output, load64(buf + j * 8)); j = j + 1; }
         if (cb != 0) {
+            # Rust's callback returns (), so what this one returns is ignored: it
+            # cannot fail or cancel the render.
             var cbr = callptr(cb, user, svara_render_progress_new(i + 1, total, vec_len(output)));
-            if (cbr < 0) { return cbr; }
         }
         i = i + 1;
     }

@@ -5,7 +5,8 @@
 # stored f32 magnitudes; the port keeps f64 -- within tolerance parity).
 #
 # Requires (from the build/test unit, in order): stdlib alloc/vec/math/ganita/result,
-# error.cyr, and hisab (lib/hisab.cyr). serde is not on Spectrum in Rust; none added.
+# error.cyr, and hisab (lib/hisab.cyr). Rust's Spectrum has no serde; the port derives
+# it anyway (3.3.0), since it is flat.
 #
 # Sample/magnitude buffers are stdlib vecs holding one f64 bit pattern per slot.
 
@@ -17,7 +18,7 @@ var SV_TENTH = 0x3FB999999999999A;   # 0.1 (estimate_formants peak threshold fac
 #   freq_resolution : Hz per bin
 #   sample_rate     : Hz
 # ================================================================
-# serde: derived (3.2.1). Every field is already flat -- a `Vec<f64>` and two
+# serde: derived (3.3.0). Every field is already flat -- a `Vec<f64>` and two
 # scalars -- so Spectrum needs no state companion, unlike the engine objects in
 # docs/adr/0002-serialization-boundary.md. It only needed the annotations.
 #derive(accessors)
@@ -91,13 +92,104 @@ fn svara_spectrum_peak_in_range(self, lo_hz, hi_hz, out) {
     return 1;
 }
 
+# Grow-only scratch. Each spectral query used to allocate its working buffers
+# per call, and the bump allocator never frees: metering with rms_level grew
+# about 1.3 GB an hour. One buffer per use serves every call.
+var _sv_spec_sq = 0;
+var _sv_spec_sq_cap = 0;
+var _sv_spec_pk = 0;
+var _sv_spec_pk_cap = 0;
+var _sv_spec_fft = 0;
+var _sv_spec_fft_cap = 0;
+
+# Scratch of at least n f64 slots for sum_squares, or 0 if it cannot grow.
+#must_use
+fn svara_spectral_sq_scratch(n) {
+    if (_sv_spec_sq_cap < n) {
+        var b = svara_alloc_samples(n);
+        if (b == 0) { return 0; }
+        _sv_spec_sq = b;
+        _sv_spec_sq_cap = n;
+    }
+    return _sv_spec_sq;
+}
+
+# Slots per peak array for a spectrum of `bins` bins. A local maximum needs a
+# strictly lower bin on each side, so there are at most bins/2 of them. Sizing by
+# the bin count instead refused the scratch for analyze's own output above 2^26
+# bins, and the process ended on a valid spectrum.
+#must_use
+fn svara_spectral_peak_slots(bins) { return bins / 2 + 1; }
+
+# Scratch of four arrays of svara_spectral_peak_slots(bins) slots each, for
+# estimate_formants, or 0 if it cannot grow.
+#must_use
+fn svara_spectral_peak_scratch(bins) {
+    var n = svara_spectral_peak_slots(bins);
+    if (_sv_spec_pk_cap < n) {
+        if (n > SV_MAX_SAMPLES / 4) { return 0; }
+        var b = svara_alloc_samples(n * 4);
+        if (b == 0) { return 0; }
+        _sv_spec_pk = b;
+        _sv_spec_pk_cap = n;
+    }
+    return _sv_spec_pk;
+}
+
+# 1 if pair a sorts strictly before pair b: magnitude descending (by_freq 0) or
+# frequency ascending (by_freq 1), as Rust's two sort_by keys.
+#must_use
+fn svara_spectral_before(pf, pm, a, b, by_freq) {
+    if (by_freq == 1) { return f64_lt(load64(pf + a * 8), load64(pf + b * 8)); }
+    return f64_gt(load64(pm + a * 8), load64(pm + b * 8));
+}
+
+# Stable bottom-up merge sort of n (freq, mag) pairs held in pf / pm, using tf /
+# tm as working space. Rust sorts the same pairs with the stable sort_by, and a
+# peak is never NaN (it must beat both neighbours), so the order is total and
+# this reproduces Rust's, ties included. O(n log n): the selection sorts it
+# replaces took 24.7 s on a 2^20 frame.
+fn svara_spectral_sort_pairs(pf, pm, tf, tm, n, by_freq) {
+    var width = 1;
+    var sf = pf; var sm = pm; var df = tf; var dm = tm;
+    while (width < n) {
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + width;
+            if (mid > n) { mid = n; }
+            var hi = lo + width * 2;
+            if (hi > n) { hi = n; }
+            var i = lo; var j = mid; var k = lo;
+            while (k < hi) {
+                var take_right = 0;
+                if (i >= mid) { take_right = 1; }
+                elif (j < hi) { take_right = svara_spectral_before(sf, sm, j, i, by_freq); }
+                if (take_right == 1) {
+                    store64(df + k * 8, load64(sf + j * 8)); store64(dm + k * 8, load64(sm + j * 8)); j = j + 1;
+                } else {
+                    store64(df + k * 8, load64(sf + i * 8)); store64(dm + k * 8, load64(sm + i * 8)); i = i + 1;
+                }
+                k = k + 1;
+            }
+            lo = hi;
+        }
+        var xf = sf; var xm = sm; sf = df; sm = dm; df = xf; dm = xm;
+        width = width * 2;
+    }
+    if (sf != pf) {
+        var c = 0;
+        while (c < n) { store64(pf + c * 8, load64(sf + c * 8)); store64(pm + c * 8, load64(sm + c * 8)); c = c + 1; }
+    }
+    return 0;
+}
+
 # sum of squared magnitudes over [lo, hi) via Neumaier compensated summation.
 #must_use
 fn svara_spectral_sum_squares(mags, lo, hi) {
     var n = hi - lo;
     if (n <= 0) { return 0; }
-    var buf = svara_alloc_samples(n);
-    if (buf == 0) { return 0; }
+    var buf = svara_spectral_sq_scratch(n);
+    if (buf == 0) { svara_alloc_refused(); }
     var i = 0;
     while (i < n) {
         var m = vec_get(mags, lo + i);
@@ -146,10 +238,13 @@ fn svara_spectrum_estimate_formants(self, max_formants) {
     var threshold = f64_mul(max_mag, SV_TENTH);
 
     # collect local maxima into parallel freq/mag buffers
-    var pf = svara_alloc_samples(len);
-    var pm = svara_alloc_samples(len);
-    if (pf == 0) { return result; }
-    if (pm == 0) { return result; }
+    var scratch = svara_spectral_peak_scratch(len);
+    if (scratch == 0) { svara_alloc_refused(); }
+    var slots = svara_spectral_peak_slots(len) * 8;
+    var pf = scratch;
+    var pm = scratch + slots;
+    var tf = scratch + slots * 2;
+    var tm = scratch + slots * 3;
     var pc = 0;
     var i = 1;
     while (i < len - 1) {
@@ -165,43 +260,12 @@ fn svara_spectrum_estimate_formants(self, max_formants) {
     }
     if (pc == 0) { return result; }
 
-    # selection sort by magnitude descending (swap freq + mag together)
-    var a = 0;
-    while (a < pc) {
-        var best = a;
-        var b = a + 1;
-        while (b < pc) {
-            if (f64_gt(load64(pm + b * 8), load64(pm + best * 8)) == 1) { best = b; }
-            b = b + 1;
-        }
-        if (best != a) {
-            var tf = load64(pf + a * 8); var tm = load64(pm + a * 8);
-            store64(pf + a * 8, load64(pf + best * 8)); store64(pm + a * 8, load64(pm + best * 8));
-            store64(pf + best * 8, tf); store64(pm + best * 8, tm);
-        }
-        a = a + 1;
-    }
-
-    # keep top N
+    # magnitude descending, keep the top N, then frequency ascending: Rust's order
+    svara_spectral_sort_pairs(pf, pm, tf, tm, pc, 0);
     var keep = pc;
     if (keep > max_formants) { keep = max_formants; }
-
-    # selection sort the kept prefix by frequency ascending
-    var c = 0;
-    while (c < keep) {
-        var lo = c;
-        var d = c + 1;
-        while (d < keep) {
-            if (f64_lt(load64(pf + d * 8), load64(pf + lo * 8)) == 1) { lo = d; }
-            d = d + 1;
-        }
-        if (lo != c) {
-            var tf2 = load64(pf + c * 8); var tm2 = load64(pm + c * 8);
-            store64(pf + c * 8, load64(pf + lo * 8)); store64(pm + c * 8, load64(pm + lo * 8));
-            store64(pf + lo * 8, tf2); store64(pm + lo * 8, tm2);
-        }
-        c = c + 1;
-    }
+    if (keep < 0) { keep = 0; }
+    svara_spectral_sort_pairs(pf, pm, tf, tm, keep, 1);
 
     var k = 0;
     while (k < keep) {
@@ -225,8 +289,13 @@ fn svara_spectral_analyze(samples, sample_rate) {
     if (fft_size <= 0) { return SVARA_ERR_COMPUTATION; }
     # HComplex is 16 bytes, so the usable ceiling is half SV_MAX_SAMPLES.
     if (fft_size > SV_MAX_SAMPLES / 2) { return SVARA_ERR_COMPUTATION; }
-    var data = alloc(fft_size * 16);
-    if (data == 0) { return SVARA_ERR_COMPUTATION; }
+    if (_sv_spec_fft_cap < fft_size) {
+        var grown = alloc(fft_size * 16);
+        if (grown == 0) { return SVARA_ERR_COMPUTATION; }
+        _sv_spec_fft = grown;
+        _sv_spec_fft_cap = fft_size;
+    }
+    var data = _sv_spec_fft;
 
     # window the first `len` samples into re; zero the imaginary parts + padding.
     var n = f64_from(len);

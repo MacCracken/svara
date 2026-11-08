@@ -29,6 +29,7 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 | [0006](0006-scope-boundaries.md) | Scope boundaries | Accepted |
 | [0007](0007-reject-nan-formant-parameters.md) | Reject NaN formant parameters, diverging from the oracle | Accepted |
 | [0008](0008-the-synthesis-core-stays-f64.md) | The synthesis core stays f64 | Accepted |
+| [0009](0009-what-the-3-6-3-audit-leaves-open.md) | What the 3.6.3 audit leaves open | Accepted |
 
 0003–0006 predate the Cyrius port (Rust v1.0.0) and were re-homed here from
 `docs/architecture/` on 2026-08-26; they are domain decisions and survive the port.

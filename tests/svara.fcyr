@@ -1,18 +1,983 @@
-# svara fuzz harness
+# svara.fcyr -- fuzz harness for the public API.
+#
+# Run: cyrius fuzz --poison tests/svara.fcyr
+#
+# `cyrius fuzz` compiles this file and runs it, so the harness makes its own input.
+# Each case is a block of fixed-seed bytes, decoded into hostile values for one
+# target group. A target checks only that the process survives: a crash, an abort,
+# a hang past the runner's deadline or a heap overrun (under --poison) fails the
+# run. What the results should BE is pinned in hardening.tcyr and the suites.
+#
+# Cases run in batches inside forked children. The bump allocator never frees, so a
+# fork returns the memory, and a failure names the batch to replay. A batch over its
+# memory budget fails too: a hosted CI runner has far less memory than a dev box.
+#
+# Rate times duration is a size the caller chooses, and a long render is not a
+# defect, so those stay small. Everything else gets the full hostile range.
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/logging.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
+include "src/bridge.cyr"
 
-# Fuzz driver — feeds generated input to the target and checks it never faults.
-fn fuzz_main(data, len) {
-    if (len == 0) { return 0; }
+var FZ_CASES = 2400;
+var FZ_BATCH = 200;
+var FZ_DATA_LEN = 2048;
+var FZ_GROUPS = 15;
+var FZ_BATCH_RSS_MAX_KIB = 2097152;   # 2 GiB
+
+var _fz_ptr = 0;
+var _fz_len = 0;
+var _fz_at = 0;
+var _fz_floats = 0;
+var _fz_ints = 0;
+var _fz_json = 0;
+
+# Next 64-bit word of the case, or 0 once it runs out.
+fn _fz_word() {
+    if (_fz_at + 8 > _fz_len) { return 0; }
+    var w = load64(_fz_ptr + _fz_at);
+    _fz_at = _fz_at + 8;
+    return w;
+}
+
+# A hostile float: usually one of the table, otherwise raw bits.
+fn _fz_f() {
+    var w = _fz_word();
+    var pick = (w >> 56) & 31;
+    if (pick < 16) { return load64(_fz_floats + pick * 8); }
+    return w;
+}
+
+# A hostile integer, for indices, enums and counts.
+fn _fz_i() {
+    var w = _fz_word();
+    return load64(_fz_ints + ((w >> 56) & 15) * 8);
+}
+
+# A small signed count, negatives included: for sizes the caller chooses.
+fn _fz_n(hi) {
+    var w = _fz_word();
+    return ((w >> 40) & 0xFFFF) % (hi + 3) - 2;
+}
+
+# A phoneme id: mostly valid, so the deep paths run, otherwise hostile.
+fn _fz_phoneme() {
+    var w = _fz_word();
+    if ((w & 3) == 0) { return load64(_fz_ints + ((w >> 56) & 15) * 8); }
+    return (w >> 8) % SVARA_PHONEME_COUNT;
+}
+
+# A sample rate: usually a real one, otherwise a value that must be refused.
+fn _fz_rate() {
+    var w = _fz_word();
+    var k = (w >> 56) % 14;
+    if (k == 0) { return f64_from(8000); }
+    if (k == 1) { return f64_from(16000); }
+    if (k == 2) { return f64_from(22050); }
+    if (k == 3) { return f64_from(44100); }
+    if (k == 4) { return f64_from(48000); }
+    if (k == 5) { return f64_from(96000); }
+    if (k == 6) { return 0x7FF8000000000000; }   # NaN
+    if (k == 7) { return 0x7FF0000000000000; }   # +Inf
+    if (k == 8) { return 0xFFF0000000000000; }   # -Inf
+    if (k == 9) { return 0x7FEFFFFFFFFFFFFF; }   # largest finite
+    if (k == 10) { return f64_neg(F64_ONE); }
+    if (k == 11) { return 0; }
+    if (k == 12) { return 1; }                   # smallest subnormal
+    return F64_ONE;
+}
+
+# A duration: hostile, but never long enough to make a render slow.
+fn _fz_dur() {
+    var w = _fz_word();
+    var k = (w >> 56) % 12;
+    if (k == 0) { return 0x7FF8000000000000; }
+    if (k == 1) { return 0x7FF0000000000000; }
+    if (k == 2) { return 0x7FEFFFFFFFFFFFFF; }
+    if (k == 3) { return f64_neg(F64_ONE); }
+    if (k == 4) { return 0; }
+    if (k == 5) { return 1; }
+    if (k == 6) { return 0x8000000000000000; }   # -0
+    if (k == 7) { return f64_div(F64_ONE, f64_from(1000)); }
+    if (k == 8) { return f64_div(F64_ONE, f64_from(200)); }
+    if (k == 9) { return f64_div(F64_ONE, f64_from(100)); }
+    return f64_div(F64_ONE, f64_from(50));
+}
+
+# A vec of up to max_len hostile floats.
+fn _fz_fvec(max_len) {
+    var n = ((_fz_word() >> 44) & 0xFF) % (max_len + 1);
+    var v = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(v, _fz_f()); i = i + 1; }
+    return v;
+}
+
+# A vec of up to max_len phoneme ids.
+fn _fz_pvec(max_len) {
+    var n = ((_fz_word() >> 44) & 0xFF) % (max_len + 1);
+    var v = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(v, _fz_phoneme()); i = i + 1; }
+    return v;
+}
+
+# A vec of up to max_len durations.
+fn _fz_dvec(max_len) {
+    var n = ((_fz_word() >> 44) & 0xFF) % (max_len + 1);
+    var v = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(v, _fz_dur()); i = i + 1; }
+    return v;
+}
+
+# A vec of up to max_len formants, each field hostile.
+fn _fz_formants(max_len) {
+    var n = ((_fz_word() >> 44) & 0xFF) % (max_len + 1);
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        var f = _fz_f();
+        var b = _fz_f();
+        vec_push(v, svara_formant_new(f, b, _fz_f()));
+        i = i + 1;
+    }
+    return v;
+}
+
+# A voice: a preset, sometimes with a hostile parameter set through its builder.
+fn _fz_voice() {
+    var w = _fz_word();
+    var v = svara_voice_new_male();
+    if ((w & 3) == 1) { v = svara_voice_new_female(); }
+    if ((w & 3) == 2) { v = svara_voice_new_child(); }
+    var k = (w >> 8) % 12;
+    if (k == 0) { v = svara_voice_with_f0(v, _fz_f()); }
+    if (k == 1) { v = svara_voice_with_breathiness(v, _fz_f()); }
+    if (k == 2) { v = svara_voice_with_vibrato_rate(v, _fz_f()); }
+    if (k == 3) { v = svara_voice_with_vibrato_depth(v, _fz_f()); }
+    if (k == 4) { v = svara_voice_with_jitter(v, _fz_f()); }
+    if (k == 5) { v = svara_voice_with_shimmer(v, _fz_f()); }
+    if (k == 6) { v = svara_voice_with_formant_scale(v, _fz_f()); }
+    if (k == 7) { v = svara_voice_with_f0_range(v, _fz_f()); }
+    if (k == 8) { v = svara_voice_with_bandwidth_widening(v, _fz_f()); }
+    if (k == 9) { v = svara_voice_with_effort(v, _fz_i()); }
+    return v;
+}
+
+# A sequence of up to six events, every field hostile.
+fn _fz_sequence() {
+    var s = svara_sequence_new();
+    var n = _fz_n(6);
+    var i = 0;
+    while (i < n) {
+        var p = _fz_phoneme();
+        var d = _fz_dur();
+        var st = _fz_i();
+        if ((_fz_word() & 1) == 0) { svara_sequence_push(s, svara_phoneme_event_new(p, d, st)); }
+        else { svara_sequence_push(s, svara_phoneme_event_with_tone(p, d, st, _fz_i())); }
+        i = i + 1;
+    }
+    var w = _fz_word();
+    if ((w & 1) == 1) { svara_sequence_set_transition_window(s, _fz_f()); }
+    if ((w & 2) == 2) { svara_sequence_set_lookahead_onset(s, _fz_f()); }
+    if ((w & 4) == 4) { svara_sequence_set_speaking_rate(s, _fz_f()); }
+    return s;
+}
+
+# Take a result the fuzz has no use for.
+fn _fz_keep(x) { return x; }
+
+# Phoneme synthesis, one-shot and nasalized.
+fn _fz_group_phoneme() {
+    var p = _fz_phoneme();
+    var v = _fz_voice();
+    var r = _fz_rate();
+    _fz_keep(svara_phoneme_synthesize(p, v, r, _fz_dur()));
+    var nz = svara_nasalization_for_nasal(_fz_phoneme());
+    if (nz != 0) {
+        var w = _fz_word();
+        if ((w & 1) == 1) { SvNasalization_set_onset(nz, _fz_f()); }
+        if ((w & 2) == 2) { SvNasalization_set_peak_coupling(nz, _fz_f()); }
+        if ((w & 4) == 4) { SvNasalization_set_place(nz, _fz_i()); }
+    }
+    _fz_keep(svara_phoneme_synthesize_nasalized(p, v, r, _fz_dur(), nz));
     return 0;
 }
 
-# Fuzz entry point — drives the harness below.
+# Voice profiles, effort and the glottal sources they create.
+fn _fz_group_voice() {
+    var v = _fz_voice();
+    var e = _fz_i();
+    _fz_keep(svara_effort_params(e));
+    var r = _fz_rate();
+    var g = svara_voice_create_glottal_source(v, r);
+    var i = 0;
+    if (svara_is_err(g) == 0) { while (i < 32) { _fz_keep(svara_glottal_next_sample(g)); i = i + 1; } }
+    var g2 = svara_voice_create_glottal_source_with_effort(v, e, r);
+    i = 0;
+    if (svara_is_err(g2) == 0) { while (i < 32) { _fz_keep(svara_glottal_next_sample(g2)); i = i + 1; } }
+    var t = svara_vowel_target_from_vowel(_fz_i());
+    if (t != 0) {
+        _fz_keep(svara_voice_apply_formant_scale(v, t));
+        _fz_keep(svara_voice_apply_formant_scale_with_effort(v, t, e));
+    }
+    _fz_keep(svara_phoneme_synthesize(_fz_phoneme(), v, f64_from(16000), f64_div(F64_ONE, f64_from(100))));
+    return 0;
+}
+
+# The glottal source: construction, every setter, save and restore.
+fn _fz_group_glottal() {
+    var g = svara_glottal_new(_fz_f(), _fz_rate());
+    if (svara_is_err(g) == 1) { return 0; }
+    var w = _fz_word();
+    if ((w & 1) != 0) { _fz_keep(svara_glottal_set_f0(g, _fz_f())); }
+    if ((w & 2) != 0) { svara_glottal_set_breathiness(g, _fz_f()); }
+    if ((w & 4) != 0) { svara_glottal_set_open_quotient(g, _fz_f()); }
+    if ((w & 8) != 0) { svara_glottal_set_speed_quotient(g, _fz_f()); }
+    if ((w & 16) != 0) { svara_glottal_set_jitter(g, _fz_f()); }
+    if ((w & 32) != 0) { svara_glottal_set_shimmer(g, _fz_f()); }
+    if ((w & 64) != 0) { svara_glottal_set_spectral_tilt(g, _fz_f()); }
+    if ((w & 128) != 0) { svara_glottal_set_diplophonia(g, _fz_f()); }
+    if ((w & 256) != 0) { svara_glottal_set_model(g, _fz_i()); }
+    if ((w & 512) != 0) { _fz_keep(svara_glottal_set_rd(g, _fz_f())); }
+    if ((w & 1024) != 0) { svara_glottal_set_whisper(g); }
+    if ((w & 2048) != 0) { svara_glottal_set_creaky(g, _fz_f()); }
+    if ((w & 4096) != 0) { svara_glottal_set_vibrato(g, _fz_f(), _fz_f()); }
+    var i = 0;
+    while (i < 64) { _fz_keep(svara_glottal_next_sample(g)); i = i + 1; }
+    var h = svara_glottal_restore(svara_glottal_save(g));
+    i = 0;
+    if (svara_is_err(h) == 0) { while (i < 16) { _fz_keep(svara_glottal_next_sample(h)); i = i + 1; } }
+    return 0;
+}
+
+# The vocal tract: every setter, formants, quality, synthesis.
+fn _fz_group_tract() {
+    var t = svara_tract_new(_fz_rate());
+    if (svara_is_err(t) == 1) { return 0; }
+    var w = _fz_word();
+    if ((w & 1) != 0) { svara_tract_set_nasal_coupling(t, _fz_f()); }
+    if ((w & 2) != 0) { svara_tract_set_lip_radiation(t, _fz_f()); }
+    if ((w & 4) != 0) { svara_tract_set_nasal_place(t, _fz_i()); }
+    if ((w & 8) != 0) { svara_tract_set_interaction_strength(t, _fz_f()); }
+    if ((w & 16) != 0) { svara_tract_set_subglottal_coupling(t, _fz_f()); }
+    if ((w & 32) != 0) { svara_tract_set_gain(t, _fz_f()); }
+    if ((w & 64) != 0) { svara_tract_set_quality(t, _fz_i()); }
+    if ((w & 128) != 0) { _fz_keep(svara_tract_set_vowel(t, _fz_i())); }
+    if ((w & 256) != 0) { _fz_keep(svara_tract_set_formants(t, _fz_formants(8))); }
+    var i = 0;
+    while (i < 32) { _fz_keep(svara_tract_process_sample(t, _fz_f())); i = i + 1; }
+    var g = svara_glottal_new(f64_from(120), svara_tract_sample_rate(t));
+    if (svara_is_err(g) == 0) { _fz_keep(svara_tract_synthesize(t, g, _fz_n(512))); }
+    var t2 = svara_tract_restore(svara_tract_save(t));
+    if (svara_is_err(t2) == 0) { _fz_keep(svara_tract_process_sample(t2, F64_HALF)); }
+    svara_tract_reset(t);
+    return 0;
+}
+
+# Formants, vowel targets, the filter, the bank and the DC blocker.
+fn _fz_group_formant() {
+    var r = _fz_rate();
+    var fv = _fz_formants(9);
+    _fz_keep(svara_formant_validate(fv, r));
+    var ff = svara_formant_filter_new(fv, r);
+    var i = 0;
+    if (svara_is_err(ff) == 0) {
+        while (i < 32) { _fz_keep(svara_formant_filter_process_sample(ff, _fz_f())); i = i + 1; }
+        _fz_keep(svara_formant_filter_update(ff, _fz_formants(9)));
+        _fz_keep(svara_formant_filter_process_sample(ff, F64_ONE));
+    }
+    var bank_f = svara_vowel_target_to_formants(svara_vowel_target_from_vowel(0));
+    var bank = svara_formant_bank_new(bank_f, f64_from(44100));
+    if (svara_is_err(bank) == 0) {
+        var bi = _fz_i();
+        var bf = _fz_f();
+        var bb = _fz_f();
+        svara_formant_bank_update(bank, bi, bf, bb, _fz_f(), r);
+        _fz_keep(svara_formant_bank_process(bank, _fz_f()));
+    }
+    var a = svara_vowel_target_from_vowel(_fz_i());
+    var b = svara_vowel_target_from_vowel(_fz_i());
+    if ((a != 0) & (b != 0)) { _fz_keep(svara_vowel_target_interpolate(a, b, _fz_f())); }
+    var coeff = alloc(40);
+    var cf = _fz_f();
+    var cb = _fz_f();
+    svara_formant_biquad_coeffs(cf, cb, r, coeff);
+    var dc = svara_dc_blocker_new(r);
+    _fz_keep(svara_dc_blocker_process(dc, _fz_f()));
+    return 0;
+}
+
+# Sequences, plain and planned.
+fn _fz_group_sequence() {
+    var s = _fz_sequence();
+    if (f64_gt(svara_sequence_total_duration(s), 0.3) == 1) { return 0; }
+    var v = _fz_voice();
+    var r = _fz_rate();
+    if ((_fz_word() & 1) == 0) { _fz_keep(svara_sequence_render(s, v, r)); }
+    else { _fz_keep(svara_sequence_render_planned(s, v, r)); }
+    return 0;
+}
+
+# The pool and the synthesis context.
+fn _fz_group_pool() {
+    var v = _fz_voice();
+    var r = _fz_rate();
+    var p = svara_pool_new(v, r);
+    if ((_fz_word() & 1) == 1) { p = svara_pool_with_capacity(v, r, _fz_dur()); }
+    if (svara_is_err(p) == 1) { return 0; }
+    _fz_keep(svara_pool_render(p, _fz_phoneme(), v, _fz_dur()));
+    var nz = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+    SvNasalization_set_onset(nz, _fz_f());
+    _fz_keep(svara_pool_render_nasalized(p, _fz_phoneme(), v, _fz_dur(), nz));
+    _fz_keep(svara_pool_render_batch(p, _fz_pvec(4), _fz_dvec(4), v));
+    var c = svara_synthctx_new(v, r);
+    if (svara_is_err(c) == 0) { _fz_keep(svara_synthctx_synthesize(c, _fz_phoneme(), v, _fz_dur(), 0)); }
+    svara_pool_reset(p);
+    _fz_keep(svara_pool_restore(svara_pool_save(p), v));
+    return 0;
+}
+
+# The batch renderer, with save and restore.
+fn _fz_group_batch() {
+    var v = _fz_voice();
+    var b = svara_batch_new(v, _fz_rate());
+    if (svara_is_err(b) == 1) { return 0; }
+    var n = _fz_n(4);
+    var i = 0;
+    while (i < n) {
+        var p = _fz_phoneme();
+        var d = _fz_dur();
+        svara_batch_push(b, p, d, _fz_i());
+        i = i + 1;
+    }
+    if ((_fz_word() & 1) == 1) { svara_batch_extend(b, SvPhonemeSequence_events(_fz_sequence())); }
+    var total = 0;
+    var events = SvBatchRenderer_events(b);
+    i = 0;
+    while (i < vec_len(events)) { total = f64_add(total, SvPhonemeEvent_duration(vec_get(events, i))); i = i + 1; }
+    if (f64_le(total, 0.3) == 1) { _fz_keep(svara_batch_render_all(b)); }
+    _fz_keep(svara_batch_restore(svara_batch_save(b), v));
+    svara_batch_clear(b);
+    return 0;
+}
+
+# Spectral analysis and every query on a spectrum.
+fn _fz_group_spectrum() {
+    var samples = _fz_fvec(300);
+    _fz_keep(svara_spectral_rms_level(samples));
+    var s = svara_spectral_analyze(samples, _fz_rate());
+    if (svara_is_err(s) == 1) { return 0; }
+    _fz_keep(svara_spectrum_bin_frequency(s, _fz_i()));
+    _fz_keep(svara_spectrum_frequency_bin(s, _fz_f()));
+    _fz_keep(svara_spectrum_magnitude_at(s, _fz_f()));
+    var out = alloc(16);
+    var lo = _fz_f();
+    _fz_keep(svara_spectrum_peak_in_range(s, lo, _fz_f(), out));
+    _fz_keep(svara_spectrum_total_energy(s));
+    var blo = _fz_f();
+    _fz_keep(svara_spectrum_band_energy(s, blo, _fz_f()));
+    _fz_keep(svara_spectrum_estimate_formants(s, _fz_i()));
+    return 0;
+}
+
+# Prosody contours, tones, stress and boosts.
+fn _fz_group_prosody() {
+    var pts = vec_new();
+    var n = _fz_n(8);
+    var i = 0;
+    while (i < n) {
+        var t = _fz_f();
+        vec_push(pts, svara_pt_new(t, _fz_f()));
+        i = i + 1;
+    }
+    var d = _fz_f();
+    var c = svara_prosody_make(pts, d, _fz_f());
+    svara_prosody_sort_points(SvProsodyContour_f0_points(c));
+    _fz_keep(svara_prosody_f0_at(c, _fz_f()));
+    var pos = _fz_f();
+    var boost = _fz_f();
+    svara_prosody_insert_f0_boost(c, pos, boost, _fz_f());
+    var st = _fz_i();
+    svara_prosody_apply_stress(c, st, _fz_f());
+    _fz_keep(svara_prosody_f0_at(c, _fz_f()));
+    var pat = _fz_i();
+    var pc = svara_prosody_from_pattern(pat, _fz_f());
+    if (pc != 0) { _fz_keep(svara_prosody_f0_at(pc, _fz_f())); }
+    var tc = svara_tone_to_contour(_fz_i());
+    if (tc != 0) { _fz_keep(svara_prosody_f0_at(tc, _fz_f())); }
+    return 0;
+}
+
+# The trajectory planner, its queries, save and restore.
+fn _fz_group_trajectory() {
+    var v = _fz_voice();
+    var ph = _fz_pvec(5);
+    var t = svara_trajectory_plan(ph, _fz_dvec(5), v, _fz_rate());
+    if (svara_is_err(t) == 1) { return 0; }
+    if (t == 0) { return 0; }
+    _fz_keep(svara_trajectory_find_segment(t, _fz_i()));
+    _fz_keep(svara_trajectory_formants_at(t, _fz_i()));
+    svara_trajectory_apply_speaking_rate(t, _fz_f());
+    _fz_keep(svara_trajectory_formants_at(t, _fz_i()));
+    var t2 = svara_trajectory_restore(svara_trajectory_save(t));
+    if ((t2 != 0) & (svara_is_err(t2) == 0)) { _fz_keep(svara_trajectory_formants_at(t2, _fz_i())); }
+    return 0;
+}
+
+# All 19 bridge maps.
+fn _fz_group_bridge() {
+    _fz_keep(svara_bridge_rd_from_arousal(_fz_f()));
+    _fz_keep(svara_bridge_vibrato_depth_from_valence(_fz_f()));
+    _fz_keep(svara_bridge_breathiness_from_arousal(_fz_f()));
+    _fz_keep(svara_bridge_jitter_from_arousal(_fz_f()));
+    _fz_keep(svara_bridge_intonation_from_emotion(_fz_i()));
+    _fz_keep(svara_bridge_f0_range_scale_from_arousal(_fz_f()));
+    _fz_keep(svara_bridge_duration_scale_from_speech_rate(_fz_f()));
+    _fz_keep(svara_bridge_stress_from_tobi_accent(_fz_i()));
+    _fz_keep(svara_bridge_f0_peak_from_prominence(_fz_f()));
+    _fz_keep(svara_bridge_formant_scale_from_body_size(_fz_f()));
+    _fz_keep(svara_bridge_f0_from_body_size(_fz_f()));
+    _fz_keep(svara_bridge_jitter_from_age(_fz_f()));
+    var out = alloc(64);
+    _fz_keep(svara_bridge_glottal_model_from_effort(_fz_f(), out));
+    var rd = _fz_f();
+    _fz_keep(svara_bridge_gain_from_distance(rd, _fz_f()));
+    _fz_keep(svara_bridge_bandwidth_scale_from_reverb(_fz_f()));
+    _fz_keep(svara_bridge_spectral_tilt_from_distance(_fz_f()));
+    _fz_keep(svara_bridge_lombard_effort_from_noise(_fz_f()));
+    _fz_keep(svara_bridge_lombard_f0_shift(_fz_f()));
+    _fz_keep(svara_bridge_breathiness_reduction_from_wind(_fz_f()));
+    return 0;
+}
+
+# Table lookups by hostile id, smoothing, the RNG and the validators.
+fn _fz_group_tables() {
+    var p = _fz_i();
+    _fz_keep(svara_phoneme_class(p));
+    _fz_keep(svara_phoneme_is_voiced(p));
+    _fz_keep(svara_phoneme_coarticulation_resistance(p));
+    _fz_keep(svara_phoneme_formants(p));
+    _fz_keep(svara_phoneme_duration(p));
+    _fz_keep(svara_phoneme_spectral_tilt(p));
+    _fz_keep(svara_vot_for_plosive(p));
+    _fz_keep(svara_nasalization_for_nasal(p));
+    var amps = alloc(40);
+    svara_phoneme_height_adjusted_amplitudes(p, amps);
+    var out = alloc(16);
+    _fz_keep(svara_f2_locus_equation(p, out));
+    _fz_keep(svara_detect_nasalization(_fz_pvec(6)));
+    _fz_keep(svara_nasal_place_antiformant_frequency(_fz_i()));
+    var q = _fz_i();
+    _fz_keep(svara_quality_max_formants(q));
+    _fz_keep(svara_quality_use_nasal_coupling(q));
+    _fz_keep(svara_quality_use_subglottal(q));
+    _fz_keep(svara_quality_use_interaction(q));
+    _fz_keep(svara_quality_use_lip_radiation(q));
+    _fz_keep(svara_err_name(_fz_i()));
+    _fz_keep(svara_count_from_f64(_fz_f()));
+    _fz_keep(svara_validate_sample_rate(_fz_f()));
+    _fz_keep(svara_validate_duration(_fz_f()));
+    var r = _fz_f();
+    _fz_keep(svara_smooth_alpha_from_time(_fz_f(), r));
+    var init = _fz_f();
+    var sm = svara_smooth_with_time(init, _fz_f(), r);
+    svara_smooth_set_target(sm, _fz_f());
+    _fz_keep(svara_smooth_next(sm));
+    svara_smooth_set_immediate(sm, _fz_f());
+    _fz_keep(svara_smooth_value(sm));
+    var rg = svara_rng_new(_fz_word());
+    _fz_keep(svara_rng_next_u32(rg));
+    _fz_keep(svara_rng_next_f32(rg));
+    _fz_keep(svara_rng_next_f32_unsigned(rg));
+    return 0;
+}
+
+# A valid JSON document of one serialized type, into the scratch buffer.
+fn _fz_json_doc(kind) {
+    var sb = str_builder_new();
+    var r = 0;
+    if (kind == 0) { r = SvVoiceProfile_to_json(svara_voice_new_female(), sb); }
+    if (kind == 1) { r = SvFormant_to_json(svara_formant_new(f64_from(700), f64_from(90), F64_ONE), sb); }
+    if (kind == 2) { r = SvPhonemeSequence_to_json(_fz_sequence(), sb); }
+    if (kind == 3) { r = SvProsodyContour_to_json(svara_tone_to_contour(SVARA_TONE_RISING), sb); }
+    if (kind == 4) {
+        r = SvGlottalState_to_json(svara_glottal_save(svara_glottal_new(f64_from(120), f64_from(16000))), sb);
+    }
+    if (kind == 5) { r = SvVocalTractState_to_json(svara_tract_save(svara_tract_new(f64_from(16000))), sb); }
+    if (kind == 6) { r = SvRng_to_json(svara_rng_new(7), sb); }
+    if (kind == 7) {
+        var cx7 = svara_synthctx_new(svara_voice_new_male(), f64_from(16000));
+        r = SvSynthCtxState_to_json(svara_synthctx_save(cx7), sb);
+    }
+    var js = str_builder_build(sb);
+    var n = str_len(js);
+    if (n > FZ_DATA_LEN - 1) { n = FZ_DATA_LEN - 1; }
+    memcpy(_fz_json, str_data(js), n);
+    return n;
+}
+
+# A hostile number, as JSON text, written at `dst`. Returns its length.
+fn _fz_json_number(dst) {
+    var k = (_fz_word() >> 56) % 10;
+    var t = "0";
+    if (k == 1) { t = "-1"; }
+    if (k == 2) { t = "1e308"; }
+    if (k == 3) { t = "-1e308"; }
+    if (k == 4) { t = "1e-320"; }
+    if (k == 5) { t = "4294967296"; }
+    if (k == 6) { t = "9223372036854775807"; }
+    if (k == 7) { t = "-9223372036854775808"; }
+    if (k == 8) { t = "123456789012345678901234567890"; }
+    if (k == 9) { t = "-0.0"; }
+    var n = 0;
+    while (load8(t + n) != 0) { store8(dst + n, load8(t + n)); n = n + 1; }
+    return n;
+}
+
+# 1 if byte c can be part of a JSON number.
+fn _fz_numch(c) {
+    if ((c >= 48) & (c <= 57)) { return 1; }
+    if ((c == 45) | (c == 43) | (c == 46) | (c == 101) | (c == 69)) { return 1; }
+    return 0;
+}
+
+# Replace the k-th number of the document in _fz_json (length n) with a hostile one.
+# The result stays valid JSON. Returns the new length.
+fn _fz_json_swap_number(n, k) {
+    var count = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(_fz_json + i);
+        var starts = 0;
+        if (((c >= 48) & (c <= 57)) | (c == 45)) {
+            if (i > 0) {
+                var p = load8(_fz_json + i - 1);
+                if ((p == 58) | (p == 91) | (p == 44)) { starts = 1; }
+            }
+        }
+        if (starts == 1) {
+            if (count == k) {
+                var e = i;
+                while ((e < n) & (_fz_numch(load8(_fz_json + e)) == 1)) { e = e + 1; }
+                var tail = alloc(FZ_DATA_LEN);
+                var tl = n - e;
+                memcpy(tail, _fz_json + e, tl);
+                var w = _fz_json_number(_fz_json + i);
+                if (i + w + tl > FZ_DATA_LEN - 1) { return n; }
+                memcpy(_fz_json + i + w, tail, tl);
+                return i + w + tl;
+            }
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Rename the k-th key of the document to z's of the same length, so the field it
+# named goes missing. The result stays valid JSON.
+fn _fz_json_drop_key(n, k) {
+    var count = 0;
+    var i = 1;
+    while (i < n) {
+        if ((load8(_fz_json + i) == 58) & (load8(_fz_json + i - 1) == 34)) {
+            if (count == k) {
+                var q = i - 2;
+                while ((q > 0) & (load8(_fz_json + q) != 34)) { store8(_fz_json + q, 122); q = q - 1; }
+                return n;
+            }
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# A hostile byte for _fz_json_mangle: a bracket, a quote, a backslash, a separator,
+# whitespace, a control byte or a byte that starts a number or a literal.
+fn _fz_json_byte() {
+    var k = (_fz_word() >> 56) % 15;
+    if (k < 10) { return load8("}]{[\"\\,: \n" + k); }
+    if (k == 10) { return 26; }
+    if (k == 11) { return 48; }
+    if (k == 12) { return 45; }
+    if (k == 13) { return 101; }
+    return 110;
+}
+
+# Damage the document in _fz_json (length n) at byte level: insert or overwrite a
+# hostile byte, delete a byte, or cut the document short. Returns the new length.
+fn _fz_json_mangle(n) {
+    var w = _fz_word();
+    var at = 0;
+    if (n > 0) { at = (w >> 8) % n; }
+    var op = w & 3;
+    if ((op == 0) & (n < FZ_DATA_LEN - 2)) {
+        var i = n;
+        while (i > at) { store8(_fz_json + i, load8(_fz_json + i - 1)); i = i - 1; }
+        store8(_fz_json + at, _fz_json_byte());
+        return n + 1;
+    }
+    if ((op == 1) & (n > 0)) {
+        store8(_fz_json + at, _fz_json_byte());
+        return n;
+    }
+    if ((op == 2) & (n > 0)) {
+        var j = at;
+        while (j < n - 1) { store8(_fz_json + j, load8(_fz_json + j + 1)); j = j + 1; }
+        return n - 1;
+    }
+    return at;
+}
+
+# Damage eight fresh documents at byte level, and decode the ones svara_validate_json
+# accepts. cyrius 6.7.18's generated decoder hangs or reads past the end on some
+# damaged documents, which is why the check exists, so an accepted document that
+# hangs or faults here is a defect in the check. State types then go through
+# restore. A directly decoded type is only decoded: using one decoded from an
+# incomplete document is outside the contract ADR-0002 sets.
+fn _fz_json_mangled() {
+    var v = svara_voice_new_male();
+    var r = 0;
+    while (r < 8) {
+        var kind = (_fz_word() >> 56) % 8;
+        var n = _fz_json_doc(kind);
+        var edits = 1 + (_fz_word() >> 62);
+        var i = 0;
+        while (i < edits) { n = _fz_json_mangle(n); i = i + 1; }
+        store8(_fz_json + n, 0);
+        if (svara_validate_json(_fz_json) == SVARA_ERR_NONE) {
+            if (kind == 0) { _fz_keep(SvVoiceProfile_from_json_str(_fz_json)); }
+            if (kind == 1) { _fz_keep(SvFormant_from_json_str(_fz_json)); }
+            if (kind == 2) { _fz_keep(SvPhonemeSequence_from_json_str(_fz_json)); }
+            if (kind == 3) { _fz_keep(SvProsodyContour_from_json_str(_fz_json)); }
+            if (kind == 4) {
+                var gs = SvGlottalState_from_json_str(_fz_json);
+                if (gs != 0) {
+                    var g = svara_glottal_restore(gs);
+                    if (svara_is_err(g) == 0) { _fz_keep(svara_glottal_next_sample(g)); }
+                }
+            }
+            if (kind == 5) {
+                var ts = SvVocalTractState_from_json_str(_fz_json);
+                if (ts != 0) {
+                    var t = svara_tract_restore(ts);
+                    if (svara_is_err(t) == 0) { _fz_keep(svara_tract_process_sample(t, F64_HALF)); }
+                }
+            }
+            if (kind == 6) { _fz_keep(SvRng_from_json_str(_fz_json)); }
+            if (kind == 7) {
+                var cs = SvSynthCtxState_from_json_str(_fz_json);
+                if (cs != 0) {
+                    var cx = svara_synthctx_restore(cs, v);
+                    var cd = f64_div(F64_ONE, f64_from(100));
+                    if (svara_is_err(cx) == 0) { _fz_keep(svara_synthctx_synthesize(cx, SVARA_PH_VOWEL_A, v, cd, 0)); }
+                }
+            }
+        }
+        r = r + 1;
+    }
+    return 0;
+}
+
+# Decode a hostile but well-formed document, and use what comes back. State types
+# go through restore, which ADR-0002 makes the validating entry, so they also lose
+# fields. Directly decoded types only get hostile numbers: decoding an untrusted or
+# incomplete document of one is outside the contract ADR-0002 sets. Damaged
+# documents go through svara_validate_json first, in _fz_json_mangled.
+fn _fz_group_json() {
+    var kind = (_fz_word() >> 56) % 8;
+    var n = _fz_json_doc(kind);
+    var state = 0;
+    if ((kind == 4) | (kind == 5) | (kind == 7)) { state = 1; }
+    var edits = 1 + (_fz_word() >> 61);
+    var i = 0;
+    while (i < edits) {
+        var w = _fz_word();
+        if ((state == 1) & ((w & 3) == 0)) { n = _fz_json_drop_key(n, (w >> 8) % 32); }
+        else { n = _fz_json_swap_number(n, (w >> 8) % 48); }
+        i = i + 1;
+    }
+    store8(_fz_json + n, 0);
+    var v = svara_voice_new_male();
+    if (kind == 0) {
+        var vp = SvVoiceProfile_from_json_str(_fz_json);
+        if (vp != 0) {
+            _fz_keep(svara_phoneme_synthesize(SVARA_PH_VOWEL_A, vp, f64_from(16000), f64_div(F64_ONE, f64_from(100))));
+        }
+    }
+    if (kind == 1) {
+        var f = SvFormant_from_json_str(_fz_json);
+        if (f != 0) {
+            var fv = vec_new();
+            vec_push(fv, f);
+            _fz_keep(svara_formant_filter_new(fv, f64_from(16000)));
+        }
+    }
+    if (kind == 2) {
+        var s = SvPhonemeSequence_from_json_str(_fz_json);
+        if (s != 0) {
+            if (f64_le(svara_sequence_total_duration(s), 0.3) == 1) {
+                _fz_keep(svara_sequence_render(s, v, f64_from(16000)));
+            }
+        }
+    }
+    if (kind == 3) {
+        var c = SvProsodyContour_from_json_str(_fz_json);
+        if (c != 0) { _fz_keep(svara_prosody_f0_at(c, F64_HALF)); }
+    }
+    if (kind == 4) {
+        var gs = SvGlottalState_from_json_str(_fz_json);
+        if (gs != 0) {
+            var g = svara_glottal_restore(gs);
+            if (svara_is_err(g) == 0) { _fz_keep(svara_glottal_next_sample(g)); }
+        }
+    }
+    if (kind == 5) {
+        var ts = SvVocalTractState_from_json_str(_fz_json);
+        if (ts != 0) {
+            var t = svara_tract_restore(ts);
+            if (svara_is_err(t) == 0) { _fz_keep(svara_tract_process_sample(t, F64_HALF)); }
+        }
+    }
+    if (kind == 6) {
+        var rg = SvRng_from_json_str(_fz_json);
+        if (rg != 0) { _fz_keep(svara_rng_next_u32(rg)); }
+    }
+    if (kind == 7) {
+        var cs = SvSynthCtxState_from_json_str(_fz_json);
+        if (cs != 0) {
+            var cx = svara_synthctx_restore(cs, v);
+            if (svara_is_err(cx) == 0) {
+                _fz_keep(svara_synthctx_synthesize(cx, SVARA_PH_VOWEL_A, v, f64_div(F64_ONE, f64_from(100)), 0));
+            }
+        }
+    }
+    _fz_json_mangled();
+    return 0;
+}
+
+# Restore from a state whose fields were set to hostile values.
+fn _fz_group_restore() {
+    var k = (_fz_word() >> 56) % 4;
+    var v = svara_voice_new_male();
+    if (k == 0) {
+        var gs = svara_glottal_save(svara_glottal_new(f64_from(120), f64_from(16000)));
+        var w = _fz_word();
+        if ((w & 1) != 0) { SvGlottalState_set_model(gs, _fz_i()); }
+        if ((w & 2) != 0) { SvGlottalState_set_f0(gs, _fz_f()); }
+        if ((w & 4) != 0) { SvGlottalState_set_sample_rate(gs, _fz_f()); }
+        if ((w & 8) != 0) { SvGlottalState_set_phase(gs, _fz_f()); }
+        if ((w & 16) != 0) { SvGlottalState_set_current_period(gs, _fz_f()); }
+        if ((w & 32) != 0) { SvGlottalState_set_open_quotient(gs, _fz_f()); }
+        if ((w & 64) != 0) { SvGlottalState_set_rd(gs, _fz_f()); }
+        if ((w & 128) != 0) { SvGlottalState_set_vibrato_rate(gs, _fz_f()); }
+        if ((w & 256) != 0) { SvGlottalState_set_lfo_phase(gs, _fz_f()); }
+        if ((w & 512) != 0) { SvGlottalState_set_jitter(gs, _fz_f()); }
+        var g = svara_glottal_restore(gs);
+        var i = 0;
+        if (svara_is_err(g) == 0) { while (i < 32) { _fz_keep(svara_glottal_next_sample(g)); i = i + 1; } }
+    }
+    if (k == 1) {
+        var ts = svara_tract_save(svara_tract_new(f64_from(16000)));
+        var w2 = _fz_word();
+        if ((w2 & 1) != 0) { SvVocalTractState_set_sample_rate(ts, _fz_f()); }
+        if ((w2 & 2) != 0) { SvVocalTractState_set_quality(ts, _fz_i()); }
+        if ((w2 & 4) != 0) { SvVocalTractState_set_nasal_place(ts, _fz_i()); }
+        if ((w2 & 8) != 0) { SvVocalTractState_set_formants(ts, _fz_formants(9)); }
+        if ((w2 & 16) != 0) { SvVocalTractState_set_gain_current(ts, _fz_f()); }
+        if ((w2 & 32) != 0) { SvVocalTractState_set_interaction_feedback(ts, _fz_f()); }
+        var t = svara_tract_restore(ts);
+        var j = 0;
+        if (svara_is_err(t) == 0) { while (j < 32) { _fz_keep(svara_tract_process_sample(t, F64_HALF)); j = j + 1; } }
+    }
+    if (k == 2) {
+        var cs = svara_synthctx_save(svara_synthctx_new(v, f64_from(16000)));
+        SvSynthCtxState_set_sample_rate(cs, _fz_rate());
+        var cx = svara_synthctx_restore(cs, v);
+        if (svara_is_err(cx) == 0) { _fz_keep(svara_synthctx_synthesize(cx, _fz_phoneme(), v, _fz_dur(), 0)); }
+    }
+    if (k == 3) {
+        var tj = svara_trajectory_plan(_fz_pvec(4), _fz_dvec(4), v, f64_from(16000));
+        if ((tj != 0) & (svara_is_err(tj) == 0)) {
+            var st = svara_trajectory_save(tj);
+            SvTrajectoryState_set_total_samples(st, _fz_i());
+            var kps = SvTrajectoryState_keypoints(st);
+            if (vec_len(kps) > 0) {
+                SvKeypointState_set_time(vec_get(kps, 0), _fz_i());
+                SvKeypointState_set_f1(vec_get(kps, 0), _fz_f());
+            }
+            var t2 = svara_trajectory_restore(st);
+            if ((t2 != 0) & (svara_is_err(t2) == 0)) { _fz_keep(svara_trajectory_formants_at(t2, _fz_i())); }
+        }
+    }
+    return 0;
+}
+
+# One case: pick a group from the first word and run it on the rest.
+fn fuzz_main(data, len) {
+    if (len < 8) { return 0; }
+    _fz_ptr = data;
+    _fz_len = len;
+    _fz_at = 0;
+    var group = (_fz_word() >> 56) % FZ_GROUPS;
+    if (group == 0) { _fz_group_phoneme(); }
+    if (group == 1) { _fz_group_voice(); }
+    if (group == 2) { _fz_group_glottal(); }
+    if (group == 3) { _fz_group_tract(); }
+    if (group == 4) { _fz_group_formant(); }
+    if (group == 5) { _fz_group_sequence(); }
+    if (group == 6) { _fz_group_pool(); }
+    if (group == 7) { _fz_group_batch(); }
+    if (group == 8) { _fz_group_spectrum(); }
+    if (group == 9) { _fz_group_prosody(); }
+    if (group == 10) { _fz_group_trajectory(); }
+    if (group == 11) { _fz_group_bridge(); }
+    if (group == 12) { _fz_group_tables(); }
+    if (group == 13) { _fz_group_json(); }
+    if (group == 14) { _fz_group_restore(); }
+    return 0;
+}
+
+# The value tables a hostile word is drawn from.
+fn _fz_tables() {
+    _fz_floats = alloc(16 * 8);
+    store64(_fz_floats, 0);
+    store64(_fz_floats + 8, 0x8000000000000000);        # -0
+    store64(_fz_floats + 16, F64_ONE);
+    store64(_fz_floats + 24, f64_neg(F64_ONE));
+    store64(_fz_floats + 32, F64_HALF);
+    store64(_fz_floats + 40, f64_from(120));            # an f0
+    store64(_fz_floats + 48, f64_from(44100));
+    store64(_fz_floats + 56, 1);                         # smallest subnormal
+    store64(_fz_floats + 64, 0x7FEFFFFFFFFFFFFF);        # largest finite
+    store64(_fz_floats + 72, 0xFFEFFFFFFFFFFFFF);        # most negative finite
+    store64(_fz_floats + 80, 0x4202A05F20000000);        # 1e10
+    store64(_fz_floats + 88, 0x46293E5939A08CEA);        # 1e30
+    store64(_fz_floats + 96, 0x0010000000000000);        # smallest normal
+    store64(_fz_floats + 104, 0x7FF8000000000000);       # NaN
+    store64(_fz_floats + 112, 0x7FF0000000000000);       # +Inf
+    store64(_fz_floats + 120, 0xFFF0000000000000);       # -Inf
+
+    _fz_ints = alloc(16 * 8);
+    store64(_fz_ints, 0);
+    store64(_fz_ints + 8, 1);
+    store64(_fz_ints + 16, 2);
+    store64(_fz_ints + 24, 4);
+    store64(_fz_ints + 32, 8);
+    store64(_fz_ints + 40, 100);                         # the last phoneme id
+    store64(_fz_ints + 48, 101);                         # one past it
+    store64(_fz_ints + 56, 0 - 1);
+    store64(_fz_ints + 64, 0 - 8);
+    store64(_fz_ints + 72, 0 - 100000000);
+    store64(_fz_ints + 80, 0x7FFFFFFF);
+    store64(_fz_ints + 88, 0x100000000);
+    store64(_fz_ints + 96, 0x4000000000000001);
+    store64(_fz_ints + 104, 0x7FFFFFFFFFFFFFFF);
+    store64(_fz_ints + 112, 0x8000000000000000);
+    store64(_fz_ints + 120, 0x1000000000);
+    _fz_json = alloc(FZ_DATA_LEN);
+    return 0;
+}
+
+# xorshift64 over a case's bytes.
+fn _fz_fill(buf, n, seed) {
+    var x = seed * 0x9E3779B97F4A7C15 + 1;
+    var i = 0;
+    while (i + 8 <= n) {
+        x = x ^ (x << 13);
+        x = x ^ (x >> 7);
+        x = x ^ (x << 17);
+        store64(buf + i, x);
+        i = i + 8;
+    }
+    return 0;
+}
+
+# Run the cases [first, last) in a forked child. Returns its wait status, or 1 if
+# the batch went over its memory budget.
+fn _fz_batch(first, last) {
+    var pid = syscall(SYS_FORK);
+    if (pid == 0) {
+        var buf = alloc(FZ_DATA_LEN);
+        var c = first;
+        while (c < last) {
+            _fz_fill(buf, FZ_DATA_LEN, c);
+            fuzz_main(buf, FZ_DATA_LEN);
+            c = c + 1;
+        }
+        syscall(SYS_EXIT, 0);
+    }
+    var st[8];
+    var ru[144];
+    store64(&st, 0);
+    syscall(SYS_WAIT4, pid, &st, 0, &ru);
+    var status = load64(&st) & 0xFFFFFFFF;
+    if (status != 0) { return status; }
+    # ru_maxrss, the fifth word of struct rusage.
+    if (load64(&ru + 32) > FZ_BATCH_RSS_MAX_KIB) {
+        print_num(load64(&ru + 32));
+        println(" KiB resident: over the batch budget");
+        return 1;
+    }
+    return 0;
+}
+
+# Replay one case in this process, naming its group: `./svara-fuzz <case>`.
+fn _fz_replay(c) {
+    var buf = alloc(FZ_DATA_LEN);
+    _fz_fill(buf, FZ_DATA_LEN, c);
+    print_num(c);
+    println(": case");
+    print_num((load64(buf) >> 56) % FZ_GROUPS);
+    println(": group");
+    fuzz_main(buf, FZ_DATA_LEN);
+    println("survived");
+    return 0;
+}
+
+# Run every batch and report the first failure. With an argument, replay one case.
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
-    println("fuzz: ok");
+    _fz_tables();
+    args_init();
+    if (argc() >= 2) { return _fz_replay(atoi(argv(1))); }
+    var first = 0;
+    while (first < FZ_CASES) {
+        var st = _fz_batch(first, first + FZ_BATCH);
+        if (st != 0) {
+            print_num(first);
+            println(": first case of the failing batch");
+            print_num(st);
+            println(": its wait status");
+            return 1;
+        }
+        first = first + FZ_BATCH;
+    }
+    print_num(FZ_CASES);
+    println(" fuzz cases: ok");
     return 0;
 }
 
 var r = main();
-syscall(60, r);
+syscall(SYS_EXIT, r);

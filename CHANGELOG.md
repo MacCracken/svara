@@ -5,6 +5,205 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.3] - 2026-11-07 — the P(-1) sweep
+
+Audit and repair release. It is the first audit since 3.1.3 and the first ever run against the
+compiled Rust oracle. It found **39 defects and divergences**. **30 are repaired**: 1 P0, 4 P1, 13 P2
+and 12 P3. Each repair has a test that fails without it. **8 are recorded** in
+[ADR-0009](docs/adr/0009-what-the-3-6-3-audit-leaves-open.md), and **1 is upstream**, in the cyrius
+compiler's `#derive(Serialize)` decoder. The
+full report is [`docs/audit/2026-11-07-audit.md`](docs/audit/2026-11-07-audit.md).
+
+**Audio on valid input does not move.** `scripts/sweep/compare.py 3.6.2` compares 558,721 values
+and none moved. The JSON and hostile-input changes are named under Changed. **1,127 assertions / 23
+suites.** The toolchain stays cyrius 6.7.18 with the same deps, and the consumer floor stays 6.7.2.
+
+### How it was audited
+
+- **Six cluster audits against the oracle.** Each reader took a cluster of modules, read it line by
+  line against `git show 3.5.2:rust-old/src/…`, and reproduced every finding with a probe on both
+  sides, using the oracle built in a scratch copy. A finding without a reproduction was dropped.
+- **A real fuzz target.** `tests/svara.fcyr` replaces the scaffold stub with 15 groups over every
+  public entry, forked batches, and a replay mode. It started at 175 failures in 2,400 cases and
+  ends at 0. It passes `cyrius fuzz`, `--poison` and `--bounds`, and 24,000 cases run in 11 s.
+  Each JSON case also damages 8 documents byte by byte and decodes only what
+  `svara_validate_json` accepts. With the check removed, the run fails.
+- **Fault injection.** A scratch build refused the Nth allocation, once or from then on, across 14
+  pipelines, each run hashed against a clean one. Before the fixes, 8 of 3,050 cases gave a silent
+  wrong answer. On the release tree: 2,056 cases, **0 silent, 0 hangs**, and every one of the 1,840
+  faults is at the null page (`si_addr` ≤ 0x10). There are fewer cases because the optimizations
+  removed per-sample allocations, which left fewer allocations to refuse.
+- **An all-zero sweep.** All 290 public functions outside logging were called with every argument
+  0, which is what a lenient decoder returns for a missing field: 105 return, 184 fault at the null
+  page (≤ 0xb0), 1 exits by design, and 0 hang.
+- **Execution coverage** with `cyrius coverage --exec`, and **mutation proofs**: every fix's test
+  was run against the reverted code and had to fail.
+- **An independent review** of the merged diff, by a reader who saw none of the work. It found
+  two more defects in 3.6.2 and one gap, and it caught a P0 in this release's own work before it
+  shipped. A new peak scratch in `estimate_formants` was capped by bin count, so a valid
+  2²⁶+1-bin spectrum from `analyze` ended the process. It is now sized by the most peaks a
+  spectrum can have.
+
+### Fixed
+
+- **P0. A batch renderer extended from its own saved state never finished.** `svara_batch_save`
+  stored the live queue, so `svara_batch_extend(r, svara_batch_save(r))` walked a vec it was
+  appending to, until the capacity overflowed past 2 GiB.
+- **P1. A restored context, pool or batch renderer did not resume.** The states dropped the glottal
+  and tract state, while the header said they held nothing between calls. Every voiced phoneme
+  after a restore differed from the original. They now resume bit-exactly.
+- **P1. Retargeting a tract left stale upper formants.** After a six-to-eight-formant
+  `svara_tract_set_formants`, `set_vowel` and `set_formants_from_target` replaced only the first
+  five, and the bank kept ringing at the rest.
+- **P1. `svara_spectrum_estimate_formants` picked a different formant set on magnitude ties.** Its
+  selection sort was unstable and Rust's is stable. It is now a stable merge sort.
+- **P1. Objects kept pointers the caller still owned.** These were sequence push, batch extend,
+  save and restore, and render output save and restore. Two restores from one state shared a queue.
+  Each now copies at the boundary, as Rust does by moving or cloning.
+- **P2. `svara_formant_bank_update` wrote through an unbounded slot index.** It now returns
+  `SVARA_ERR_INVALID_FORMANT` outside `[0, 8)`.
+- **P2. Parallel vecs of different lengths aborted.** `svara_trajectory_plan` and
+  `svara_pool_render_batch` now return `SVARA_ERR_INVALID_DURATION`. Before, the plan ignored extra
+  durations when it did not abort.
+- **P2. Every `*_restore` faulted on a null state**, which is what a decoder returns for a malformed
+  document. Each now refuses a null state, a missing vec field and an out-of-range enum.
+- **P2. A rejected target was written into the tract's record**, so save captured formants the
+  filter did not have, and restore then refused the saved state.
+- **P2. `estimate_formants` was O(n²).** A 2²⁰-sample frame took 23,424 ms where Rust takes 6 ms.
+  It now takes 45 ms and returns the same formants.
+- **P2. Spectral queries leaked scratch on every call**, 8 KB per `svara_spectral_rms_level`, and
+  returned 0.0 once the arena ran out. The scratch is now grow-only.
+- **P2. A refused allocation gave a plausible answer** in 8 fault-injection cases: the spectral
+  queries returned 0.0 or an empty result, and `svara_prosody_f0_at` returned 1.0. Each now ends the
+  process.
+- **P2. The progress callback's return value was treated as an error code.** In Rust the callback
+  returns `()`, so a callback that happened to return a negative value stopped the render.
+- **P2. Concatenated output past `SV_MAX_SAMPLES` aborted in `vec_push`.** It now returns
+  `SVARA_ERR_COMPUTATION`.
+- **P2. An invalid phoneme id rendered as something.** Id -1 rendered as a vowel, and id 101 counted
+  as voiced.
+- **P2. `svara_formant_filter_update` took an infinite bandwidth or a NaN frequency**, and every
+  sample after it was NaN. ADR-0007's refusal now covers it too.
+- **P2. `svara_batch_restore` took out-of-range event enums.** Stress 7 restored and rendered as
+  unstressed. An event's phoneme, stress and tone are now checked.
+- **P3.** The fixes in this group are:
+  - The nasal place is recorded only once naad accepts it.
+  - An infinite bandwidth is refused, as ADR-0007 already said.
+  - Out-of-range enums are refused by restore and ignored by the setters. Before, glottal model 7
+    acted as LF and diplophonia phase 2 disabled it.
+  - `svara_prosody_make` copies its points.
+  - A one-keypoint `formants_at` no longer returns the plan's own target.
+  - Contour points sort stably.
+  - `SVARA_LOG=OFF` no longer turns logging on.
+  - `svara_ph_apply_envelope` guards a negative length.
+  - The spectral header and ADR-0002 no longer say `Spectrum` does not serialize.
+  - A restored render output, and a saved batch, no longer say in their comments that they share
+    the caller's vec.
+  - `tests/bridge.tcyr`'s range check passed a NaN, so its range assertions could not see one. It
+    now fails on NaN, and the suite asserts that it does.
+  - One envelope assertion could not fail. It looked at the wrong slot, and now checks all ten.
+
+### Changed
+
+- **New failure returns.** All of these used to crash, hang or give a wrong answer.
+  - `svara_formant_bank_update` returns an error code, and `svara_formant_filter_update` refuses a
+    non-finite formant.
+  - Two entries refuse mismatched parallel vecs.
+  - Restores refuse more, including a queued event's out-of-range phoneme, stress or tone.
+  - Synthesis refuses an invalid phoneme id or an infinite bandwidth.
+  - Concatenation past the sample cap returns an error.
+- **The context, pool and batch states gain `glottal` and `tract` fields**, each a vec of one state.
+  These are the 6 JSON lines that differ from 3.6.2. A 3.6.2 document has neither field and still
+  restores, starting the voice fresh as before. A vec longer than one is refused.
+- **Two hostile results move.** An infinite base f0 now returns `SVARA_ERR_INVALID_FORMANT` (-1)
+  where 3.6.2 returned `SVARA_ERR_ARTICULATION` (-5), and an infinite bandwidth is now refused.
+- **A refused allocation in a spectral query or `f0_at` ends the process.** It writes
+  `svara: allocation refused` to stderr and exits with status 1, the fail-stop that naad and goonj
+  already use.
+- **The progress callback's return value is ignored.**
+- **`SVARA_LOG` level names are case-insensitive.**
+
+### Refactored and optimized
+
+Everything here is bit-identical: `compare.py --old-tree` was run against a snapshot taken before
+the work began.
+
+- **Diphthongs stop allocating per sample.** A context diphthong goes from 3,881,120 to 353,200
+  bytes per second, and a nasalized one from 4,931,424 to 1,403,480.
+- **`svara_formant_filter_rebuild` zeroes only the unused slots.** `render_planned` retires 2.8%
+  fewer instructions and a toned render 2.35% fewer, with cycles flat.
+- **Duplicated bodies are gone.** `interpolate`, `to_formants`, `formants_at` and
+  `catmull_rom_vowel` now call their `_into` forms, `svara_smooth_new` calls `svara_smooth_with_time`,
+  and `svara_glottal_apply_rd` uses a module scratch.
+- **`tests/svara.bcyr`, the scaffold benchmark stub, is deleted.** `benches/` holds the real
+  benchmarks.
+- ⚠ **Net, `render_planned` is slower than 3.6.2**, at 3.1% more instructions, and a toned render
+  2.6% more, with cycles about the same. The stale-formant fix copies each sample's target into
+  the tract's record after validating it, which costs 4.3 points. That was measured against a
+  variant with the old write-in-place path. Every other probe is within 0.01%. Validating before
+  writing in place would recover it, and it is in roadmap 3.8.x.
+
+### Added
+
+- **[ADR-0009](docs/adr/0009-what-the-3-6-3-audit-leaves-open.md)** records what stays open:
+  - four divergences that shipped without an ADR, including hisab's shape-preserving cubic, up to
+    10.3% from Rust after stress;
+  - the diphthong glide, whose energy has been 7× to 69× Rust's since 3.1.0, now in roadmap 3.9.x;
+  - the policy for refused allocations;
+  - why decoding a document directly stays outside the contract.
+- **`svara_validate_json(doc)`** returns `SVARA_ERR_NONE` for a document svara's writer could have
+  produced, and `SVARA_ERR_COMPUTATION` for anything else. It refuses a string value, an escape,
+  a bracket that closes the wrong kind, whitespace inside the object, nesting past 16 levels, a
+  number longer than 32 bytes, and trailing content. Call it before decoding text svara did not
+  write (see Found upstream). It allocates nothing.
+- **[`docs/audit/2026-11-07-audit.md`](docs/audit/2026-11-07-audit.md)**, the audit report.
+- **`tests/integration.tcyr`** ports all 16 of the Rust integration tests, 10 of which were
+  missing, with 26 assertions.
+- **`tests/hardening.tcyr`** and **`tests/serde.tcyr`** pin every repair. The serde suite checks
+  mid-utterance resume bit-exactly and checks that a literal 3.6.2 document still restores.
+- **`scripts/sweep/compare.py --old-tree DIR`** compares against a directory instead of a git ref.
+
+### Found upstream
+
+- **The cyrius 6.7.18 derive decoder loops forever on a vec of structs holding a stray `}`.**
+  `<Name>_from_json_str` never returns on `[}]` in a `Vec<struct>` field. Five svara state companions have such a field,
+  and so do `SvPhonemeSequence` and `SvProsodyContour`. The hang comes before `restore` can
+  validate. The same decoder reads past the end of an unterminated key, which ghurni filed the same
+  day. Filed in the local cyrius repo as
+  `docs/development/issues/2026-11-07-derive-serialize-vec-struct-element-loop-hangs-on-stray-brace.md`.
+  The repro exits 3 on all four toolchains tried, from 6.6.0 to 6.7.18. bayan is not involved.
+  **svara guards both with `svara_validate_json`.** In a scratch probe, 70,000 byte-damaged
+  documents of the seven affected types gave 63,821 refusals, and the 6,179 accepted ones all
+  decoded with no hang or fault. Without the check, 303 of 7,000 hung.
+
+### Upgrading
+
+- **Check the return of `svara_formant_bank_update` and `svara_formant_filter_update`** if you call
+  them directly. The second now refuses a non-finite frequency or bandwidth.
+- **A saved batch whose events hold an out-of-range phoneme, stress or tone no longer restores.**
+- **A refused allocation in a spectral query or `f0_at` exits the process with status 1.** Before,
+  it returned a value that looked valid.
+- **Expect `SVARA_ERR_INVALID_DURATION`** from `svara_trajectory_plan` and
+  `svara_pool_render_batch` when the parallel vecs differ in length, and
+  **`SVARA_ERR_INVALID_PHONEME`** for a phoneme id outside the inventory.
+- **A pushed or extended event is a copy.** Changing it after the push no longer changes the
+  sequence or the batch. The same holds for prosody points, saved states and render outputs.
+- **Check untrusted JSON with `svara_validate_json` before decoding it,** then go through a state
+  companion and `restore`. Without the check, a damaged document can hang the decoder. The check
+  refuses valid JSON svara does not write, such as a pretty-printed document. Decoding a sequence
+  or contour directly is still not validated (ADR-0009).
+
+### Verified
+
+- `cyrius test tests`: 1,127 assertions in 23 suites. `cyrius audit` exits 0. `cyrius fuzz`,
+  `--poison` and `--bounds`: 2,400 cases each, 0 failures.
+- `cyrius coverage --exec`: 273 of 307 functions executed, up from 255 of 290. `cyrius deny`,
+  `distlib --check`, `deps --verify` and `--locked`, the logging gate and all 5 examples are clean.
+- `compare.py 3.6.2`: 558,721 values, 0 moved. 6 JSON lines differ and 2 hostile results changed,
+  all named above.
+- Fault injection on the release tree: 2,056 cases, 0 silent wrong answers, 0 hangs, every fault at
+  the null page.
+
 ## [3.6.2] - 2026-11-07 — the roadmap holds only what is left
 
 Cleanup release. **No code change:** every `src/` edit is a comment, and `build/svara` is
