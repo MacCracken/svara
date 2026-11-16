@@ -68,7 +68,7 @@ Either of:
 ## References
 
 - hoosh `docs/decisions/016-in-process-speech-through-svara.md` (decision 5, the lock) and `src/lib/svara_local.cyr`.
-- [`2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md`](../2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md) (filed with this).
+- [`2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md`](2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md) (filed with this).
 
 ## Resolution
 

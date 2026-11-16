@@ -5,6 +5,13 @@
 
 ## Version
 
+**3.8.0** (2026-11-16) — **a streaming sequence render.** `svara_sequence_render_into`
+renders a sequence on the caller's context and passes each sample to a sink as soon as
+no later crossfade can change it. The plan is `svara_sequence_render`'s, and on a warmed
+context it allocates nothing. It holds back the longest fade-in in the plan, because one
+can reach back past the previous phoneme. hoosh's issue is resolved, so no filed issue is
+open. No existing output moves. **1,286 assertions / 26 suites**, `cyrius audit` exit 0.
+
 **3.7.0** (2026-11-16) — **`rust-old/` is retired, and its bar kept**
 ([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)). The 36 tracked files and
 445 MB of build output are gone. The Rust stays readable at tag `3.6.5`, the last that
@@ -326,14 +333,14 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,239 `.tcyr` assertions across 25 suites: error / rng / smooth / lod / formant /
+1,286 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
-**allocrefused** / **concurrency** / **oracle** / **integration** / **logging** (+ the
-`svara.tcyr` smoke) — all passing, all lint-clean. One build warning, on purpose:
+**allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
+**logging** (+ the `svara.tcyr` smoke) — all passing, all lint-clean. One build warning, on purpose:
 `allocrefused.tcyr` redefines `alloc`, and cyrius reports the duplicate. Run one suite: `cyrius test tests/<mod>.tcyr`;
 the whole tree recursively: `cyrius test tests`. `tests/logging.tcyr` needs
-`./scripts/check-logging.sh` to be exercised with logging ON (58 more
+`./scripts/check-logging.sh` to be exercised with logging ON (51 more
 assertions), because `cyrius test` does not forward `-D`.
 
 Five of them are not plain parity ports and exist for reasons worth knowing:
@@ -354,10 +361,14 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   25 more in 3.6.5 when every one of its 210 `#[test]`s was mapped onto the suites. Every expected value is **re-derived from the Rust and cited by line**,
   never taken from running svara. **A suite that ports another suite inherits its
   blind spots** — `svara_tract_set_quality` appeared in no suite or bench at all.
-- **`logging.tcyr` (12 off / 58 on)** — the `-D LOGGING` contract. The OFF half
+- **`logging.tcyr` (15 off / 66 on)** — the `-D LOGGING` contract. The OFF half
   asserts the four instrumented entry points still behave identically, which is
   what proves the `#ifdef` blocks in their return paths changed nothing.
-- **`concurrency.tcyr` (12, 3.6.5)** — threads that share no object render at once.
+- **`stream.tcyr` (35, 3.8.0)** — `svara_sequence_render_into`, bit for bit against
+  `svara_seq_crossfade` over the segments a second context renders, including a
+  fade-in that reaches back past the previous phoneme. Its length is
+  `svara_sequence_render`'s, and every up-front refusal comes before any sample.
+- **`concurrency.tcyr` (15, 3.6.5)** — threads that share no object render at once.
   The filed repro (four threads, 4,000 renders), then the tract, glottal, prosody
   and spectral paths hammered from two or four threads, each result compared bit
   for bit with one computed alone. Against 3.6.4's source every check fails, up to
@@ -367,7 +378,7 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   measured counts, never by written-down indices. A refused naad allocation must
   come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
   source it reports 0 of 6 and `restore` ends the run.
-- **`allocbudget.tcyr` (44)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (49)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
@@ -398,13 +409,13 @@ All green on the 6.7.18 pin:
 
 | Gate | Command | Result |
 |---|---|---|
-| fmt | `cyrfmt --check <f>` | clean (45 files) |
+| fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 25/25 suites, 1,239 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,286 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
-| **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
+| **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |
 | **CI** | `.github/workflows/ci.yml` | runs audit · fuzz · deny · pin-check · distlib-current |
 | fuzz | `cyrius fuzz` (+ `--poison`, `--bounds`) | 2,400 cases in 15 groups over the public API, 0 failures in each mode; each JSON case also decodes 8 byte-damaged documents that `svara_validate_json` accepts; replay one with `./fz <case>` |
 | coverage | `cyrius coverage --exec` | 273/307 fns executed (88%); logging's 16 need `-D LOGGING`, `svara_alloc_refused` exits, and 17 others no suite enters |
@@ -574,8 +585,8 @@ returns an empty vec. Silently. Use `_from_json_str`.
 ## Next
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
-list here. **3.8.x is next**: performance, including the streaming sequence render
-hoosh's open issue asks for. 3.7.0 retired `rust-old/`, so a parity question is now
+list here. **3.8.x continues**: the bit-identical performance items, each measured
+on its own. 3.8.0 shipped the streaming sequence render, and no filed issue is open. 3.7.0 retired `rust-old/`, so a parity question is now
 asked of tag `3.6.5` ([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md) has the
 recipe). The 3.9.x items, the preserved Rust quirks, are such questions.
 

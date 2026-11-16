@@ -1,7 +1,7 @@
-# A server's render keeps what each phoneme allocates, and there is no streaming sequence render — PARTLY RESOLVED
+# A server's render keeps what each phoneme allocates, and there is no streaming sequence render — RESOLVED
 
-**Status:** 🟡 **PARTLY RESOLVED in 3.6.5**: fix 1 shipped, fixes 2 and 3 are open (see *Resolution so far* at the end)
-**Placement:** fix 1 in 3.6.5. Fixes 2 and 3 add public API, so they wait for a minor: roadmap 3.8.x, "A streaming sequence render".
+**Status:** ✅ **RESOLVED**: fix 1 in 3.6.5, fixes 2 and 3 in 3.8.0 (see *Resolution* at the end)
+**Placement:** 3.6.5 and 3.8.0.
 **Re-verified:** against 3.6.4 on 2026-11-16: every figure above is unchanged (696,280 bytes, 127 per sample; the per-phoneme table; 1,880 for `svara_synthctx_new`).
 **Where the fix would live:**
 - the per-class context renders: `svara_synthctx_fricative` (`src/phoneme.cyr:1382`), `svara_synthctx_plosive`
@@ -67,9 +67,9 @@ svara is the table above: 133,736 bytes for a 343-phoneme input, a third of the 
 - hoosh `docs/decisions/016-in-process-speech-through-svara.md` and `src/lib/svara_local.cyr`.
 - shabda `docs/development/issues/2026-11-11-conversion-allocates-on-the-default-heap.md` (the other half of what a
   speech request keeps).
-- [`archived/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md`](archived/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md) (filed with this; resolved in 3.6.5).
+- [`2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md`](2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md) (filed with this; resolved in 3.6.5).
 
-## Resolution so far
+## Resolution
 
 **Fix 1 shipped in 3.6.5.** A warmed context allocates nothing per phoneme. The
 context keeps its scaled target, the diphthong's end and interpolated targets, a
@@ -86,7 +86,27 @@ pass over every class (nasalized vowel and diphthong, both ejective releases and
 silence included), the second and third passes keep 0 bytes. Against 3.6.4's
 source they keep 12,616 each.
 
-**Fixes 2 and 3 are open.** `svara_sequence_render` still keeps about 127 bytes per
-output sample: it builds a source and tract per phoneme, and the crossfade copies.
-`svara_sequence_render_into` and the `_a` forms add public API, which this
-project releases in a minor, so they are on the roadmap under 3.8.x.
+**Fixes 2 and 3 shipped in 3.8.0**, as `svara_sequence_render_into(seq, voice, ctx,
+sink, user)`. It takes the voice as well, since each event renders with its own
+stressed f0, and the sample rate comes from the context.
+
+- **The plan is `svara_sequence_render`'s**, computed per event with no vec, which
+  is fix 3's "the plan computed into caller storage" without the storage. So the
+  `_a` forms were not needed. `svara_nasalization_for_nasal_into` writes a
+  nasalization into the context instead of building one per nasalized vowel.
+- **The samples** are `svara_seq_crossfade` over the segments the caller's context
+  renders, the composition hoosh's own copy computed. `tests/stream.tcyr` pins
+  them bit for bit across a sentence, a 40-event run, a single event, an event too
+  short for one sample, and two voices and rates.
+- **This issue's bound was not enough.** "A fade-in reaches back at most
+  `min(cf_prev, len)` samples" is true of each fade-in. But a fade-in can reach
+  back past the previous segment into the one before, whenever the crossfade floor
+  (the 0.05 s transition window, 2,205 samples at 44.1 kHz) is longer than a short
+  consonant. Holding back only the next crossfade changed 2,383 samples of the
+  test sentence after they had been sent. The stream holds back the longest
+  fade-in in the whole plan instead.
+- **Memory.** On a context that has streamed a sequence as long, a stream keeps 0
+  bytes (`tests/allocbudget.tcyr`). `svara_sequence_render` keeps 63 bytes a sample
+  on the same two-vowel sequence.
+- **Refusals come first.** An invalid phoneme, a bad duration or a stressed f0
+  out of range anywhere in the sequence is refused before the first sample.

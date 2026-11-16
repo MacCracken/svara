@@ -48,7 +48,7 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**25 suites, 1,239 assertions** at 3.6.5. One `.tcyr` per module, plus nine that
+**26 suites, 1,286 assertions** at 3.8.0. One `.tcyr` per module, plus ten that
 are not module ports:
 
 | Suite | What it is |
@@ -60,6 +60,7 @@ are not module ports:
 | `allocbudget.tcyr` | `_into`-variant equivalence, the per-sample arena budget, and a warmed context's zero bytes per phoneme |
 | `allocrefused.tcyr` | replaces the stdlib `alloc` and refuses each naad allocation behind a glottal source or tract; the one test build that warns, `duplicate fn 'alloc'`, on purpose |
 | `concurrency.tcyr` | threads that share no object render at once, compared bit for bit with renders done alone; needs the `thread` stdlib leaf |
+| `stream.tcyr` | the streaming sequence render, bit for bit against `svara_seq_crossfade` over a second context's segments |
 | `integration.tcyr` | the Rust integration tests, cross-module |
 | `oracle.tcyr` | scenarios the Rust asserted and the port did not — expectations re-derived from `rust-old/`, cited by line |
 | `logging.tcyr` | the `-D LOGGING` contract; run **both ways** by `scripts/check-logging.sh`, since `cyrius test` does not forward `-D` |

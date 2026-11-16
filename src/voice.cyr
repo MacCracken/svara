@@ -222,6 +222,22 @@ fn svara_voice_with_effort(self, effort) {
     return self;
 }
 
+# copy_into -- copy all nine fields of `src` into `dst` and return `dst`. The one
+# place a voice is copied, so svara_seq_voice_clone and a context's kept copy agree.
+#must_use
+fn svara_voice_copy_into(src, dst) {
+    SvVoiceProfile_set_base_f0(dst, SvVoiceProfile_base_f0(src));
+    SvVoiceProfile_set_f0_range(dst, SvVoiceProfile_f0_range(src));
+    SvVoiceProfile_set_formant_scale(dst, SvVoiceProfile_formant_scale(src));
+    SvVoiceProfile_set_breathiness(dst, SvVoiceProfile_breathiness(src));
+    SvVoiceProfile_set_vibrato_rate(dst, SvVoiceProfile_vibrato_rate(src));
+    SvVoiceProfile_set_vibrato_depth(dst, SvVoiceProfile_vibrato_depth(src));
+    SvVoiceProfile_set_jitter(dst, SvVoiceProfile_jitter(src));
+    SvVoiceProfile_set_shimmer(dst, SvVoiceProfile_shimmer(src));
+    SvVoiceProfile_set_bandwidth_widening(dst, SvVoiceProfile_bandwidth_widening(src));
+    return dst;
+}
+
 # ---- glottal-source construction ------------------------------------------
 # create_glottal_source -- GlottalSource from the profile. Returns ptr or neg error.
 #must_use

@@ -546,17 +546,31 @@ struct SvNasalization { onset: f64; peak_coupling: f64; place: i64; }
 # else 0 (null = Rust None). place maps to tract.cyr's SVARA_NASAL_*.
 #must_use
 fn svara_nasalization_for_nasal(nasal) {
-    var place = 0;
-    if (nasal == SVARA_PH_NASAL_M) { place = SVARA_NASAL_BILABIAL; }
-    elif ((nasal == SVARA_PH_NASAL_N) | (nasal == SVARA_PH_NASAL_RETRO)) { place = SVARA_NASAL_ALVEOLAR; }
-    elif ((nasal == SVARA_PH_NASAL_NG) | (nasal == SVARA_PH_NASAL_UVULAR)) { place = SVARA_NASAL_VELAR; }
-    elif (nasal == SVARA_PH_NASAL_PALATAL) { place = SVARA_NASAL_ALVEOLAR; }
-    else { return 0; }
-    var self = alloc(sizeof(SvNasalization));
-    SvNasalization_set_onset(self, SV_PH_R065);
-    SvNasalization_set_peak_coupling(self, SV_PH_R04);
-    SvNasalization_set_place(self, place);
-    return self;
+    if (svara_nasal_place_for(nasal) < 0) { return 0; }
+    return svara_nasalization_for_nasal_into(nasal, alloc(sizeof(SvNasalization)));
+}
+
+# for_nasal_into -- as for_nasal, written into `dst`, which it returns. For a
+# phoneme that is not a nasal it returns 0 and leaves `dst` alone.
+#must_use
+fn svara_nasalization_for_nasal_into(nasal, dst) {
+    var place = svara_nasal_place_for(nasal);
+    if (place < 0) { return 0; }
+    SvNasalization_set_onset(dst, SV_PH_R065);
+    SvNasalization_set_peak_coupling(dst, SV_PH_R04);
+    SvNasalization_set_place(dst, place);
+    return dst;
+}
+
+# nasal_place_for -- the SVARA_NASAL_* place a vowel before `nasal` anticipates,
+# or -1 when `nasal` is not a nasal consonant.
+#must_use
+fn svara_nasal_place_for(nasal) {
+    if (nasal == SVARA_PH_NASAL_M) { return SVARA_NASAL_BILABIAL; }
+    if ((nasal == SVARA_PH_NASAL_N) | (nasal == SVARA_PH_NASAL_RETRO)) { return SVARA_NASAL_ALVEOLAR; }
+    if ((nasal == SVARA_PH_NASAL_NG) | (nasal == SVARA_PH_NASAL_UVULAR)) { return SVARA_NASAL_VELAR; }
+    if (nasal == SVARA_PH_NASAL_PALATAL) { return SVARA_NASAL_ALVEOLAR; }
+    return 0 - 1;
 }
 
 # ================================================================
@@ -1250,11 +1264,15 @@ fn svara_phoneme_synthesize_nasalized(phoneme, voice, sample_rate, duration, nas
 # 3.6.4 each phoneme built its targets, and fricatives and bursts their filters,
 # afresh: 160 to 1,048 bytes a phoneme. None of it is state: each phoneme
 # overwrites what it reads, and the filters are re-initialized exactly as a new
-# one would be (svara_formant_filter_rebuild), so the output is unchanged.
+# one would be (svara_formant_filter_rebuild), so the output is unchanged. The
+# last four are svara_sequence_render_into's (3.8.0): the voice and nasalization
+# it renders each event with, and its pending output, which holds nothing between
+# calls.
 struct SvSynthCtx {
     tract; glottal; noise; fric_filter; buffer; buffer_cap; sample_rate;
     burst_filter; burst_formants; fric_formants; fric_fa; fric_fb;
     vt_raw; vt_target; vt_end; vt_cur;
+    seq_voice; seq_nasal; xf_buf; xf_cap;
 }
 
 # new -- build a context for a voice + sample rate. Returns ptr or neg error.
@@ -1281,6 +1299,12 @@ fn svara_synthctx_new(voice, sample_rate) {
     SvSynthCtx_set_vt_target(self, alloc(sizeof(SvVowelTarget)));
     SvSynthCtx_set_vt_end(self, alloc(sizeof(SvVowelTarget)));
     SvSynthCtx_set_vt_cur(self, alloc(sizeof(SvVowelTarget)));
+    # svara_sequence_render_into's kept voice, nasalization and pending output,
+    # built on its first use.
+    SvSynthCtx_set_seq_voice(self, 0);
+    SvSynthCtx_set_seq_nasal(self, 0);
+    SvSynthCtx_set_xf_buf(self, 0);
+    SvSynthCtx_set_xf_cap(self, 0);
     return self;
 }
 

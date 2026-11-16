@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.7.0"
+tag = "3.8.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -152,13 +152,42 @@ The per-sample synthesis path inside svara allocates nothing; that is pinned by
   class (`tests/allocbudget.tcyr` pins it). The first phoneme of a class builds
   what the context keeps for it, such as a frication filter. `svara_synthctx_new`
   is 2,280 bytes. Through 3.6.4 a warmed context kept 160 to 1,048 bytes a phoneme.
-- ⚠ `svara_sequence_render` still keeps about 127 bytes per output sample, and the
+- ⚠ `svara_sequence_render` keeps about 127 bytes per output sample, and the
   default allocator never frees. Each phoneme gets a new glottal source, tract and
   sample vector, and the crossfade builds another.
 
-A server that renders on every request should render through one context and
-crossfade on its own side. A streaming sequence render, which would make that
-unnecessary, is on the [roadmap](roadmap.md) (3.8.x).
+**A server should stream a sequence** with `svara_sequence_render_into` (3.8.0).
+It renders on a context you keep and hands the samples to your sink as soon as no
+later crossfade can change them. On a context that has already streamed a
+sequence as long, it allocates nothing (`tests/allocbudget.tcyr`):
+
+```
+# your sink: called with `count` final samples, valid only during the call
+fn my_sink(user, samples, count) {
+    write_pcm(user, samples, count);
+    return 0;                       # the return value is ignored
+}
+
+var ctx = svara_synthctx_new(voice, sr);   # once per worker, or per request
+var n = svara_sequence_render_into(seq, voice, ctx, &my_sink, conn);
+if (svara_is_err(n) == 1) { return n; }    # n: samples passed to the sink
+```
+
+- **The plan is `svara_sequence_render`'s**: the same stress pitch, durations,
+  nasalization, crossfade lengths and sigmoid crossfade. The length is the same
+  too. The samples differ, because each phoneme renders on your context, which
+  carries glottal and noise state from one phoneme to the next, rather than on a
+  fresh source and tract. `tests/stream.tcyr` pins the stream bit for bit against
+  `svara_seq_crossfade` over the segments the same context renders.
+- **It holds back at most one crossfade.** A fade-in can reach back past the
+  previous phoneme into the one before, whenever the transition window is longer
+  than a short consonant, so the stream holds back the longest fade-in in the
+  plan, not just the next one.
+- **What a later event would refuse is refused before the first sample**: an
+  invalid phoneme, a bad duration, or a stressed f0 outside 20 to 2,000 Hz. A
+  failure only rendering can find, such as a refused allocation, can still come
+  mid-stream, and the samples already passed on stand.
+- Give each thread its own context. A voice may be shared.
 
 ## Threads
 

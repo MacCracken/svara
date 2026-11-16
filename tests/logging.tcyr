@@ -4,7 +4,7 @@
 # on by the ordinary runner. ./scripts/check-logging.sh builds and runs it both
 # ways, and CI calls that. Under `cyrius tests tests` only the OFF half runs,
 # which is still worth having: it is what proves the `#ifdef` blocks threaded
-# through the four instrumented entry points did not change their behaviour.
+# through the five instrumented entry points did not change their behaviour.
 #
 # Include order: sakshi (LOGGING only) -> hisab -> goonj -> naad -> error ->
 # logging -> ... -> render.
@@ -45,6 +45,14 @@ fn lg_seq(voice) {
     return s;
 }
 
+var LG_STREAMED = 0;
+
+# A sink for svara_sequence_render_into that only counts the samples it is given.
+fn lg_sink(user, samples, count) {
+    LG_STREAMED = LG_STREAMED + count;
+    return 0;
+}
+
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
@@ -53,7 +61,7 @@ fn main() {
     # ================================================================
     test_group("instrumented entry points behave identically either way");
     # ================================================================
-    # These four carry #ifdef blocks through their return paths. Run each in
+    # These five carry #ifdef blocks through their return paths. Run each in
     # whichever mode this binary was built in and assert the ordinary contract.
     var seq = lg_seq(voice);
     var audio = svara_sequence_render(seq, voice, SR);
@@ -79,6 +87,13 @@ fn main() {
     var out = svara_batch_render_all(br);
     assert_eq(svara_is_err(out), 0, "batch_render_all succeeds");
     assert_eq(vec_len(SvRenderOutput_samples(out)) > 0, 1, "batch_render_all produced samples");
+
+    var sctx = svara_synthctx_new(voice, SR);
+    LG_STREAMED = 0;
+    var sn = svara_sequence_render_into(lg_seq(voice), voice, sctx, &lg_sink, 0);
+    assert_eq(sn > 0, 1, "sequence_render_into streams");
+    assert_eq(sn, LG_STREAMED, "and returns what it passed on");
+    assert_eq(sn, vec_len(audio), "as long as sequence_render's");
 
     #ifndef LOGGING
     # ================================================================
@@ -196,6 +211,11 @@ fn main() {
           "control: pool render fails with a bad voice");
     }
     assert_eq(svara_span_depth(), 0, "pool_render's error exit unwinds too");
+
+    var c3 = svara_synthctx_new(voice, SR);
+    assert_eq(svara_sequence_render_into(lg_seq(voice), bad_voice, c3, &lg_sink, 0), SVARA_ERR_INVALID_PITCH,
+      "control: sequence_render_into refuses the bad voice");
+    assert_eq(svara_span_depth(), 0, "sequence_render_into's error exit unwinds too");
 
     # Run enough failures to overflow a 16-deep stack if any of them leaked.
     var li = 0;

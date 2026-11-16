@@ -136,6 +136,9 @@ fn f0_at_bytes(contour) {
     return alloc_used() - a;
 }
 
+# A sink for svara_sequence_render_into that keeps nothing.
+fn ab_sink(user, samples, count) { return 0; }
+
 # Bytes one pass over every phoneme class keeps, through context `ctx`: each
 # class the context renders differently, nasalized vowels and diphthongs, both
 # ejective releases, and silence, at 0.1 s each.
@@ -367,6 +370,30 @@ fn main() {
     assert_eq(warm_bytes > 0, 1, "control: the first pass builds the context's filters, so the measure can see it");
     assert_eq(ctx_pass_bytes(wctx, voice), 0, "a second pass over every class keeps no bytes");
     assert_eq(ctx_pass_bytes(wctx, voice), 0, "and a third");
+
+    # ================================================================
+    test_group("a warmed context streams a sequence with no allocation");
+    # ================================================================
+    # svara_sequence_render keeps about 127 bytes per output sample (hoosh's
+    # filing). svara_sequence_render_into renders on the caller's context and
+    # computes its plan per event, so once the context has streamed a sequence as
+    # long, it keeps nothing.
+    var st_sq = mk_seq(f64_div(F64_ONE, f64_from(10)), 0);
+    var sctx = svara_synthctx_new(voice, SR);
+    var s0 = alloc_used();
+    var n1 = svara_sequence_render_into(st_sq, voice, sctx, &ab_sink, 0);
+    var s1 = alloc_used();
+    assert_eq(n1 > 0, 1, "control: the stream rendered");
+    assert_eq(s1 - s0 > 0, 1, "control: the first stream builds the context's buffers, so the measure can see it");
+    var n2 = svara_sequence_render_into(st_sq, voice, sctx, &ab_sink, 0);
+    assert_eq(alloc_used() - s1, 0, "a second stream keeps no bytes");
+    assert_eq(n2, n1, "control: and streamed as many samples");
+    var r0 = alloc_used();
+    var rr = svara_sequence_render(st_sq, voice, SR);
+    # 63 bytes a sample measured on this two-vowel sequence (127 on hoosh's twelve
+    # phonemes): every phoneme's samples, then the crossfade's own output vec.
+    assert_eq((alloc_used() - r0) / vec_len(rr) > 32, 1,
+      "control: svara_sequence_render keeps more than 32 bytes a sample on the same sequence");
 
     return assert_summary();
 }

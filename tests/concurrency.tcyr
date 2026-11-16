@@ -32,6 +32,8 @@ include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
 include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 var SR24 = 0x40D7700000000000; # 24000.0
@@ -229,6 +231,44 @@ fn cc_spectral_worker(arg) {
     return 0;
 }
 
+# ---- group 6: the streaming sequence render -----------------------------------
+var STREAM_SEQ = 0;
+var STREAM_REF = 0;   # [arg] hash of the stream rendered alone
+
+# Sink: fold each sample into the 8-byte hash cell at `user`.
+fn cc_hash_sink(user, samples, count) {
+    var h = load64(user);
+    var i = 0;
+    while (i < count) { h = (h ^ load64(samples + i * 8)) * 1099511628211; i = i + 1; }
+    store64(user, h);
+    return 0;
+}
+
+# Hash of STREAM_SEQ streamed on a fresh 24 kHz context.
+#must_use
+fn cc_stream_hash() {
+    var ctx = svara_synthctx_new(VOICE, SR24);
+    var cell = alloc(8);
+    store64(cell, 1469598103934665603);
+    var n = svara_sequence_render_into(STREAM_SEQ, VOICE, ctx, &cc_hash_sink, cell);
+    if (n <= 0) { return 0; }
+    return load64(cell);
+}
+
+# Worker `arg`: streams STREAM_SEQ 100 times, each on a fresh context, and
+# compares the hash with the one streamed alone; leaves its mismatch count in BAD.
+fn cc_stream_worker(arg) {
+    var want = load64(STREAM_REF);
+    var bad = 0;
+    var k = 0;
+    while (k < 100) {
+        if (cc_stream_hash() != want) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
 alloc_init();
 BAD = alloc(64);
 VOICE = svara_voice_new_male();
@@ -323,6 +363,20 @@ while (sw < 2) {
 }
 assert_eq(load64(SPEC_REF + 16) != load64(SPEC_REF + 24 + 16), 1, "control: the two frames' formants differ");
 assert_eq(cc_run(&cc_spectral_worker, 2), 0, "every rms, analyze and estimate_formants matches its own frame");
+
+# ================================================================
+test_group("four threads stream sequences on their own contexts");
+STREAM_SEQ = svara_sequence_new();
+svara_sequence_push(STREAM_SEQ, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.06, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(STREAM_SEQ, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.08, SVARA_STRESS_PRIMARY));
+svara_sequence_push(STREAM_SEQ, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.05, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(STREAM_SEQ, svara_phoneme_event_new(SVARA_PH_PLOSIVE_D, 0.04, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(STREAM_SEQ, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.08, SVARA_STRESS_SECONDARY));
+STREAM_REF = alloc(8);
+store64(STREAM_REF, cc_stream_hash());
+assert_eq(load64(STREAM_REF) != 0, 1, "control: the sequence streams");
+assert_eq(cc_stream_hash(), load64(STREAM_REF), "control: a stream alone is deterministic");
+assert_eq(cc_run(&cc_stream_worker, 4), 0, "400 concurrent streams match the one streamed alone");
 
 var rc = assert_summary();
 syscall(60, rc);

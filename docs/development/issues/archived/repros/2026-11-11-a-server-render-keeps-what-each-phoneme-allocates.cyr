@@ -1,7 +1,7 @@
 # svara 3.6.3: what a render keeps on the heap, which never frees.
 #
 # From the repository root:
-#   cyrius build docs/development/issues/repros/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.cyr /tmp/keep
+#   cyrius build docs/development/issues/archived/repros/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.cyr /tmp/keep
 #   /tmp/keep; echo "exit=$?"
 #
 # 1. svara_sequence_render of a 12-phoneme sequence (male voice, 24 kHz): the samples it returns and the bytes it

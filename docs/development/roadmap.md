@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, a streaming render, the refactors 3.6.3 left | next; ready |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -45,17 +45,6 @@ measured effect does not earn a place in the source.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
-- [ ] **A streaming sequence render**
-      ([issue](issues/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
-      hoosh, fixes 2 and 3; fix 1 shipped in 3.6.5). It adds public API, so a minor.
-      `svara_sequence_render` keeps about 127 bytes per output sample, and a consumer
-      that wants to stream has to copy the crossfade, as hoosh does. The issue proposes
-      `svara_sequence_render_into(seq, ctx, sample_rate, sink, user)`, which calls the
-      sink with output no later fade-in can change. A fade-in reaches back at most
-      `min(cf_prev, len)` samples. Optional, from the same issue: `_a` forms of
-      `svara_seq_detect_clusters`, `svara_seq_durations` and
-      `svara_detect_nasalization`, or the plan computed into caller storage. Gate it
-      bit for bit against `svara_sequence_render`, as hoosh's copy already is.
 - [ ] **`render_planned` recomputes per-event values on every sample.** Hoist what is
       fixed for the event out of the sample loop.
 - [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls

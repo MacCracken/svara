@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-11-16 — a streaming sequence render
+
+Feature release, and the first of the 3.8.x lane. It adds `svara_sequence_render_into`, the
+streaming render hoosh asked for, which makes it a minor. **No existing output moves**: against
+3.7.0, 558,721 values, the JSON, all 638 hostile cases and the retired instructions are identical.
+**1,286 assertions / 26 suites.** The consumer floor stays cyrius 6.7.2.
+
+### Added
+
+- **`svara_sequence_render_into(seq, voice, ctx, sink, user)`**
+  ([issue](docs/development/issues/archived/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
+  hoosh, fixes 2 and 3). It renders a sequence on a context the caller keeps and passes each
+  sample to `sink(user, samples, count)` as soon as no later crossfade can change it. It returns
+  the number of samples passed on.
+  - **The plan is `svara_sequence_render`'s**: the same stress pitch, durations, anticipatory
+    nasalization, crossfade lengths and sigmoid crossfade, and the same length. The samples are
+    `svara_seq_crossfade` over the segments the caller's context renders, which carries glottal
+    and noise state from phoneme to phoneme, so they are not `svara_sequence_render`'s.
+  - **It allocates nothing** on a context that has already streamed a sequence as long. The plan
+    is computed per event, never into a vec. `svara_sequence_render` keeps 63 bytes a sample on
+    the same sequence, and 127 on hoosh's twelve phonemes.
+  - **It refuses before the first sample** anything a later event would refuse: an invalid
+    phoneme, a bad duration, a stressed f0 outside 20 to 2,000 Hz, or a phoneme longer than
+    `SV_MAX_SAMPLES / 2`. Only a failure that rendering alone can find, such as a refused
+    allocation, can come mid-stream.
+  - **It holds back the longest fade-in in the plan**, not just the next crossfade. The issue's
+    bound, "a fade-in reaches back at most `min(cf_prev, len)` samples", is true of each
+    fade-in. But one can reach back past the previous phoneme into the one before, whenever the
+    0.05 s transition window (2,205 samples at 44.1 kHz) is longer than a short consonant.
+    Holding back only the next crossfade changed 2,383 samples of the test sentence after the
+    sink had them, measured with that variant in a scratch copy.
+- **Plan helpers**, each now shared with `svara_sequence_render` so the two cannot drift:
+  - `svara_seq_stress_f0` and `svara_seq_event_duration`;
+  - `svara_seq_is_consonant` and `svara_seq_in_cluster`, the cluster flag for one event;
+  - `svara_seq_min_crossfade` and `svara_seq_crossfade_len`;
+  - `svara_voice_copy_into`, `svara_nasalization_for_nasal_into` and `svara_nasal_place_for`.
+- The stream's own steps, `svara_seq_stream`, `svara_seq_xf_room` and `svara_seq_xf_segment`, and
+  four context fields: its voice, nasalization and pending output.
+- **`tests/stream.tcyr` (35)**:
+  - the per-event plan against the vec forms;
+  - the stream bit for bit against `svara_seq_crossfade` over a second context's segments: a
+    sentence with stress, a three-consonant cluster, nasals, a diphthong, an affricate and a
+    pause, at two voices and rates; a 40-event run; a single event; an event too short for one
+    sample; and the reach-back case;
+  - the length against `svara_sequence_render`;
+  - every up-front refusal arriving before any sample.
+
+  With the naive hold-back, 5 of its bit-for-bit checks fail.
+- `tests/allocbudget.tcyr` pins the zero bytes, `tests/logging.tcyr` makes the stream its fifth
+  instrumented entry point with balanced spans on success and error, and `tests/concurrency.tcyr`
+  streams from four threads at once (400 streams, all matching one streamed alone).
+
+### Changed
+
+- `svara_sequence_render`, `svara_seq_durations`, `svara_seq_detect_clusters`,
+  `svara_seq_voice_clone` and `svara_nasalization_for_nasal` now call the shared helpers above.
+  Their output is unchanged.
+- hoosh's issue is resolved and archived. The integration guide's *Real-time streaming* section
+  shows the stream.
+
+### Verified
+
+- `scripts/sweep/compare.py 3.7.0`: nothing moved. 558,721 values, the JSON and 638 hostile cases
+  are identical, and retired instructions are equal on every probe.
+- `cyrius audit`, `cyrius fuzz`, `cyrius deny`, `scripts/check-logging.sh` both ways, the five
+  examples, `cyrius distlib` current, and `cyrius deps --verify` and `--locked`.
+
 ## [3.7.0] - 2026-11-16 — `rust-old/` is retired, and its bar kept
 
 The Rust oracle leaves the tree.
@@ -97,7 +164,7 @@ changes signature, 20 are added (below), and the consumer floor stays cyrius 6.7
   - Below `222 × sample_rate` it costs one comparison per formant, which replaced the finiteness
     call `validate` made before, so `render_planned` retires 0.17% *fewer* instructions.
 - **A warmed synthesis context allocated on every phoneme**
-  ([issue](docs/development/issues/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
+  ([issue](docs/development/issues/archived/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
   hoosh, fix 1 of 3). It kept 160 bytes per vowel, nasal or lateral, 400 per diphthong, and 816
   to 1,048 per fricative, affricate or plosive. The bump allocator never frees, so a server kept
   all of it.

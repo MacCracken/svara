@@ -1,0 +1,293 @@
+# stream.tcyr -- svara_sequence_render_into, the streaming sequence render (3.8.0).
+#
+# Asked for by hoosh (docs/development/issues/
+# 2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md, fixes 2 and 3),
+# which streamed its own copy of svara_sequence_render's crossfade.
+#
+# The contract under test:
+# 1. The per-event plan helpers the stream uses agree with the vec-building ones
+#    svara_sequence_render uses, so the plan is the same.
+# 2. The stream's samples are svara_seq_crossfade over the segments the same
+#    context renders, bit for bit. The reference here renders each event on a
+#    second fresh context with the plan built from the vec forms, collects the
+#    segments, and crossfades them with svara_seq_crossfade, which
+#    svara_sequence_render's output (pinned by scripts/sweep) runs through.
+# 3. Its length is svara_sequence_render's.
+# 4. A sample is never changed after the sink has had it. The sequence in group 3
+#    has a fade-in that reaches back past the previous segment into the one before,
+#    which a stream holding back only the next crossfade would get wrong.
+# 5. What a later event would refuse is refused before any sample goes out.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
+
+alloc_init();
+var SR = f64_from(44100);
+var U = SVARA_STRESS_UNSTRESSED;
+var P = SVARA_STRESS_PRIMARY;
+var S = SVARA_STRESS_SECONDARY;
+var SINK_CALLS = 0;
+var SINK_EMPTY = 0;
+
+# The sink: append the `count` samples at `samples` to the vec `user`, counting
+# calls and any call that passes no samples.
+fn st_sink(user, samples, count) {
+    SINK_CALLS = SINK_CALLS + 1;
+    if (count <= 0) { SINK_EMPTY = SINK_EMPTY + 1; }
+    var i = 0;
+    while (i < count) { vec_push(user, load64(samples + i * 8)); i = i + 1; }
+    return 0;
+}
+
+var ST_RC = 0;
+
+# Stream `seq` on a fresh context and return what the sink collected, or the
+# negative code render_into returned. Leaves the return value in ST_RC.
+#must_use
+fn st_stream(seq, voice, sr) {
+    var ctx = svara_synthctx_new(voice, sr);
+    var got = vec_new();
+    SINK_CALLS = 0;
+    SINK_EMPTY = 0;
+    ST_RC = svara_sequence_render_into(seq, voice, ctx, &st_sink, got);
+    if (svara_is_err(ST_RC) == 1) { return ST_RC; }
+    return got;
+}
+
+# The reference: each event rendered on a second fresh context with the plan the
+# vec forms build (svara_seq_detect_clusters, svara_seq_durations,
+# svara_detect_nasalization), stress f0 written out here, then svara_seq_crossfade.
+#must_use
+fn st_reference(seq, voice, sr) {
+    var ctx = svara_synthctx_new(voice, sr);
+    var events = svara_sequence_events(seq);
+    var n = vec_len(events);
+    var durs = svara_seq_durations(seq, svara_seq_detect_clusters(events));
+    var nas = svara_detect_nasalization(svara_seq_phoneme_list(seq));
+    var segs = vec_new();
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        var ev = svara_seq_voice_clone(voice);
+        var st = SvPhonemeEvent_stress(e);
+        if (st == SVARA_STRESS_PRIMARY) { SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10)); }
+        if (st == SVARA_STRESS_SECONDARY) { SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05)); }
+        var cnt = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, vec_get(durs, i), vec_get(nas, i));
+        if (svara_is_err(cnt) == 1) { return cnt; }
+        var seg = vec_new();
+        var b = svara_synthctx_buffer(ctx);
+        var k = 0;
+        while (k < cnt) { vec_push(seg, load64(b + k * 8)); k = k + 1; }
+        vec_push(segs, seg);
+        i = i + 1;
+    }
+    var min_cf = svara_seq_min_crossfade(seq, sr);
+    var cfs = vec_new();
+    i = 0;
+    while (i < n - 1) {
+        vec_push(cfs, svara_seq_crossfade_len(events, i, vec_len(vec_get(segs, i)), vec_len(vec_get(segs, i + 1)),
+            min_cf));
+        i = i + 1;
+    }
+    return svara_seq_crossfade(segs, cfs);
+}
+
+# Number of slots where two vec<f64> differ in their raw bits, plus any length
+# difference.
+#must_use
+fn st_diff(a, b) {
+    var na = vec_len(a);
+    var nb = vec_len(b);
+    var bad = na - nb;
+    if (bad < 0) { bad = 0 - bad; }
+    var n = na;
+    if (nb < n) { n = nb; }
+    var i = 0;
+    while (i < n) {
+        if (vec_get(a, i) != vec_get(b, i)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# A sequence from parallel id, duration and stress lists of n entries.
+#must_use
+fn st_seq(ids, durs, stress, n) {
+    var q = svara_sequence_new();
+    var i = 0;
+    while (i < n) {
+        svara_sequence_push(q, svara_phoneme_event_new(load64(ids + i * 8), load64(durs + i * 8),
+            load64(stress + i * 8)));
+        i = i + 1;
+    }
+    return q;
+}
+
+var male = svara_voice_new_male();
+var female = svara_voice_new_female();
+
+# A sentence-like sequence: stress of all three kinds, a three-consonant cluster,
+# vowels before /n/ and /m/ (anticipatory nasalization), a diphthong, a fricative,
+# plosives, an affricate and a pause.
+var ids = alloc(24 * 8);
+var dur = alloc(24 * 8);
+var str = alloc(24 * 8);
+var NS = 16;
+store64(ids, SVARA_PH_FRIC_S); store64(dur, 0.08); store64(str, U);
+store64(ids + 8, SVARA_PH_PLOSIVE_T); store64(dur + 8, 0.06); store64(str + 8, U);
+store64(ids + 16, SVARA_PH_APPROX_R); store64(dur + 16, 0.05); store64(str + 16, U);
+store64(ids + 24, SVARA_PH_VOWEL_I); store64(dur + 24, 0.12); store64(str + 24, P);
+store64(ids + 32, SVARA_PH_NASAL_M); store64(dur + 32, 0.07); store64(str + 32, U);
+store64(ids + 40, SVARA_PH_VOWEL_A); store64(dur + 40, 0.1); store64(str + 40, S);
+store64(ids + 48, SVARA_PH_NASAL_N); store64(dur + 48, 0.06); store64(str + 48, U);
+store64(ids + 56, SVARA_PH_SILENCE); store64(dur + 56, 0.1); store64(str + 56, U);
+store64(ids + 64, SVARA_PH_DIPH_AI); store64(dur + 64, 0.15); store64(str + 64, P);
+store64(ids + 72, SVARA_PH_PLOSIVE_D); store64(dur + 72, 0.05); store64(str + 72, U);
+store64(ids + 80, SVARA_PH_VOWEL_E); store64(dur + 80, 0.09); store64(str + 80, U);
+store64(ids + 88, SVARA_PH_AFFR_CH); store64(dur + 88, 0.09); store64(str + 88, U);
+store64(ids + 96, SVARA_PH_VOWEL_U); store64(dur + 96, 0.11); store64(str + 96, S);
+store64(ids + 104, SVARA_PH_LATERAL_L); store64(dur + 104, 0.06); store64(str + 104, U);
+store64(ids + 112, SVARA_PH_FRIC_Z); store64(dur + 112, 0.07); store64(str + 112, U);
+store64(ids + 120, SVARA_PH_VOWEL_O); store64(dur + 120, 0.13); store64(str + 120, P);
+var sentence = st_seq(ids, dur, str, NS);
+
+# ================================================================
+test_group("the per-event plan agrees with the vec forms");
+var ev_s = svara_sequence_events(sentence);
+var flags = svara_seq_detect_clusters(ev_s);
+var cl_bad = 0;
+var k = 0;
+while (k < NS) {
+    if (svara_seq_in_cluster(ev_s, k) != vec_get(flags, k)) { cl_bad = cl_bad + 1; }
+    k = k + 1;
+}
+assert_eq(cl_bad, 0, "in_cluster matches detect_clusters at every event");
+assert_eq(vec_get(flags, 0) + vec_get(flags, 1) + vec_get(flags, 2), 3, "control: /s t r/ is a cluster");
+var nas_bad = 0;
+var snas = alloc(sizeof(SvNasalization));
+var p = 0;
+while (p < SVARA_PHONEME_COUNT) {
+    var a = svara_nasalization_for_nasal(p);
+    var b = svara_nasalization_for_nasal_into(p, snas);
+    if ((a == 0) != (b == 0)) { nas_bad = nas_bad + 1; }
+    if ((a != 0) & (b != 0)) {
+        if (SvNasalization_place(a) != SvNasalization_place(b)) { nas_bad = nas_bad + 1; }
+        if (SvNasalization_onset(a) != SvNasalization_onset(b)) { nas_bad = nas_bad + 1; }
+        if (SvNasalization_peak_coupling(a) != SvNasalization_peak_coupling(b)) { nas_bad = nas_bad + 1; }
+    }
+    p = p + 1;
+}
+assert_eq(nas_bad, 0, "nasalization_for_nasal_into matches for_nasal for all 101 phonemes");
+var vc = svara_voice_copy_into(female, svara_voice_new_male());
+assert_eq(SvVoiceProfile_base_f0(vc), SvVoiceProfile_base_f0(female), "copy_into copies base_f0");
+assert_eq(SvVoiceProfile_formant_scale(vc), SvVoiceProfile_formant_scale(female), "copy_into copies formant_scale");
+assert_eq(svara_seq_stress_f0(f64_from(100), P), f64_mul(f64_from(100), 1.10), "primary stress x1.10");
+assert_eq(svara_seq_stress_f0(f64_from(100), S), f64_mul(f64_from(100), 1.05), "secondary stress x1.05");
+assert_eq(svara_seq_stress_f0(f64_from(100), U), f64_from(100), "unstressed unchanged");
+
+# ================================================================
+test_group("the stream is svara_seq_crossfade over the context's segments");
+var got = st_stream(sentence, male, SR);
+assert_eq(svara_is_err(ST_RC), 0, "the sentence streams");
+var want = st_reference(sentence, male, SR);
+assert_eq(vec_len(got) > 0, 1, "control: it produced samples");
+assert_eq(st_diff(got, want), 0, "male, 44.1 kHz: bit for bit");
+assert_eq(ST_RC, vec_len(got), "the return is the number of samples passed on");
+assert_eq(SINK_CALLS > 1, 1, "they arrived in more than one call");
+assert_eq(SINK_EMPTY, 0, "no call passed zero samples");
+var got_f = st_stream(sentence, female, f64_from(24000));
+var want_f = st_reference(sentence, female, f64_from(24000));
+assert_eq(st_diff(got_f, want_f), 0, "female, 24 kHz: bit for bit");
+assert_eq(st_diff(got_f, got) > 0, 1, "control: the two voices differ");
+var plain = svara_sequence_render(sentence, male, SR);
+assert_eq(vec_len(got), vec_len(plain), "the length is svara_sequence_render's");
+var again = st_stream(sentence, male, SR);
+assert_eq(st_diff(got, again), 0, "two fresh contexts stream the same samples");
+
+# ================================================================
+test_group("a fade-in that reaches back past the previous segment");
+# A 2 ms phoneme between two long vowels, with the default 0.05 s window: the
+# crossfade into the last vowel is at least 2205 samples, longer than the 2 ms
+# phoneme, so it reaches back into the first vowel's output.
+var rb = svara_sequence_new();
+svara_sequence_push(rb, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.3, P));
+svara_sequence_push(rb, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, 0.002, U));
+svara_sequence_push(rb, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.3, P));
+var rb_ev = svara_sequence_events(rb);
+var len1 = svara_count_from_f64(f64_mul(svara_seq_event_duration(vec_get(rb_ev, 1), 0), SR));
+var len2 = svara_count_from_f64(f64_mul(svara_seq_event_duration(vec_get(rb_ev, 2), 0), SR));
+var cf1 = svara_seq_crossfade_len(rb_ev, 1, len1, len2, svara_seq_min_crossfade(rb, SR));
+assert_eq(cf1 > len1, 1, "control: the last fade-in is longer than the phoneme before it");
+var rb_got = st_stream(rb, male, SR);
+assert_eq(st_diff(rb_got, st_reference(rb, male, SR)), 0, "bit for bit all the same");
+var one = svara_sequence_new();
+svara_sequence_push(one, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, U));
+assert_eq(st_diff(st_stream(one, male, SR), st_reference(one, male, SR)), 0, "a single event, bit for bit");
+assert_eq(SINK_CALLS, 1, "a single event arrives in one call");
+var tiny = svara_sequence_new();
+svara_sequence_push(tiny, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, U));
+svara_sequence_push(tiny, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.00001, U));
+svara_sequence_push(tiny, svara_phoneme_event_new(SVARA_PH_VOWEL_O, 0.1, U));
+assert_eq(st_diff(st_stream(tiny, male, SR), st_reference(tiny, male, SR)), 0,
+  "an event too short for one sample, bit for bit");
+
+# ================================================================
+test_group("forty events in a row");
+var long = svara_sequence_new();
+var q = 0;
+while (q < 40) {
+    var slot = q % NS;
+    svara_sequence_push(long, svara_phoneme_event_new(load64(ids + slot * 8), load64(dur + slot * 8),
+        load64(str + slot * 8)));
+    q = q + 1;
+}
+var lg = st_stream(long, male, SR);
+assert_eq(st_diff(lg, st_reference(long, male, SR)), 0, "bit for bit");
+assert_eq(vec_len(lg), vec_len(svara_sequence_render(long, male, SR)), "the length is svara_sequence_render's");
+
+# ================================================================
+test_group("what a later event would refuse is refused before any sample");
+var empty = vec_new();
+var ctx0 = svara_synthctx_new(male, SR);
+SINK_CALLS = 0;
+assert_eq(svara_sequence_render_into(svara_sequence_new(), male, ctx0, &st_sink, empty), 0,
+  "an empty sequence passes on nothing");
+assert_eq(SINK_CALLS, 0, "and calls no sink");
+assert_eq(svara_sequence_render_into(sentence, male, ctx0, 0, empty), SVARA_ERR_COMPUTATION, "a null sink is refused");
+var bad_p = st_seq(ids, dur, str, NS);
+svara_sequence_push(bad_p, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, U));
+SvPhonemeEvent_set_phoneme(vec_get(svara_sequence_events(bad_p), NS), 999);
+var r1 = st_stream(bad_p, male, SR);
+assert_eq(ST_RC, SVARA_ERR_INVALID_PHONEME, "an invalid last phoneme is refused");
+assert_eq(SINK_CALLS, 0, "before any sample");
+var bad_d = st_seq(ids, dur, str, NS);
+svara_sequence_push(bad_d, svara_phoneme_event_new(SVARA_PH_VOWEL_A, f64_div(0, 0), U));
+var r2 = st_stream(bad_d, male, SR);
+assert_eq(ST_RC, SVARA_ERR_INVALID_DURATION, "a NaN last duration is refused");
+assert_eq(SINK_CALLS, 0, "before any sample");
+var high = svara_voice_with_f0(svara_voice_new_male(), f64_from(1900));
+var r3 = st_stream(sentence, high, SR);
+assert_eq(ST_RC, SVARA_ERR_INVALID_PITCH, "1900 Hz x1.10 under primary stress is refused");
+assert_eq(SINK_CALLS, 0, "before any sample");
+var flat = svara_sequence_new();
+svara_sequence_push(flat, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, U));
+var r4 = st_stream(flat, high, SR);
+assert_eq(svara_is_err(ST_RC), 0, "control: 1900 Hz unstressed is accepted");
+
+var rc = assert_summary();
+syscall(60, rc);
