@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.6.4"
+tag = "3.6.5"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -146,31 +146,42 @@ synthesis context whose sample buffer grows but is never re-allocated per call.
 The per-sample synthesis path inside svara allocates nothing; that is pinned by
 `tests/allocbudget.tcyr`. Keep your side of the boundary the same way.
 
-⚠ **Per phoneme, svara does allocate**, and the default allocator never frees, so
-a long-running process keeps it. Measured at 3.6.4, male voice, 24 kHz:
+**Per phoneme**, measured at 3.6.5, male voice, 24 kHz:
 
-- `svara_sequence_render` keeps about 127 bytes per output sample. Each phoneme
-  gets a new glottal source, tract and sample vector, and the crossfade builds
-  another.
-- A warmed `svara_synthctx_*` context keeps 160 bytes per vowel, nasal or
-  lateral, 400 per diphthong, 816 to 976 per fricative or affricate and 1,048 per
-  plosive. `svara_synthctx_new` itself is 1,880 bytes.
+- A warmed `svara_synthctx_*` context allocates **nothing** per phoneme, for every
+  class (`tests/allocbudget.tcyr` pins it). The first phoneme of a class builds
+  what the context keeps for it, such as a frication filter. `svara_synthctx_new`
+  is 2,280 bytes. Through 3.6.4 a warmed context kept 160 to 1,048 bytes a phoneme.
+- ⚠ `svara_sequence_render` still keeps about 127 bytes per output sample, and the
+  default allocator never frees. Each phoneme gets a new glottal source, tract and
+  sample vector, and the crossfade builds another.
 
 A server that renders on every request should render through one context and
-crossfade on its own side. Making a warmed context allocate nothing, and a
-streaming sequence render, are on the [roadmap](roadmap.md).
+crossfade on its own side. A streaming sequence render, which would make that
+unnecessary, is on the [roadmap](roadmap.md) (3.8.x).
 
 ## Threads
 
-⚠ **Render one call at a time per process.** Several functions keep scratch at
-module level, not in the object: the tract's target scratch, the glottal source's
-LF triple, the prosody contour's interpolation buffers and the spectral buffers.
-Two threads rendering at once, each on its own context, voice and buffer, can
-still overwrite each other's scratch, and the wrong render returns success.
-Measured at 3.6.4: 2 to 7 of 4,000 concurrent renders wrong, never one alone.
+**Since 3.6.5, threads can render at once if they share no object.** Give each
+thread its own context, tract, glottal source, contour and buffers. A voice
+profile is only read, so threads may share one, as the suite's do. `tests/concurrency.tcyr`
+checks this: four threads render 4,000 vowels, and two or four threads each hammer
+the tract, glottal, prosody and spectral paths. Every result is compared bit for
+bit with one computed alone.
 
-Hold one lock around every call into svara. Moving the scratch into the objects
-is on the [roadmap](roadmap.md).
+- ⚠ **One object used by two threads at once is not safe.** Contexts, tracts,
+  sources, contours and filters take no lock of their own.
+- The spectral functions, and prosody contours of more than 64 points, use
+  module-level buffers under a lock, so threads in them take turns there. Until
+  a thread has been created, the lock costs a load and a branch.
+- ⚠ **With `-D LOGGING`, keep one render at a time.** The four instrumented entry
+  points open spans on sakshi's span stack, and sakshi 2.5.10 keeps one unlocked
+  stack per process, so concurrent renders would interleave their spans. The
+  concurrency suite runs with logging off.
+
+**Through 3.6.4 this was not safe.** Module-level scratch was shared between
+objects, and 2 to 7 of 4,000 concurrent renders came back wrong while reporting
+success. On 3.6.4 or earlier, hold one lock around every call into svara.
 
 ## Bridge functions
 

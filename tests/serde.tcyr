@@ -95,6 +95,17 @@ var vp2 = SvVoiceProfile_from_json_str(se_json(&SvVoiceProfile_to_json, vp));
 assert_eq(se_approx(SvVoiceProfile_base_f0(vp2), f64_from(220), TOL_1EM3), 1, "base_f0 220");
 assert_eq(se_approx(SvVoiceProfile_formant_scale(vp2), SV_V_117, TOL_1EM3), 1, "formant_scale 1.17");
 assert_eq(se_approx(SvVoiceProfile_jitter(vp2), SV_V_0008, TOL_1EM3), 1, "jitter 0.008");
+# Rust round-trips a non-default f0, breathiness and bandwidth_widening, to
+# f32::EPSILON (`git show 3.6.4:rust-old/tests/integration.rs`,
+# test_serde_roundtrip_voice_profile; rust-old/src/voice.rs,
+# test_serde_roundtrip_with_bandwidth_widening). The defaults above leave
+# breathiness and widening at values a dropped field would also read back.
+var vpw = svara_voice_with_breathiness(svara_voice_with_f0(svara_voice_new_female(), f64_from(200)), 0.3);
+vpw = svara_voice_with_bandwidth_widening(vpw, 0.8);
+var vpw2 = SvVoiceProfile_from_json_str(se_json(&SvVoiceProfile_to_json, vpw));
+assert_eq(se_approx(SvVoiceProfile_base_f0(vpw2), f64_from(200), SV_EPSILON), 1, "base_f0 200");
+assert_eq(se_approx(SvVoiceProfile_breathiness(vpw2), 0.3, SV_EPSILON), 1, "breathiness 0.3");
+assert_eq(se_approx(SvVoiceProfile_bandwidth_widening(vpw2), 0.8, SV_EPSILON), 1, "bandwidth_widening 0.8");
 
 # ================================================================
 test_group("EffortParams round-trip");
@@ -380,6 +391,25 @@ while (h_k < 512) {
     h_k = h_k + 1;
 }
 assert_eq(h3_diff > 0, 1, "control: a fresh source does NOT match -- the streams really were resumed");
+
+# ================================================================
+test_group("GlottalSource state companion keeps whisper and creaky");
+# Rust round-trips each model through JSON and checks it, and creaky's rd
+# (`git show 3.6.4:rust-old/src/glottal.rs`, test_serde_roundtrip_whisper and
+# test_serde_roundtrip_creaky). The groups above restore only Rosenberg sources.
+var gwh = svara_glottal_new(f64_from(120), sr_hz);
+svara_glottal_set_whisper(gwh);
+var gwh2 = svara_glottal_restore(SvGlottalState_from_json_str(se_json(&SvGlottalState_to_json,
+      svara_glottal_save(gwh))));
+assert_eq(svara_is_err(gwh2), 0, "a whisper source restores");
+assert_eq(svara_glottal_model(gwh2), SVARA_GLOTTAL_WHISPER, "restored model is whisper");
+var gcr = svara_glottal_new(f64_from(120), sr_hz);
+svara_glottal_set_creaky(gcr, F64_HALF);
+var gcr2 = svara_glottal_restore(SvGlottalState_from_json_str(se_json(&SvGlottalState_to_json,
+      svara_glottal_save(gcr))));
+assert_eq(svara_is_err(gcr2), 0, "a creaky source restores");
+assert_eq(svara_glottal_model(gcr2), SVARA_GLOTTAL_CREAKY, "restored model is creaky");
+assert_eq(se_approx(svara_glottal_rd(gcr2), F64_HALF, SV_EPSILON), 1, "restored creaky rd is 0.5");
 
 # ================================================================
 test_group("restore validates a decoded state rather than trusting it");

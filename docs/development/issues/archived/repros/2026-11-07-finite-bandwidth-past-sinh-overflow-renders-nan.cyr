@@ -2,7 +2,7 @@
 # svara_formant_validate, and the tract then renders NaN.
 #
 # Build and run from the repository root:
-#   cyrius build docs/development/issues/repros/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.cyr /tmp/bw-nan
+#   cyrius build docs/development/issues/archived/repros/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.cyr /tmp/bw-nan
 #   /tmp/bw-nan; echo "exit=$?"
 #
 # Each row retargets a fresh 44.1 kHz tract to a vowel whose SECOND bandwidth is

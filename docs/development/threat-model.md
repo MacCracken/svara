@@ -84,10 +84,16 @@ NaN. The claim was written for the Rust and inherited without being re-tested.
   returns -6 instead of stopping inside naad. Kept unchecked, as 3.6.3 did, that
   handle faulted at `0xfffffffffffffffa`, away from the null page. 3.6.4 reports
   it, and `tests/allocrefused.tcyr` refuses each of those allocations to pin it.
-- ⚠ **Not mitigated: concurrent renders.** Module-level scratch is shared, so two
-  threads rendering at once can give a wrong render that reports success. The
-  integration guide says to serialize every call. Filed by hoosh, 2026-11-11; on
-  the roadmap.
+- Renders that share no object can run on threads at once (3.6.5). Through 3.6.4
+  module-level scratch was shared, and 2 to 7 of 4,000 concurrent renders came back
+  wrong while reporting success. The scratch now lives in each object or on the
+  stack, and what must stay shared is locked; `tests/concurrency.tcyr` pins it.
+  ⚠ Still not mitigated, and documented in the integration guide: one object used by
+  two threads at once, and `-D LOGGING` with concurrent renders, whose spans share
+  sakshi's one unlocked stack.
+- A finite bandwidth whose coefficients overflow is refused (3.6.5,
+  [ADR-0010](../adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md)); it
+  rendered NaN from a call that returned success.
 
 **Verification, not assertion**: `tests/hardening.tcyr` pins every instance.
 Its discrimination is measured — 9 of 10 public-API probes fail against a 3.1.2

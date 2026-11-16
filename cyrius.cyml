@@ -43,7 +43,8 @@ modules = [
 # (`num_fft`, since hisab 3.0.0); bench for .bcyr harnesses. sakshi is the
 # logging backend `src/logging.cyr` calls under `-D LOGGING`. It is a stdlib leaf
 # since hisab 3.4.2 dropped its `[deps.sakshi]` package, and svara calls it
-# directly, so it is declared here rather than left to goonj's sidecar.
+# directly, so it is declared here rather than left to goonj's sidecar. thread is
+# for tests/concurrency.tcyr only: nothing in src/ or the bundle creates a thread.
 [deps]
 stdlib = [
     "syscalls",
@@ -62,6 +63,7 @@ stdlib = [
     "fnptr",
     "bench",
     "sakshi",
+    "thread",
 ]
 
 # hisab (FFT / HComplex / compensated sum / easing / interp) — consumed by

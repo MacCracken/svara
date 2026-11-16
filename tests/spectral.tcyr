@@ -80,7 +80,9 @@ while (z < 513) { vec_push(zmags, 0); z = z + 1; }
 SvSpectrum_set_magnitudes(man, zmags);
 SvSpectrum_set_freq_resolution(man, f64_div(f64_from(44100), f64_from(1024)));   # ~43.066 Hz/bin
 SvSpectrum_set_sample_rate(man, SR);
-assert_eq(approx(svara_spectrum_bin_frequency(man, 10), f64_from(430), F64_ONE), 1, "bin 10 ~ 430.66 Hz");
+# Rust's window (`git show 3.6.4:rust-old/src/spectral.rs`, test_spectrum_bin_frequency):
+# |bin_frequency(10) - 430.66| < 0.1. Rust sets 43.066 Hz/bin; 44100/1024 gives 430.664.
+assert_eq(approx(svara_spectrum_bin_frequency(man, 10), 0x407AEA8F5C28F5C3, 0.1), 1, "bin 10 within 0.1 Hz of 430.66");
 assert_eq(svara_spectrum_frequency_bin(man, svara_spectrum_bin_frequency(man, 10)), 10, "freq->bin round-trips to 10");
 assert_eq(svara_spectrum_magnitude_at(man, f64_from(99999)), 0, "out-of-range magnitude is 0");
 

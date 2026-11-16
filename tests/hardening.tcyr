@@ -75,6 +75,42 @@ fn hd_cb_negative(user, progress) {
     return f64_neg(F64_ONE);
 }
 
+# Retarget a fresh tract with F2's bandwidth set to `bw`, then run 2205 samples
+# of 0.5 through it. Returns 0 when the retarget is refused and the tract stays
+# finite, 1 when it is accepted and every sample is finite, and 2 when it is
+# accepted and a sample is not finite: the silent wrong answer ADR-0010 refuses.
+# 3 means refused but not finite. The vowel is the filed repro's
+# (docs/development/issues/archived/).
+fn hd_bw_row(bw) {
+    var t = svara_tract_new(SR);
+    var v = svara_vowel_target_with_bandwidths(f64_from(600), f64_from(1250), f64_from(2500),
+      f64_from(3328), f64_from(4096), f64_from(80), bw, f64_from(120), f64_from(144), f64_from(168));
+    var rc = svara_tract_set_formants_from_target(t, v);
+    var bad = 0;
+    var i = 0;
+    while (i < 2205) {
+        if (svara_is_finite(svara_tract_process_sample(t, F64_HALF)) == 0) { bad = bad + 1; }
+        i = i + 1;
+    }
+    if (rc != SVARA_ERR_NONE) {
+        if (bad == 0) { return 0; }
+        return 3;
+    }
+    if (bad == 0) { return 1; }
+    return 2;
+}
+
+# 1 if all four bandpass coefficients for (1 kHz, bw) at SR are finite.
+fn hd_coeffs_finite(bw, buf) {
+    svara_formant_biquad_coeffs(f64_from(1000), bw, SR, buf);
+    var k = 0;
+    while (k < 4) {
+        if (svara_is_finite(load64(buf + k * 8)) == 0) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
@@ -637,6 +673,55 @@ fn main() {
     assert_eq(svara_is_finite(svara_formant_filter_process_sample(ff_ok, F64_ONE)), 1,
       "the filter refused both, so its next sample is finite");
     assert_eq(svara_formant_filter_update(ff_ok, fb), SVARA_ERR_NONE, "control: update takes 90 Hz");
+
+    # ================================================================
+    test_group("a bandwidth whose coefficients overflow is refused (ADR-0010)");
+    # ================================================================
+    # Filed by prani against 3.6.3: sinh(pi * bw / sr) overflows a little past
+    # 226.15 x the sample rate, and from there every sample was NaN from a call
+    # that returned success. The issue's rows, through the tract:
+    assert_eq(hd_bw_row(f64_from(100)), 1, "control: 100 Hz accepted, finite");
+    assert_eq(hd_bw_row(f64_from(22050)), 1, "control: nyquist-wide accepted, finite");
+    assert_eq(hd_bw_row(f64_from(1000000)), 1, "1 MHz accepted, finite");
+    assert_eq(hd_bw_row(f64_from(9970000)), 1, "9.97 MHz, just below the bound, accepted and finite");
+    assert_eq(hd_bw_row(f64_from(9980000)), 0, "9.98 MHz, just above, refused");
+    assert_eq(hd_bw_row(f64_from(100000000)), 0, "100 MHz refused");
+    assert_eq(hd_bw_row(0x47EFFFFFE0000000), 0, "f32::MAX refused");
+    assert_eq(hd_bw_row(0x7FEFFFFFFFFFFFFF), 0, "f64::MAX refused");
+    # The bound is the one the coefficient code has. Across 2001 bandwidths from
+    # 9.96 to 9.98 MHz, validate accepts exactly those whose coefficients are
+    # finite, and the sweep holds both kinds.
+    var cb = alloc(32);
+    var one = vec_new();
+    var bf = svara_formant_new(f64_from(1000), f64_from(90), F64_ONE);
+    vec_push(one, bf);
+    var mism = 0;
+    var acc = 0;
+    var ref = 0;
+    var step = 0;
+    while (step <= 2000) {
+        var bw = f64_add(f64_from(9960000), f64_mul(f64_from(step), f64_from(10)));
+        SvFormant_set_bandwidth(bf, bw);
+        var ok = 0;
+        if (svara_formant_validate(one, SR) == SVARA_ERR_NONE) { ok = 1; }
+        if (ok != hd_coeffs_finite(bw, cb)) { mism = mism + 1; }
+        if (ok == 1) { acc = acc + 1; } else { ref = ref + 1; }
+        step = step + 1;
+    }
+    assert_eq(mism, 0, "accepted exactly where the coefficients are finite");
+    assert_eq((acc > 0) & (ref > 0), 1, "control: the sweep straddles the bound");
+    # update keeps the filter's state, so a NaN there would last.
+    var hb = vec_new();
+    vec_push(hb, svara_formant_new(f64_from(700), f64_from(100000000), F64_ONE));
+    assert_eq(svara_formant_filter_update(ff_ok, hb), SVARA_ERR_INVALID_FORMANT, "update refuses 100 MHz too");
+    # validate tests +inf only past 222 x the sample rate, capped at f64::MAX so
+    # +inf exceeds it even where 222 x the rate overflows (1e307 Hz here).
+    var inf_hi = vec_new();
+    vec_push(inf_hi, svara_formant_new(f64_from(1000), SV_POS_INF, F64_ONE));
+    assert_eq(svara_formant_validate(inf_hi, 0x7FAC7B1F3CAC7433), SVARA_ERR_INVALID_FORMANT,
+      "+inf bandwidth refused at a 1e307 Hz sample rate");
+    assert_eq(svara_is_finite(svara_formant_filter_process_sample(ff_ok, F64_ONE)), 1,
+      "the filter refused it, so its next sample is finite");
 
     # ================================================================
     test_group("estimate_formants takes every spectrum analyze returns");

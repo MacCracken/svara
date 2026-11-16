@@ -251,10 +251,23 @@ var SV_PH_035 = 0x3FD6666666666666;   # 0.35
 fn svara_ph_vt(f1, f2, f3, f4, f5) {
     return svara_vowel_target_new(f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5));
 }
+# ph_vt_into -- ph_vt written into `dst`: vowel_target_new's default bandwidths.
+#must_use
+fn svara_ph_vt_into(dst, f1, f2, f3, f4, f5) {
+    return svara_vowel_target_set(dst, f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
+      f64_from(60), f64_from(80), f64_from(100), f64_from(120), f64_from(140));
+}
 # ph_vtb -- vowel target from integer Hz: formants f1..f5, then bandwidths b1..b5.
 #must_use
 fn svara_ph_vtb(f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
     return svara_vowel_target_with_bandwidths(
+      f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
+      f64_from(b1), f64_from(b2), f64_from(b3), f64_from(b4), f64_from(b5));
+}
+# ph_vtb_into -- ph_vtb written into `dst`.
+#must_use
+fn svara_ph_vtb_into(dst, f1, f2, f3, f4, f5, b1, b2, b3, b4, b5) {
+    return svara_vowel_target_set(dst,
       f64_from(f1), f64_from(f2), f64_from(f3), f64_from(f4), f64_from(f5),
       f64_from(b1), f64_from(b2), f64_from(b3), f64_from(b4), f64_from(b5));
 }
@@ -285,51 +298,66 @@ fn svara_f2_locus_equation(p, out) {
 # ================================================================
 #must_use
 fn svara_phoneme_formants(p) {
+    return svara_phoneme_formants_into(p, alloc(sizeof(SvVowelTarget)));
+}
+
+# phoneme_formants_into -- as above, written into `dst`, which it returns. One table serves
+# both, so the two give the same bits; a synthesis context keeps `dst`.
+#must_use
+fn svara_phoneme_formants_into(p, dst) {
     # vowels mapping directly to formant.cyr's from_vowel
-    if (p == SVARA_PH_VOWEL_A) { return svara_vowel_target_from_vowel(SVARA_VOWEL_A); }
-    if (p == SVARA_PH_VOWEL_E) { return svara_vowel_target_from_vowel(SVARA_VOWEL_E); }
-    if ((p == SVARA_PH_VOWEL_I) | (p == SVARA_PH_VOWEL_LONG_I)) { return svara_vowel_target_from_vowel(SVARA_VOWEL_I); }
-    if (p == SVARA_PH_VOWEL_O) { return svara_vowel_target_from_vowel(SVARA_VOWEL_O); }
-    if (p == SVARA_PH_VOWEL_U) { return svara_vowel_target_from_vowel(SVARA_VOWEL_U); }
-    if (p == SVARA_PH_VOWEL_SCHWA) { return svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA); }
-    if (p == SVARA_PH_VOWEL_OPEN_O) { return svara_vowel_target_from_vowel(SVARA_VOWEL_OPENO); }
-    if (p == SVARA_PH_VOWEL_ASH) { return svara_vowel_target_from_vowel(SVARA_VOWEL_ASH); }
-    if (p == SVARA_PH_VOWEL_NEAR_I) { return svara_vowel_target_from_vowel(SVARA_VOWEL_NEARI); }
-    if (p == SVARA_PH_VOWEL_NEAR_U) { return svara_vowel_target_from_vowel(SVARA_VOWEL_NEARU); }
-    if (p == SVARA_PH_VOWEL_OPEN_A) { return svara_ph_vtb(745, 1100, 2440, 3300, 3750, 85, 90, 110, 130, 150); }
-    if (p == SVARA_PH_VOWEL_BIRD) { return svara_ph_vtb(580, 1400, 2500, 3300, 3750, 70, 80, 100, 120, 140); }
-    if ((p == SVARA_PH_VOWEL_OPEN_E) | (p == SVARA_PH_VOWEL_CUP_V)) { return svara_ph_vt(600, 1770, 2500, 3300, 3750); }
+    if (p == SVARA_PH_VOWEL_A) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_A, dst); }
+    if (p == SVARA_PH_VOWEL_E) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_E, dst); }
+    if ((p == SVARA_PH_VOWEL_I) | (p == SVARA_PH_VOWEL_LONG_I)) {
+        return svara_vowel_target_from_vowel_into(SVARA_VOWEL_I, dst);
+    }
+    if (p == SVARA_PH_VOWEL_O) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_O, dst); }
+    if (p == SVARA_PH_VOWEL_U) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_U, dst); }
+    if (p == SVARA_PH_VOWEL_SCHWA) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_SCHWA, dst); }
+    if (p == SVARA_PH_VOWEL_OPEN_O) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_OPENO, dst); }
+    if (p == SVARA_PH_VOWEL_ASH) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_ASH, dst); }
+    if (p == SVARA_PH_VOWEL_NEAR_I) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_NEARI, dst); }
+    if (p == SVARA_PH_VOWEL_NEAR_U) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_NEARU, dst); }
+    if (p == SVARA_PH_VOWEL_OPEN_A) {
+        return svara_ph_vtb_into(dst, 745, 1100, 2440, 3300, 3750, 85, 90, 110, 130, 150);
+    }
+    if (p == SVARA_PH_VOWEL_BIRD) { return svara_ph_vtb_into(dst, 580, 1400, 2500, 3300, 3750, 70, 80, 100, 120, 140); }
+    if ((p == SVARA_PH_VOWEL_OPEN_E) | (p == SVARA_PH_VOWEL_CUP_V)) {
+        return svara_ph_vt_into(dst, 600, 1770, 2500, 3300, 3750);
+    }
 
     # diphthong start targets
-    if ((p == SVARA_PH_DIPH_AI) | (p == SVARA_PH_DIPH_AU)) { return svara_vowel_target_from_vowel(SVARA_VOWEL_A); }
-    if (p == SVARA_PH_DIPH_OI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_OPENO); }
-    if (p == SVARA_PH_DIPH_EI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_E); }
-    if (p == SVARA_PH_DIPH_OU) { return svara_vowel_target_from_vowel(SVARA_VOWEL_O); }
+    if ((p == SVARA_PH_DIPH_AI) | (p == SVARA_PH_DIPH_AU)) {
+        return svara_vowel_target_from_vowel_into(SVARA_VOWEL_A, dst);
+    }
+    if (p == SVARA_PH_DIPH_OI) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_OPENO, dst); }
+    if (p == SVARA_PH_DIPH_EI) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_E, dst); }
+    if (p == SVARA_PH_DIPH_OU) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_O, dst); }
 
     # IPA-extension vowels (explicit bandwidths)
-    if (p == SVARA_PH_VOWEL_Y) { return svara_ph_vtb(320, 1800, 2400, 3300, 3750, 45, 70, 90, 120, 140); }
+    if (p == SVARA_PH_VOWEL_Y) { return svara_ph_vtb_into(dst, 320, 1800, 2400, 3300, 3750, 45, 70, 90, 120, 140); }
     if (p == SVARA_PH_VOWEL_FRONT_ROUND_O) {
-        return svara_ph_vtb(400, 1600, 2400, 3300, 3750, 55, 75, 95, 120, 140);
+        return svara_ph_vtb_into(dst, 400, 1600, 2400, 3300, 3750, 55, 75, 95, 120, 140);
     }
     if (p == SVARA_PH_VOWEL_OPEN_FRONT_ROUND_O) {
-        return svara_ph_vtb(550, 1500, 2400, 3300, 3750, 70, 80, 100, 120, 140);
+        return svara_ph_vtb_into(dst, 550, 1500, 2400, 3300, 3750, 70, 80, 100, 120, 140);
     }
     if (p == SVARA_PH_VOWEL_CLOSE_BACK_UNROUNDED) {
-        return svara_ph_vtb(350, 1300, 2400, 3300, 3750, 45, 65, 90, 120, 140);
+        return svara_ph_vtb_into(dst, 350, 1300, 2400, 3300, 3750, 45, 65, 90, 120, 140);
     }
     if (p == SVARA_PH_VOWEL_MID_BACK_UNROUNDED) {
-        return svara_ph_vtb(460, 1250, 2450, 3300, 3750, 55, 70, 95, 120, 140);
+        return svara_ph_vtb_into(dst, 460, 1250, 2450, 3300, 3750, 55, 70, 95, 120, 140);
     }
     if (p == SVARA_PH_VOWEL_CLOSE_CENTRAL) {
-        return svara_ph_vtb(330, 1650, 2450, 3300, 3750, 45, 70, 90, 120, 140);
+        return svara_ph_vtb_into(dst, 330, 1650, 2450, 3300, 3750, 45, 70, 90, 120, 140);
     }
     if (p == SVARA_PH_VOWEL_CLOSE_CENTRAL_ROUNDED) {
-        return svara_ph_vtb(310, 1500, 2300, 3300, 3750, 45, 70, 90, 120, 140);
+        return svara_ph_vtb_into(dst, 310, 1500, 2300, 3300, 3750, 45, 70, 90, 120, 140);
     }
 
     # neutral-tract (schwa) consonants
     if ((p == SVARA_PH_FRIC_H) | (p == SVARA_PH_GLOTTAL_STOP) | (p == SVARA_PH_FRIC_GLOTTAL_H)) {
-        return svara_vowel_target_from_vowel(SVARA_VOWEL_SCHWA);
+        return svara_vowel_target_from_vowel_into(SVARA_VOWEL_SCHWA, dst);
     }
 
     # consonant locus targets (grouped by identical target)
@@ -338,7 +366,7 @@ fn svara_phoneme_formants(p) {
       | (p == SVARA_PH_FRIC_BILABIAL_PH) | (p == SVARA_PH_FRIC_BILABIAL_B)
       | (p == SVARA_PH_TRILL_BILABIAL) | (p == SVARA_PH_CLICK_BILABIAL)
       | (p == SVARA_PH_EJECTIVE_P) | (p == SVARA_PH_IMPLOSIVE_B)) {
-        return svara_ph_vt(350, 900, 2400, 3300, 3750);
+        return svara_ph_vt_into(dst, 350, 900, 2400, 3300, 3750);
     }
     # alveolar locus (400, 1750, 2600)
     if ((p == SVARA_PH_PLOSIVE_T) | (p == SVARA_PH_PLOSIVE_D) | (p == SVARA_PH_NASAL_N)
@@ -346,63 +374,67 @@ fn svara_phoneme_formants(p) {
       | (p == SVARA_PH_TAP_FLAP) | (p == SVARA_PH_AFFR_TS) | (p == SVARA_PH_AFFR_DZ)
       | (p == SVARA_PH_CLICK_ALVEOLAR) | (p == SVARA_PH_EJECTIVE_T) | (p == SVARA_PH_EJECTIVE_S)
       | (p == SVARA_PH_IMPLOSIVE_D)) {
-        return svara_ph_vt(400, 1750, 2600, 3300, 3750);
+        return svara_ph_vt_into(dst, 400, 1750, 2600, 3300, 3750);
     }
     # velar locus (350, 1800, 2500)
     if ((p == SVARA_PH_PLOSIVE_K) | (p == SVARA_PH_PLOSIVE_G) | (p == SVARA_PH_NASAL_NG)
       | (p == SVARA_PH_EJECTIVE_K) | (p == SVARA_PH_IMPLOSIVE_G)) {
-        return svara_ph_vt(350, 1800, 2500, 3300, 3750);
+        return svara_ph_vt_into(dst, 350, 1800, 2500, 3300, 3750);
     }
     # labiodental (350, 1050, 2400)
     if ((p == SVARA_PH_FRIC_F) | (p == SVARA_PH_FRIC_V) | (p == SVARA_PH_AFFR_PF)) {
-        return svara_ph_vt(350, 1050, 2400, 3300, 3750);
+        return svara_ph_vt_into(dst, 350, 1050, 2400, 3300, 3750);
     }
     # postalveolar (350, 1600, 2500)
     if ((p == SVARA_PH_FRIC_SH) | (p == SVARA_PH_FRIC_ZH) | (p == SVARA_PH_AFFR_CH)
       | (p == SVARA_PH_AFFR_J) | (p == SVARA_PH_EJECTIVE_CH)) {
-        return svara_ph_vt(350, 1600, 2500, 3300, 3750);
+        return svara_ph_vt_into(dst, 350, 1600, 2500, 3300, 3750);
     }
     # dental (350, 1400, 2500)
-    if ((p == SVARA_PH_FRIC_TH) | (p == SVARA_PH_FRIC_DH)) { return svara_ph_vt(350, 1400, 2500, 3300, 3750); }
+    if ((p == SVARA_PH_FRIC_TH) | (p == SVARA_PH_FRIC_DH)) {
+        return svara_ph_vt_into(dst, 350, 1400, 2500, 3300, 3750);
+    }
     # rhotic / retroflex approximant (350, 1300, 1600)
-    if ((p == SVARA_PH_APPROX_R) | (p == SVARA_PH_APPROX_RETRO)) { return svara_ph_vt(350, 1300, 1600, 3300, 3750); }
-    if (p == SVARA_PH_APPROX_W) { return svara_ph_vt(300, 700, 2200, 3300, 3750); }
-    if (p == SVARA_PH_APPROX_J) { return svara_ph_vt(280, 2200, 2900, 3300, 3750); }
+    if ((p == SVARA_PH_APPROX_R) | (p == SVARA_PH_APPROX_RETRO)) {
+        return svara_ph_vt_into(dst, 350, 1300, 1600, 3300, 3750);
+    }
+    if (p == SVARA_PH_APPROX_W) { return svara_ph_vt_into(dst, 300, 700, 2200, 3300, 3750); }
+    if (p == SVARA_PH_APPROX_J) { return svara_ph_vt_into(dst, 280, 2200, 2900, 3300, 3750); }
     # uvular locus (350, 1100, 2300)
     if ((p == SVARA_PH_PLOSIVE_UVULAR_Q) | (p == SVARA_PH_PLOSIVE_UVULAR_G)
       | (p == SVARA_PH_FRIC_UVULAR_CH) | (p == SVARA_PH_FRIC_UVULAR_R)
       | (p == SVARA_PH_NASAL_UVULAR) | (p == SVARA_PH_TRILL_UVULAR) | (p == SVARA_PH_LATERAL_VELAR)) {
-        return svara_ph_vt(350, 1100, 2300, 3300, 3750);
+        return svara_ph_vt_into(dst, 350, 1100, 2300, 3300, 3750);
     }
     # retroflex locus (400, 1550, 2000)
     if ((p == SVARA_PH_PLOSIVE_RETRO_T) | (p == SVARA_PH_PLOSIVE_RETRO_D)
       | (p == SVARA_PH_FRIC_RETRO_S) | (p == SVARA_PH_FRIC_RETRO_Z)
       | (p == SVARA_PH_NASAL_RETRO) | (p == SVARA_PH_FLAP_RETRO)
       | (p == SVARA_PH_AFFR_RETRO) | (p == SVARA_PH_AFFR_RETRO_VOICED)) {
-        return svara_ph_vt(400, 1550, 2000, 3300, 3750);
+        return svara_ph_vt_into(dst, 400, 1550, 2000, 3300, 3750);
     }
     # palatal (300, 2200, 2900)
     if ((p == SVARA_PH_FRIC_PALATAL_C) | (p == SVARA_PH_FRIC_PALATAL_J) | (p == SVARA_PH_NASAL_PALATAL)) {
-        return svara_ph_vt(300, 2200, 2900, 3300, 3750);
+        return svara_ph_vt_into(dst, 300, 2200, 2900, 3300, 3750);
     }
     # pharyngeal (700, 1000, 2400)
     if ((p == SVARA_PH_FRIC_PHARYNGEAL_H) | (p == SVARA_PH_FRIC_PHARYNGEAL_A)) {
-        return svara_ph_vt(700, 1000, 2400, 3300, 3750);
+        return svara_ph_vt_into(dst, 700, 1000, 2400, 3300, 3750);
     }
     # lateral fricative / affricate (400, 1600, 2500)
     if ((p == SVARA_PH_FRIC_LATERAL_S) | (p == SVARA_PH_FRIC_LATERAL_Z)
       | (p == SVARA_PH_FLAP_LATERAL) | (p == SVARA_PH_AFFR_LATERAL)) {
-        return svara_ph_vt(400, 1600, 2500, 3300, 3750);
+        return svara_ph_vt_into(dst, 400, 1600, 2500, 3300, 3750);
     }
-    if (p == SVARA_PH_TRILL_ALVEOLAR) { return svara_ph_vt(400, 1500, 2500, 3300, 3750); }
-    if (p == SVARA_PH_LATERAL_PALATAL) { return svara_ph_vt(300, 2000, 2800, 3300, 3750); }
+    if (p == SVARA_PH_TRILL_ALVEOLAR) { return svara_ph_vt_into(dst, 400, 1500, 2500, 3300, 3750); }
+    if (p == SVARA_PH_LATERAL_PALATAL) { return svara_ph_vt_into(dst, 300, 2000, 2800, 3300, 3750); }
     # clicks (per place)
-    if (p == SVARA_PH_CLICK_DENTAL) { return svara_ph_vt(400, 1500, 2600, 3300, 3750); }
-    if (p == SVARA_PH_CLICK_PALATAL) { return svara_ph_vt(350, 2000, 2800, 3300, 3750); }
-    if (p == SVARA_PH_CLICK_LATERAL) { return svara_ph_vt(400, 1500, 2500, 3300, 3750); }
+    if (p == SVARA_PH_CLICK_DENTAL) { return svara_ph_vt_into(dst, 400, 1500, 2600, 3300, 3750); }
+    if (p == SVARA_PH_CLICK_PALATAL) { return svara_ph_vt_into(dst, 350, 2000, 2800, 3300, 3750); }
+    if (p == SVARA_PH_CLICK_LATERAL) { return svara_ph_vt_into(dst, 400, 1500, 2500, 3300, 3750); }
 
     # Silence (and any fallthrough)
-    return svara_ph_vt(500, 1500, 2500, 3300, 3750);
+    return svara_ph_vt_into(dst, 500, 1500, 2500, 3300, 3750);
 }
 
 # ================================================================
@@ -596,58 +628,102 @@ fn svara_ph_buf_to_vec(buf, n) {
 # diphthong_end_target -- the glide's end vowel target.
 #must_use
 fn svara_ph_diphthong_end_target(phoneme) {
-    if (phoneme == SVARA_PH_DIPH_AI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_I); }
-    if (phoneme == SVARA_PH_DIPH_AU) { return svara_vowel_target_from_vowel(SVARA_VOWEL_U); }
-    if (phoneme == SVARA_PH_DIPH_OI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_I); }
-    if (phoneme == SVARA_PH_DIPH_EI) { return svara_vowel_target_from_vowel(SVARA_VOWEL_I); }
-    if (phoneme == SVARA_PH_DIPH_OU) { return svara_vowel_target_from_vowel(SVARA_VOWEL_U); }
-    return svara_phoneme_formants(phoneme);
+    return svara_ph_diphthong_end_target_into(phoneme, alloc(sizeof(SvVowelTarget)));
+}
+
+# ph_diphthong_end_target_into -- as above, written into `dst`, which it returns. One table serves
+# both, so the two give the same bits; a synthesis context keeps `dst`.
+#must_use
+fn svara_ph_diphthong_end_target_into(phoneme, dst) {
+    if (phoneme == SVARA_PH_DIPH_AI) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_I, dst); }
+    if (phoneme == SVARA_PH_DIPH_AU) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_U, dst); }
+    if (phoneme == SVARA_PH_DIPH_OI) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_I, dst); }
+    if (phoneme == SVARA_PH_DIPH_EI) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_I, dst); }
+    if (phoneme == SVARA_PH_DIPH_OU) { return svara_vowel_target_from_vowel_into(SVARA_VOWEL_U, dst); }
+    return svara_phoneme_formants_into(phoneme, dst);
 }
 
 # fricative_formants -- noise-shaping formants (vec of Formant) for frication.
 #must_use
 fn svara_ph_fricative_formants(phoneme) {
+    var pr[48];
+    var n = svara_ph_fricative_params(phoneme, &pr);
     var v = vec_new();
+    var k = 0;
+    while (k < n) {
+        vec_push(v, svara_formant_new(load64(&pr + k * 24), load64(&pr + k * 24 + 8), load64(&pr + k * 24 + 16)));
+        k = k + 1;
+    }
+    return v;
+}
+
+# fricative_formants_into -- the same formants written into `fa` and `fb`, two
+# formants the caller keeps, with `v` (a vec the caller keeps) refilled to hold
+# the one or two in use. vec_truncate keeps the capacity, so refilling `v` does
+# not allocate. Returns `v`.
+#must_use
+fn svara_ph_fricative_formants_into(phoneme, v, fa, fb) {
+    var pr[48];
+    var n = svara_ph_fricative_params(phoneme, &pr);
+    vec_truncate(v, 0);
+    SvFormant_set_frequency(fa, load64(&pr));
+    SvFormant_set_bandwidth(fa, load64(&pr + 8));
+    SvFormant_set_amplitude(fa, load64(&pr + 16));
+    vec_push(v, fa);
+    if (n == 2) {
+        SvFormant_set_frequency(fb, load64(&pr + 24));
+        SvFormant_set_bandwidth(fb, load64(&pr + 32));
+        SvFormant_set_amplitude(fb, load64(&pr + 40));
+        vec_push(v, fb);
+    }
+    return v;
+}
+
+# fric_put -- store (freq, bw, amp) for two formants into out[0..5] and return n.
+#must_use
+fn svara_ph_fric_put(out, f0, b0, a0, f1, b1, a1, n) {
+    store64(out, f0); store64(out + 8, b0); store64(out + 16, a0);
+    store64(out + 24, f1); store64(out + 32, b1); store64(out + 40, a1);
+    return n;
+}
+
+# fricative_params -- the noise-shaping formants for `phoneme` as (frequency,
+# bandwidth, amplitude) triples in out[0..5], returning how many (1 or 2). The
+# one table behind svara_ph_fricative_formants and its _into form.
+#must_use
+fn svara_ph_fricative_params(phoneme, out) {
     if ((phoneme == SVARA_PH_FRIC_S) | (phoneme == SVARA_PH_FRIC_Z)
       | (phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_AFFR_TS) | (phoneme == SVARA_PH_AFFR_DZ)) {
-        vec_push(v, svara_formant_new(f64_from(4500), f64_from(500), F64_ONE));
-        vec_push(v, svara_formant_new(f64_from(7000), f64_from(800), SV_PH_R07));
-        return v;
+        return svara_ph_fric_put(out, f64_from(4500), f64_from(500), F64_ONE,
+          f64_from(7000), f64_from(800), SV_PH_R07, 2);
     }
     if ((phoneme == SVARA_PH_FRIC_SH) | (phoneme == SVARA_PH_FRIC_ZH)
       | (phoneme == SVARA_PH_AFFR_CH) | (phoneme == SVARA_PH_AFFR_J) | (phoneme == SVARA_PH_EJECTIVE_CH)) {
-        vec_push(v, svara_formant_new(f64_from(2800), f64_from(600), F64_ONE));
-        vec_push(v, svara_formant_new(f64_from(5000), f64_from(800), SV_PH_R06));
-        return v;
+        return svara_ph_fric_put(out, f64_from(2800), f64_from(600), F64_ONE,
+          f64_from(5000), f64_from(800), SV_PH_R06, 2);
     }
     if ((phoneme == SVARA_PH_FRIC_F) | (phoneme == SVARA_PH_FRIC_V) | (phoneme == SVARA_PH_AFFR_PF)) {
-        vec_push(v, svara_formant_new(f64_from(3000), f64_from(2000), SV_PH_R05));
-        vec_push(v, svara_formant_new(f64_from(8000), f64_from(2000), SV_PH_030));
-        return v;
+        return svara_ph_fric_put(out, f64_from(3000), f64_from(2000), SV_PH_R05,
+          f64_from(8000), f64_from(2000), SV_PH_030, 2);
     }
     if ((phoneme == SVARA_PH_FRIC_TH) | (phoneme == SVARA_PH_FRIC_DH)) {
-        vec_push(v, svara_formant_new(f64_from(4000), f64_from(1500), SV_PH_R04));
-        vec_push(v, svara_formant_new(f64_from(7500), f64_from(1500), SV_PH_030));
-        return v;
+        return svara_ph_fric_put(out, f64_from(4000), f64_from(1500), SV_PH_R04,
+          f64_from(7500), f64_from(1500), SV_PH_030, 2);
     }
     if (phoneme == SVARA_PH_FRIC_H) {
-        vec_push(v, svara_formant_new(f64_from(1500), f64_from(800), SV_PH_R04));
-        vec_push(v, svara_formant_new(f64_from(2500), f64_from(800), SV_PH_030));
-        return v;
+        return svara_ph_fric_put(out, f64_from(1500), f64_from(800), SV_PH_R04,
+          f64_from(2500), f64_from(800), SV_PH_030, 2);
     }
     if ((phoneme == SVARA_PH_AFFR_RETRO) | (phoneme == SVARA_PH_AFFR_RETRO_VOICED)) {
-        vec_push(v, svara_formant_new(f64_from(3200), f64_from(600), F64_ONE));
-        vec_push(v, svara_formant_new(f64_from(5500), f64_from(800), SV_PH_R06));
-        return v;
+        return svara_ph_fric_put(out, f64_from(3200), f64_from(600), F64_ONE,
+          f64_from(5500), f64_from(800), SV_PH_R06, 2);
     }
     if (phoneme == SVARA_PH_AFFR_LATERAL) {
-        vec_push(v, svara_formant_new(f64_from(3500), f64_from(800), SV_PH_R07));
-        vec_push(v, svara_formant_new(f64_from(6000), f64_from(1000), SV_PH_R04));
-        return v;
+        return svara_ph_fric_put(out, f64_from(3500), f64_from(800), SV_PH_R07,
+          f64_from(6000), f64_from(1000), SV_PH_R04, 2);
     }
     # default noise shaping
-    vec_push(v, svara_formant_new(f64_from(3000), f64_from(1000), SV_PH_R05));
-    return v;
+    return svara_ph_fric_put(out, f64_from(3000), f64_from(1000), SV_PH_R05, 0, 0, 0, 1);
 }
 
 # ---- per-class synthesis (return raw buffer of n f64, or neg error) --------
@@ -1168,7 +1244,18 @@ fn svara_phoneme_synthesize_nasalized(phoneme, voice, sample_rate, duration, nas
 # via svara_synthctx_buffer(ctx)[0..count].
 # ================================================================
 #derive(accessors)
-struct SvSynthCtx { tract; glottal; noise; fric_filter; buffer; buffer_cap; sample_rate; }
+# Everything after sample_rate is per-phoneme scratch the context keeps, so that
+# a warmed context allocates nothing per phoneme (filed by hoosh against 3.6.3: a
+# server renders on every request, and the bump allocator never frees). Through
+# 3.6.4 each phoneme built its targets, and fricatives and bursts their filters,
+# afresh: 160 to 1,048 bytes a phoneme. None of it is state: each phoneme
+# overwrites what it reads, and the filters are re-initialized exactly as a new
+# one would be (svara_formant_filter_rebuild), so the output is unchanged.
+struct SvSynthCtx {
+    tract; glottal; noise; fric_filter; buffer; buffer_cap; sample_rate;
+    burst_filter; burst_formants; fric_formants; fric_fa; fric_fb;
+    vt_raw; vt_target; vt_end; vt_cur;
+}
 
 # new -- build a context for a voice + sample rate. Returns ptr or neg error.
 #must_use
@@ -1185,7 +1272,71 @@ fn svara_synthctx_new(voice, sample_rate) {
     SvSynthCtx_set_buffer(self, 0);
     SvSynthCtx_set_buffer_cap(self, 0);
     SvSynthCtx_set_sample_rate(self, sample_rate);
+    SvSynthCtx_set_burst_filter(self, 0);
+    SvSynthCtx_set_burst_formants(self, 0);
+    SvSynthCtx_set_fric_formants(self, 0);
+    SvSynthCtx_set_fric_fa(self, 0);
+    SvSynthCtx_set_fric_fb(self, 0);
+    SvSynthCtx_set_vt_raw(self, alloc(sizeof(SvVowelTarget)));
+    SvSynthCtx_set_vt_target(self, alloc(sizeof(SvVowelTarget)));
+    SvSynthCtx_set_vt_end(self, alloc(sizeof(SvVowelTarget)));
+    SvSynthCtx_set_vt_cur(self, alloc(sizeof(SvVowelTarget)));
     return self;
+}
+
+# target -- `voice`'s scaled formant target for `phoneme`, in the context's own
+# vt_target. It stays valid until the next call; vt_raw is free again after it.
+#must_use
+fn svara_synthctx_target(self, phoneme, voice) {
+    var raw = svara_phoneme_formants_into(phoneme, SvSynthCtx_vt_raw(self));
+    return svara_voice_apply_formant_scale_into(voice, raw, SvSynthCtx_vt_target(self));
+}
+
+# burst_filter -- the context's burst filter, set to `target`'s five formants:
+# built on first use, then re-initialized in place, which gives the same filter
+# a new one would. Returns it, or a neg error with the filter unchanged.
+#must_use
+fn svara_synthctx_burst_filter(self, target) {
+    var fv = SvSynthCtx_burst_formants(self);
+    if (fv == 0) {
+        fv = svara_formant_scratch_vec();
+        SvSynthCtx_set_burst_formants(self, fv);
+    }
+    svara_vowel_target_to_formants_into(target, fv);
+    var f = SvSynthCtx_burst_filter(self);
+    if (f == 0) {
+        f = svara_formant_filter_new(fv, SvSynthCtx_sample_rate(self));
+        if (svara_is_err(f) == 1) { return f; }
+        SvSynthCtx_set_burst_filter(self, f);
+        return f;
+    }
+    var e = svara_formant_filter_rebuild(f, fv);
+    if (svara_is_err(e) == 1) { return e; }
+    return f;
+}
+
+# fric_filter -- the context's frication filter, set to `phoneme`'s noise-shaping
+# formants, on the same terms as svara_synthctx_burst_filter.
+#must_use
+fn svara_synthctx_fric_filter(self, phoneme) {
+    var fv = SvSynthCtx_fric_formants(self);
+    if (fv == 0) {
+        fv = vec_new();
+        SvSynthCtx_set_fric_formants(self, fv);
+        SvSynthCtx_set_fric_fa(self, svara_formant_new(0, 0, 0));
+        SvSynthCtx_set_fric_fb(self, svara_formant_new(0, 0, 0));
+    }
+    var fi = svara_ph_fricative_formants_into(phoneme, fv, SvSynthCtx_fric_fa(self), SvSynthCtx_fric_fb(self));
+    var f = SvSynthCtx_fric_filter(self);
+    if (f == 0) {
+        f = svara_formant_filter_new(fv, SvSynthCtx_sample_rate(self));
+        if (svara_is_err(f) == 1) { return f; }
+        SvSynthCtx_set_fric_filter(self, f);
+        return f;
+    }
+    var e = svara_formant_filter_rebuild(f, fv);
+    if (svara_is_err(e) == 1) { return e; }
+    return f;
 }
 
 # sample rate in Hz this context was built for.
@@ -1315,14 +1466,17 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
     var buf = SvSynthCtx_buffer(self);
     var tract = SvSynthCtx_tract(self);
     var g = SvSynthCtx_glottal(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var target = svara_synthctx_target(self, phoneme, voice);
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_coupling(tract, 0);
     var is_diph = 0;
     if (svara_phoneme_class(phoneme) == SVARA_CLASS_DIPHTHONG) { is_diph = 1; }
     var endt = 0;
-    if (is_diph == 1) { endt = svara_voice_apply_formant_scale(voice, svara_ph_diphthong_end_target(phoneme)); }
+    if (is_diph == 1) {
+        var endraw = svara_ph_diphthong_end_target_into(phoneme, SvSynthCtx_vt_raw(self));
+        endt = svara_voice_apply_formant_scale_into(voice, endraw, SvSynthCtx_vt_end(self));
+    }
 
     var use_nasal = 0;
     var onset = 0;
@@ -1341,7 +1495,7 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
         return SVARA_ERR_NONE;
     }
 
-    var cur = svara_vowel_target_new(0, 0, 0, 0, 0);
+    var cur = SvSynthCtx_vt_cur(self);
     var i = 0;
     while (i < n) {
         if (is_diph == 1) {
@@ -1364,7 +1518,7 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
 #must_use
 fn svara_synthctx_nasal(self, phoneme, voice, n) {
     var tract = SvSynthCtx_tract(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var target = svara_synthctx_target(self, phoneme, voice);
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_coupling(tract, SV_PH_08);
@@ -1382,12 +1536,12 @@ fn svara_synthctx_nasal(self, phoneme, voice, n) {
 fn svara_synthctx_fricative(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
     var noise = SvSynthCtx_noise(self);
-    var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), SvSynthCtx_sample_rate(self));
+    var filter = svara_synthctx_fric_filter(self, phoneme);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     if (svara_phoneme_is_voiced(phoneme) == 1) {
         var tract = SvSynthCtx_tract(self);
         var g = SvSynthCtx_glottal(self);
-        var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+        var target = svara_synthctx_target(self, phoneme, voice);
         var e = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(e) == 1) { return e; }
         svara_tract_set_nasal_coupling(tract, 0);
@@ -1406,7 +1560,6 @@ fn svara_synthctx_fricative(self, phoneme, voice, n) {
             i = i + 1;
         }
     }
-    SvSynthCtx_set_fric_filter(self, filter);
     return SVARA_ERR_NONE;
 }
 
@@ -1421,8 +1574,8 @@ fn svara_synthctx_plosive(self, phoneme, voice, n) {
     var burst_extra = n / 6;
     if (burst_extra < 1) { burst_extra = 1; }
     var burst_end = closure_end + burst_extra;
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
-    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), SvSynthCtx_sample_rate(self));
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     var z = 0;
     while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
@@ -1467,8 +1620,8 @@ fn svara_synthctx_affricate(self, phoneme, voice, n) {
     var burst_extra = n / 8;
     if (burst_extra < 1) { burst_extra = 1; }
     var burst_end = closure_end + burst_extra;
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
-    var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), SvSynthCtx_sample_rate(self));
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_fric_filter(self, phoneme);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     var z = 0;
     while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
@@ -1509,7 +1662,7 @@ fn svara_synthctx_approx(self, phoneme, voice, n) {
     var tract = SvSynthCtx_tract(self);
     var g = SvSynthCtx_glottal(self);
     var buf = SvSynthCtx_buffer(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var target = svara_synthctx_target(self, phoneme, voice);
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_coupling(tract, 0);
@@ -1526,8 +1679,8 @@ fn svara_synthctx_approx(self, phoneme, voice, n) {
 fn svara_synthctx_click(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
     var noise = SvSynthCtx_noise(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
-    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), SvSynthCtx_sample_rate(self));
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     var burst_start = n * 6 / 10;
     var span = n - burst_start;
@@ -1549,8 +1702,8 @@ fn svara_synthctx_click(self, phoneme, voice, n) {
 fn svara_synthctx_ejective(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
     var noise = SvSynthCtx_noise(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
-    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), SvSynthCtx_sample_rate(self));
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
     var is_fric = 0;
     if ((phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_EJECTIVE_CH)) { is_fric = 1; }
@@ -1568,7 +1721,7 @@ fn svara_synthctx_ejective(self, phoneme, voice, n) {
     var release_len = n - burst_end;
     if (release_len < 1) { release_len = 1; }
     if (is_fric == 1) {
-        var fric_filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), SvSynthCtx_sample_rate(self));
+        var fric_filter = svara_synthctx_fric_filter(self, phoneme);
         if (svara_is_err(fric_filter) == 1) { return SVARA_ERR_ARTICULATION; }
         var jj = 0;
         var k = burst_end;
@@ -1599,7 +1752,7 @@ fn svara_synthctx_implosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
     var tract = SvSynthCtx_tract(self);
     var g = SvSynthCtx_glottal(self);
-    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var target = svara_synthctx_target(self, phoneme, voice);
     var e = svara_tract_set_formants_from_target(tract, target);
     if (svara_is_err(e) == 1) { return e; }
     svara_tract_set_nasal_coupling(tract, 0);

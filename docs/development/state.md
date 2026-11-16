@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.6.5** (2026-11-16) — **the Rust tests left unported, and the three filed issues.**
+Every Rust `#[test]` was mapped onto the suites: 4 had no Cyrius assertion and 21 a
+weaker one, and all 25 are now ported from the Rust, with no defect found. Concurrent
+renders that share no object are safe (module scratch moved into objects or onto the
+stack, or locked), a bandwidth whose coefficients overflow is refused
+([ADR-0010](../adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md)), and a
+warmed context allocates nothing per phoneme. Audio and JSON are unchanged across
+558,721 values; seven hostile cases now refuse. **1,239 assertions / 25 suites**,
+`cyrius audit` exit 0.
+
 **3.6.4** (2026-11-16) — **each dep's newest tag.** hisab 3.5.0, naad 2.3.5, goonj
 2.3.2; sakshi 2.5.10 is now a stdlib leaf, declared in `[deps].stdlib`. cyrius stays
 6.7.18, and the consumer floor stays 6.7.2, re-measured. No API change, and audio,
@@ -246,9 +256,10 @@ parity oracle.
   source of truth; CI reads it and never hardcodes a version)
 - **Consumer floor**: cyrius **6.7.2**, measured from `dist/svara.cyr`. It is what
   a consumer needs, and it is lower than the pin.
-- `lib/` holds 33 stdlib files vendored from `~/.cyrius/versions/6.7.18/lib`
-  (verified byte-identical file by file, sakshi among them since 3.6.4) plus the 3
-  dependency bundles. `cyrius.lock`: 36 deps locked, 3 commit-pinned.
+- `lib/` holds 42 stdlib files vendored from `~/.cyrius/versions/6.7.18/lib`
+  (sakshi among them since 3.6.4, and `thread` with its 8 companions since 3.6.5,
+  for `tests/concurrency.tcyr` only) plus the 3 dependency bundles. `cyrius.lock`:
+  45 deps locked, 3 commit-pinned.
 - **`cyrfmt` canonical continuation indent is 2 spaces per open-paren level**
   (4 also accepted). 6.5.28 fixed the formatter, which had never tracked
   parentheses; the pre-6.5.28 8-space convention is retired.
@@ -306,11 +317,11 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,150 `.tcyr` assertions across 24 suites: error / rng / smooth / lod / formant /
+1,239 `.tcyr` assertions across 25 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
-**allocrefused** / **oracle** / **integration** / **logging** (+ the `svara.tcyr`
-smoke) — all passing, all lint-clean. One build warning, on purpose:
+**allocrefused** / **concurrency** / **oracle** / **integration** / **logging** (+ the
+`svara.tcyr` smoke) — all passing, all lint-clean. One build warning, on purpose:
 `allocrefused.tcyr` redefines `alloc`, and cyrius reports the duplicate. Run one suite: `cyrius test tests/<mod>.tcyr`;
 the whole tree recursively: `cyrius test tests`. `tests/logging.tcyr` needs
 `./scripts/check-logging.sh` to be exercised with logging ON (58 more
@@ -318,7 +329,7 @@ assertions), because `cyrius test` does not forward `-D`.
 
 Five of them are not plain parity ports and exist for reasons worth knowing:
 
-- **`hardening.tcyr` (199)** — adversarial inputs for the hazard class in
+- **`hardening.tcyr` (212)** — adversarial inputs for the hazard class in
   [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md), and since
   3.6.3 one group per sweep repair. Its discrimination is **measured, not
   asserted**: ten public-API probes re-run against a 3.1.2 checkout on the same
@@ -329,25 +340,31 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   controls.
 - **`integration.tcyr` (26)** — the 16 Rust integration tests, 10 of which were
   never ported before 3.6.3.
-- **`oracle.tcyr` (69)** — five scenarios the Rust asserted and the port
-  asserted nowhere, found by auditing `rust-old/`'s 213 tests against the Cyrius
-  suites. Every expected value is **re-derived from the Rust and cited by line**,
+- **`oracle.tcyr` (120)** — scenarios the Rust asserted and the port asserted
+  nowhere or more weakly: five found by auditing `rust-old/`'s tests in 3.5.1, and
+  25 more in 3.6.5 when every one of its 210 `#[test]`s was mapped onto the suites. Every expected value is **re-derived from the Rust and cited by line**,
   never taken from running svara. **A suite that ports another suite inherits its
   blind spots** — `svara_tract_set_quality` appeared in no suite or bench at all.
 - **`logging.tcyr` (12 off / 58 on)** — the `-D LOGGING` contract. The OFF half
   asserts the four instrumented entry points still behave identically, which is
   what proves the `#ifdef` blocks in their return paths changed nothing.
+- **`concurrency.tcyr` (12, 3.6.5)** — threads that share no object render at once.
+  The filed repro (four threads, 4,000 renders), then the tract, glottal, prosody
+  and spectral paths hammered from two or four threads, each result compared bit
+  for bit with one computed alone. Against 3.6.4's source every check fails, up to
+  310,349 mismatches. Needs the stdlib `thread` leaf, declared for it alone.
 - **`allocrefused.tcyr` (23, 3.6.4)** — replaces the stdlib `alloc` and refuses
   each allocation naad makes for svara's glottal source and tract, located by
   measured counts, never by written-down indices. A refused naad allocation must
   come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
   source it reports 0 of 6 and `restore` ends the run.
-- **`allocbudget.tcyr` (41)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (44)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
   arch-specific). Plus the marginal-bytes-per-sample budget, each bound paired
-  with a control proving the measurement is not reading zero.
+  with a control proving the measurement is not reading zero, and since 3.6.5 a
+  warmed context's zero bytes per phoneme across every class.
 
 ## Benchmarks
 
@@ -372,10 +389,10 @@ All green on the 6.7.18 pin:
 
 | Gate | Command | Result |
 |---|---|---|
-| fmt | `cyrfmt --check <f>` | clean (44 files) |
+| fmt | `cyrfmt --check <f>` | clean (45 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 24/24 suites, 1,150 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 25/25 suites, 1,239 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
@@ -431,7 +448,8 @@ the upgrade policy and the symbols svara actually consumes.
 | **sakshi** | `2.5.10`, the leaf 6.7.18 ships | `[deps].stdlib` (3.6.4; a package through hisab before) | `src/logging.cyr`, only under `-D LOGGING`; also goonj's logging backend |
 
 **stdlib** (`[deps].stdlib`) — syscalls, string, alloc, str, fmt, vec, io, args,
-assert, math, ganita, tagged, result, fnptr, bench, sakshi. `bayan` + `hashmap` are **opt-in
+assert, math, ganita, tagged, result, fnptr, bench, sakshi, and `thread` for
+`tests/concurrency.tcyr` (nothing in `src/` creates a thread). `bayan` + `hashmap` are **opt-in
 via explicit `include`**, not stdlib entries (auto-vendor fails for them); every
 entry file that includes a `#derive(Serialize)` module also includes those two so
 the codecs are callable and warning-free. Consumers of `dist/svara.cyr` need
@@ -548,9 +566,10 @@ returns an empty vec. Silently. Use `_from_json_str`.
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
 list here. **3.7.0 is next**: retiring `rust-old/`. The 3.6.3 sweep was the oracle's
-last planned use, and five consumers now build against svara 3.6.3 at their own pins,
-which meets its gate under either reading. Three issues consumers filed against 3.6.3
-are open in [`issues/`](issues/) and on the roadmap.
+last planned use, five consumers build against svara 3.6.3 at their own pins, which
+meets its gate under either reading, and 3.6.5 ported the last Rust tests that had no
+Cyrius counterpart. Of the three issues filed against 3.6.3, two are resolved and
+archived; the third's streaming render is roadmap 3.8.x.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

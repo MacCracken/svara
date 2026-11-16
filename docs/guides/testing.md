@@ -48,8 +48,8 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**22 suites, 917 assertions.** One `.tcyr` per module, plus six that are not
-module ports:
+**25 suites, 1,239 assertions** at 3.6.5. One `.tcyr` per module, plus nine that
+are not module ports:
 
 | Suite | What it is |
 |---|---|
@@ -57,7 +57,10 @@ module ports:
 | `error` `rng` `smooth` `lod` `formant` `spectral` `glottal` `tract` `voice` `phoneme` `prosody` `trajectory` `sequence` `pool` `render` `bridge` | per-module ports of the Rust `#[test]` blocks |
 | `serde.tcyr` | JSON round-trips — 137 assertions |
 | `hardening.tcyr` | adversarial input for the [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md) hazard class |
-| `allocbudget.tcyr` | `_into`-variant equivalence + the per-sample arena budget |
+| `allocbudget.tcyr` | `_into`-variant equivalence, the per-sample arena budget, and a warmed context's zero bytes per phoneme |
+| `allocrefused.tcyr` | replaces the stdlib `alloc` and refuses each naad allocation behind a glottal source or tract; the one test build that warns, `duplicate fn 'alloc'`, on purpose |
+| `concurrency.tcyr` | threads that share no object render at once, compared bit for bit with renders done alone; needs the `thread` stdlib leaf |
+| `integration.tcyr` | the Rust integration tests, cross-module |
 | `oracle.tcyr` | scenarios the Rust asserted and the port did not — expectations re-derived from `rust-old/`, cited by line |
 | `logging.tcyr` | the `-D LOGGING` contract; run **both ways** by `scripts/check-logging.sh`, since `cyrius test` does not forward `-D` |
 
@@ -153,7 +156,19 @@ discover `tests/*.bcyr`.
 - **Performance change** — `./scripts/bench-history.sh` before and after, and
   state whether the metric is time or arena bytes.
 
-## Coverage gaps — closed in 3.5.1
+## Coverage gaps — closed in 3.5.1 and 3.6.5
+
+**3.6.5 mapped every Rust `#[test]`** (210, plus 3 doctests) onto the suites, one
+by one, matching on what each asserts rather than on its name. 4 had no Cyrius
+assertion at all and 21 had a weaker one: one member of a phoneme set where Rust
+renders them all, a looser threshold, a narrower input. All 25 are ported into
+`oracle.tcyr` and the module suites, citing `git show 3.6.4:rust-old/...`. No
+defect turned up, and one undocumented f32/f64 length difference did (ADR-0009
+SQ-LEN). Where a new control goes beyond what the Rust asserted, its expected
+value was read from the compiled oracle, and that caught a wrong guess: the Rust's
+cluster sequence is *shorter* than the one without the cluster, not longer.
+
+The 3.5.1 sweep, below, found the first five.
 
 Five scenarios the Rust asserted and the port asserted nowhere were found by
 auditing `rust-old/`'s 213 tests against the Cyrius suites. They are closed in

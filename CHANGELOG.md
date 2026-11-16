@@ -5,6 +5,122 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.5] - 2026-11-16 — the Rust tests left unported, and the three filed issues
+
+Repair release. It closes the 25 Rust tests that had no Cyrius counterpart or only a weaker one,
+the last check before `rust-old/` is retired (roadmap 3.7.0). It also resolves two of the three
+issues consumers filed against 3.6.3 and the first fix of the third:
+- concurrent renders could come back wrong;
+- a finite bandwidth past `sinh`'s overflow rendered NaN;
+- a warmed context allocated on every phoneme.
+
+**Audio on valid input and the JSON are identical to 3.6.4** across 558,721 values. Seven hostile
+cases change, all refusals (below). **1,239 assertions / 25 suites.** No function is removed or
+changes signature, 20 are added (below), and the consumer floor stays cyrius 6.7.2.
+
+### Fixed
+
+- **Two threads rendering at once, each on its own context, could get each other's samples**
+  ([issue](docs/development/issues/archived/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md),
+  hoosh). Module-level scratch was shared between objects, so one render read formants another
+  had written, and the wrong render returned success: 2 to 7 of 4,000 in the issue's repro.
+  - The tract's target scratch is now each tract's own, and the glottal LF triple a stack buffer.
+  - A prosody contour serializes, so it cannot hold a pointer (ADR-0002). Up to 64 points its
+    interpolation buffers are on the stack. Past that, and for the three spectral buffers, the
+    module-level scratch stays, under a lock per buffer.
+  - The locks follow the stdlib allocator's pattern: until a thread exists they cost a load and a
+    branch.
+  - **One object shared by two threads at once is still the caller's to avoid.** So is
+    `-D LOGGING` with concurrent renders: sakshi 2.5.10 keeps one unlocked span stack.
+- **A finite bandwidth past `asinh(f64::MAX) × sr / π` passed validation and rendered NaN**
+  ([issue](docs/development/issues/archived/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.md),
+  prani). At 44.1 kHz that is every bandwidth above 9,973,280 Hz, where `sinh` in the
+  coefficients overflows and every coefficient is NaN.
+  [ADR-0010](docs/adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md) supersedes the
+  ADR-0009 item that kept it, and `svara_formant_validate` and `svara_formant_filter_update` now
+  refuse such a bandwidth.
+  - The bound is the coefficient code's own: `svara_formant_bw_overflows` forms the argument
+    the same way and asks the same `f64_sinh`.
+  - Below `222 × sample_rate` it costs one comparison per formant, which replaced the finiteness
+    call `validate` made before, so `render_planned` retires 0.17% *fewer* instructions.
+- **A warmed synthesis context allocated on every phoneme**
+  ([issue](docs/development/issues/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
+  hoosh, fix 1 of 3). It kept 160 bytes per vowel, nasal or lateral, 400 per diphthong, and 816
+  to 1,048 per fricative, affricate or plosive. The bump allocator never frees, so a server kept
+  all of it.
+  - The context now keeps its targets and two filters, re-initialized in place with
+    `svara_formant_filter_rebuild`, which gives the same filter a new one would. It allocates
+    **nothing** per phoneme after the first of each class.
+  - `svara_synthctx_new` grows from 1,880 to 2,280 bytes.
+  - The streaming sequence render the same issue asks for adds public API, so it waits for a
+    minor (roadmap 3.8.x).
+
+### Added
+
+- **The 25 Rust test gaps, closed from the Rust.** Every `#[test]` in `rust-old/` (210, plus 3
+  doctests) was mapped onto the Cyrius suites. 4 had no assertion anywhere:
+  - cluster compression at render level;
+  - `bandwidth_widening`'s default;
+  - widening growing with f0;
+  - a nasalized diphthong.
+
+  21 had a weaker one: one click, ejective or implosive of each set where Rust renders all of
+  them; 4 of 34 IPA consonants; no nasal through `render_planned`; a context that never rendered
+  four of its classes; looser thresholds. Each is now in `tests/oracle.tcyr` (69 -> 120),
+  `tests/render.tcyr`, `tests/spectral.tcyr` or `tests/serde.tcyr`, citing
+  `git show 3.6.4:rust-old/...`.
+  - Where a control goes beyond Rust's assertion, its value was read from the compiled oracle,
+    not from svara. That caught one wrong expectation before it was written: Rust's cluster
+    sequence is **shorter** than the one without a cluster (5,765 vs 6,701 samples), not longer.
+  - **No defect was found.** One undocumented divergence was: an unstressed 0.1 s vowel at
+    44.1 kHz is 3,969 samples here and 3,968 in Rust. f32 computes `0.1 × 0.9 × 44100` as
+    3968.9998 and truncates down. It is recorded as ADR-0009 SQ-LEN, from the f64 core like PH-2.
+- **`tests/concurrency.tcyr` (12).** The issue's repro, then each former scratch hammered from
+  two or four threads and compared bit for bit with a result computed alone. Against 3.6.4's
+  source all five checks fail, every time: up to 310,349 mismatches. The suite needs the stdlib
+  `thread` module, now in `[deps].stdlib`; nothing in `src/` or the bundle creates a thread.
+- `tests/hardening.tcyr`: the bandwidth issue's rows, and a 2,001-step sweep across the bound that
+  `validate` must accept exactly where the coefficients are finite. Against 3.6.4 it gives 672
+  mismatches.
+- `tests/allocbudget.tcyr`: after one pass over every class through a context, the second and
+  third keep 0 bytes. 3.6.4 keeps 12,616.
+- **20 functions**, none removed:
+  - for callers who keep their own targets: `svara_vowel_target_set`,
+    `svara_vowel_target_from_vowel_into`, `svara_voice_apply_formant_scale_into`,
+    `svara_phoneme_formants_into`, `svara_ph_diphthong_end_target_into` and
+    `svara_ph_fricative_formants_into`. Each shares one implementation with its allocating
+    form, so the two give the same bits;
+  - `svara_formant_bw_overflows`, the ADR-0010 test;
+  - `svara_lock_acquire` and `svara_lock_release`;
+  - helpers the fixes need: `svara_ph_vt_into`, `svara_ph_vtb_into`, `svara_ph_fricative_params`,
+    `svara_ph_fric_put`, `svara_prosody_interp`, the three spectral `_held` bodies, and
+    `svara_synthctx_target`, `_burst_filter` and `_fric_filter`.
+
+### Changed
+
+- **Seven hostile cases now refuse** in `scripts/sweep/compare.py 3.6.4`:
+  - four huge bandwidths given to a formant filter, which rendered NaN before;
+  - three huge base f0 values. Their scaled bandwidths now trip ADR-0010 before the glottal
+    source rejects the pitch, so the code is `SVARA_ERR_INVALID_FORMANT` where it was
+    `SVARA_ERR_ARTICULATION`. Both refuse, as ADR-0009's BD-7 row already records for NaN and
+    ±inf f0.
+- Two issues move to `docs/development/issues/archived/` with their repros. The memory issue
+  stays open, marked partly resolved.
+- The integration guide's *Threads* section says what is safe now and what is not, and its
+  *Real-time streaming* section gives the 3.6.5 figures.
+
+### Verified
+
+- **Old tree against new** (`scripts/sweep/compare.py 3.6.4`): 558,721 values, none moved; JSON
+  byte-identical; 638 hostile cases, the seven above changed and none other (two cases at a
+  3e9 Hz sample rate time out on both trees). Retired instructions are equal on five probes, and
+  0.9983 and 0.9996 on the two `render_planned` probes. Run twice, with the same result.
+- **Consumer floor**, re-measured with the from-scratch consumer: 6.7.2 to 6.7.18 build with no
+  warning and print the same output as 3.6.4's bundle, and 6.7.1 fails at compile time.
+- **Each fix's test fails without it**, run against 3.6.4's source in a scratch copy.
+- **Gates:** `cyrius audit`, `cyrius fuzz`, `cyrius deny`, `scripts/check-logging.sh`, the five
+  examples, `cyrius distlib` current, and `cyrius deps --verify`.
+
 ## [3.6.4] - 2026-11-16 — each dep's newest tag, and a refused naad allocation is reported
 
 Dependency release. `hisab` 3.4.1 -> **3.5.0**, `naad` 2.3.3 -> **2.3.5**, `goonj` 2.3.1 ->

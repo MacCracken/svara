@@ -8,9 +8,8 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate is met |
-| **3.7.x** | [What consumers filed against 3.6.3](#37x--what-consumers-filed-against-363): concurrent renders, a NaN bandwidth | ready |
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-phoneme memory, a streaming render, the refactors 3.6.3 left | ready |
+| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate is met and the last test gaps are closed |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, a streaming render, the refactors 3.6.3 left | ready |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -36,46 +35,26 @@ measurement (dhvani 2.2.6, 65 of 65 suites against svara 3.6.1) came first.
 
 ### Steps
 
-- [ ] **An ADR on the model of goonj's ADR-0006**: delete the tree and keep its bar.
-      It names the last tag that has the Rust, keeps the `rust-old/src/x.rs:NN`
-      citations as an audit trail, and gives the recipe to rebuild the oracle.
-- [ ] **Confirm nothing lives only there.** Rust tests never ported, the `Cargo.lock`
-      versions, and files with no counterpart.
+- [ ] **An ADR on the model of goonj's ADR-0006** (it will be ADR-0011): delete the
+      tree and keep its bar. It names the last tag that has the Rust, keeps the
+      `rust-old/src/x.rs:NN` citations as an audit trail, and gives the recipe to
+      rebuild the oracle. Measured 2026-11-16, to go in it: the oracle rebuilds from
+      the tree with `cargo test --all-features --offline --locked` (165 unit, 45
+      integration and 3 doc tests), and all 74 `rust-old/` citations resolve.
+- [x] **Confirm nothing lives only there.** Every Rust `#[test]` was mapped onto the
+      suites, and 3.6.5 ported the 4 with no Cyrius assertion and the 21 with a
+      weaker one. Still to record in the ADR: `Cargo.lock` pins hisab 1.4.0, naad
+      1.2.5, serde 1.0.228 and serde_json 1.0.150; 4 of the 15 Rust benches have no
+      Cyrius counterpart (tract at reduced and minimal quality, the female /a/, the
+      10-phoneme sequence), their medians archived in `benchmarks-rust-v-cyrius.md`;
+      and the Rust-only tool configs.
 - [ ] **Verify green with it moved aside:** `cyrius audit`, every suite,
-      `cyrius distlib`, `cyrius bench` and `./scripts/check-logging.sh`.
+      `cyrius distlib`, `cyrius bench` and `./scripts/check-logging.sh`. Green in a
+      scratch copy at 3.6.4; re-run on the release tree.
 - [ ] **Rewrite the live instructions**: `CONTRIBUTING.md`'s cross-check,
       `CLAUDE.md`'s rules, `docs/benchmarks-rust-v-cyrius.md`'s
       `cd rust-old && cargo bench`, and `.gitignore`'s `rust-old/target/`.
 - [ ] **Delete**, and regenerate `dist/svara.cyr`.
-
----
-
-## 3.7.x — what consumers filed against 3.6.3
-
-Filed in [`issues/`](issues/), each with a repro. All three were re-run against 3.6.4
-and still reproduce. Each fix changes behaviour, so each gets its own release and a
-test that fails without it. The memory filing is under 3.8.x.
-
-- [ ] **Concurrent renders can give wrong samples**
-      ([issue](issues/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md),
-      hoosh). Module-level scratch is shared between objects:
-      `_sv_tract_target_scratch`, `_sv_glottal_rd_out`, `_sv_prosody_xs/_ys/_cap` and
-      the `_sv_spec_*` buffers. Four threads, each on its own context, give 2 to 7
-      wrong renders of 4,000, and every wrong one reports success. Since 3.6.4 the
-      integration guide says to serialize every call. The fix is the issue's option
-      1, scratch per object, allocated with the object. The repro needs the stdlib
-      thread module, which `lib/` does not vendor, so the suite needs a way to run it.
-      Each scratch moved costs memory per object, so measure it with
-      `tests/allocbudget.tcyr`.
-- [ ] **A finite bandwidth above about 226 × the sample rate renders NaN**
-      ([issue](issues/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.md),
-      prani). The call returns success, and every sample is NaN. ADR-0009 kept it
-      because "any finite ceiling would be invented". The issue argues the ceiling is
-      not invented: `sinh` in the coefficient formula overflows past
-      `asinh(f64::MAX) * sr / pi`, and every coefficient is NaN from there. Decide in
-      an ADR that supersedes that ADR-0009 item. If the bound is adopted, refuse at it
-      in `svara_formant_validate`, test the rows on both sides of it, and add an
-      ADR-0009 table row for the new divergence from Rust.
 
 ---
 
@@ -106,19 +85,11 @@ measured effect does not earn a place in the source.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
-- [ ] **A warmed context should allocate nothing per phoneme**
+- [ ] **A streaming sequence render**
       ([issue](issues/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
-      hoosh). Measured at 3.6.4: 160 bytes per vowel, nasal or lateral (a
-      `VowelTarget`), 400 per diphthong, 816 to 976 per fricative or affricate and 1,048
-      per plosive. The fricative and plosive paths build a formant filter each call.
-      Keep them in the context and re-initialize them in place, for example with a
-      `svara_formant_filter_reset_into` beside the other `_into` forms. Then
-      `allocbudget.tcyr` can pin the context path at zero bytes per render after one
-      render of each class. A server allocates on every request and never frees, so
-      this is the memory a long-running consumer keeps.
-- [ ] **A streaming sequence render** (same issue). `svara_sequence_render` keeps about
-      127 bytes per output sample, and a consumer that wants to stream has to copy the
-      crossfade, as hoosh does. The issue proposes
+      hoosh, fixes 2 and 3; fix 1 shipped in 3.6.5). It adds public API, so a minor.
+      `svara_sequence_render` keeps about 127 bytes per output sample, and a consumer
+      that wants to stream has to copy the crossfade, as hoosh does. The issue proposes
       `svara_sequence_render_into(seq, ctx, sample_rate, sink, user)`, which calls the
       sink with output no later fade-in can change. A fade-in reaches back at most
       `min(cf_prev, len)` samples. Optional, from the same issue: `_a` forms of

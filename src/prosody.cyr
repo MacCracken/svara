@@ -55,15 +55,20 @@ fn svara_pt_time(p) { return SvF0Point_time(p); }
 fn svara_pt_value(p) { return SvF0Point_value(p); }
 
 # f0_at_internal has to hand hisab two contiguous f64 buffers. They are REFILLED
-# on every call and hold nothing between calls, so ONE module-level pair serves
-# every contour -- which is both less memory than the per-contour pair 3.1.3 used
-# and, decisively, keeps raw pointers OUT of a struct that now serializes.
-# `#derive(Serialize)` has no skip attribute: any field of ProsodyContour would
-# be emitted, so a scratch pointer would leak a heap address into the JSON and
-# come back as a dangling one. See docs/adr/0002-serialization-boundary.md.
+# on every call and hold nothing between calls. They cannot live in the contour:
+# `#derive(Serialize)` has no skip attribute, so a scratch pointer would leak a
+# heap address into the JSON and come back as a dangling one (ADR-0002).
+#
+# Up to SV_PROSODY_STACK_POINTS points they are on the stack, which covers every
+# preset, tone and stressed contour svara builds. Above that, one module-level
+# pair serves every contour under _sv_prosody_lock. Through 3.6.4 the module
+# pair served every call unlocked, and two threads reading contours at once
+# could interpolate each other's points (filed by hoosh).
+var SV_PROSODY_STACK_POINTS = 64;
 var _sv_prosody_xs = 0;
 var _sv_prosody_ys = 0;
 var _sv_prosody_cap = 0;
+var _sv_prosody_lock = 0;
 
 #derive(accessors)
 #derive(Serialize)
@@ -107,6 +112,10 @@ fn svara_prosody_f0_at_internal(self, t) {
     if (n == 0) { return F64_ONE; }
     if (n == 1) { return svara_pt_value(vec_get(pts, 0)); }
     var tc = f64_clamp(t, 0, F64_ONE);
+    var stk_x[512];   # SV_PROSODY_STACK_POINTS f64s each
+    var stk_y[512];
+    if (n <= SV_PROSODY_STACK_POINTS) { return svara_prosody_interp(pts, n, tc, &stk_x, &stk_y); }
+    var held = svara_lock_acquire(&_sv_prosody_lock);
     if (_sv_prosody_cap < n) {
         var nxs = svara_alloc_samples(n);
         if (nxs == 0) { svara_alloc_refused(); }
@@ -116,8 +125,16 @@ fn svara_prosody_f0_at_internal(self, t) {
         _sv_prosody_ys = nys;
         _sv_prosody_cap = n;
     }
-    var xs = _sv_prosody_xs;
-    var ys = _sv_prosody_ys;
+    var r = svara_prosody_interp(pts, n, tc, _sv_prosody_xs, _sv_prosody_ys);
+    svara_lock_release(&_sv_prosody_lock, held);
+    return r;
+}
+
+# interp -- copy the n points' times and values into xs and ys, each of at least
+# n f64s, and interpolate at tc with hisab's monotone cubic. A refusal of the
+# contour reads as 1.0, as svara_prosody_f0_at_internal documents.
+#must_use
+fn svara_prosody_interp(pts, n, tc, xs, ys) {
     var i = 0;
     while (i < n) {
         var p = vec_get(pts, i);

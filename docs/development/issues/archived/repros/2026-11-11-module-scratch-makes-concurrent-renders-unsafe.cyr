@@ -6,7 +6,7 @@
 # Needs the stdlib's thread module, which svara's lib/ does not vendor. From the repository root:
 #   for f in thread thread_win thread_macos thread_agnos mmap sync sync_macos sync_windows; do
 #     cp ~/.cyrius/versions/6.7.18/lib/$f.cyr lib/; done
-#   cyrius build docs/development/issues/repros/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.cyr /tmp/race
+#   cyrius build docs/development/issues/archived/repros/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.cyr /tmp/race
 #   /tmp/race; echo "exit=$?"
 #
 # Each render is 50 ms of a vowel on a FRESH 24 kHz context, checksummed. Alone, a render is deterministic (the first

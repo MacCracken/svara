@@ -31,9 +31,11 @@ says where it is scheduled.
 |---|---|---|---|---|---|
 | SP-DIV | any contour through `svara_prosody_f0_at` | hisab's shape-preserving monotone cubic | hisab 1.4.0's cubic, which overshoots | 3.1.2 (hisab 2.8.3) | Rust's own comment says "no overshoot", so svara does what Rust meant. Up to 0.84% on the unstressed presets, and up to 10.3% (about 1.7 semitones) after `apply_stress`. |
 | BD-4 | a sum with a `±inf` term (`svara_spectral_rms_level`, `svara_spectrum_total_energy`) | `+inf` | NaN | hisab 3.3.3 | `+inf` is the correct sum. Rust's NaN comes from its compensation term computing `inf - inf`. |
-| BD-7 | a NaN or `±inf` base f0 in `svara_phoneme_synthesize` | `SVARA_ERR_INVALID_FORMANT` | `ArticulationFailed` | NaN 3.5.2 ([ADR-0007](0007-reject-nan-formant-parameters.md)), inf 3.6.3 | Both sides refuse. Only the error class differs, because the bad f0 reaches a bandwidth, and svara now validates bandwidths before Rust's later check fails. |
+| BD-7 | a NaN or `±inf` base f0 in `svara_phoneme_synthesize`, or a finite one large enough that its scaled bandwidths overflow (about 4.7e11 Hz at 44.1 kHz) | `SVARA_ERR_INVALID_FORMANT` | `ArticulationFailed` | NaN 3.5.2 ([ADR-0007](0007-reject-nan-formant-parameters.md)), inf 3.6.3, finite 3.6.5 ([ADR-0010](0010-refuse-a-bandwidth-whose-coefficients-overflow.md)) | Both sides refuse. Only the error class differs, because the bad f0 reaches a bandwidth, and svara now validates bandwidths before Rust's later check fails. |
 | PH-2 | `/p/` or `/q/` when `0.35 × n` is a whole number | the VOT boundary lands one sample early | one sample later | 3.0.0 | It comes from the f64 core, a consequence of [ADR-0008](0008-the-synthesis-core-stays-f64.md). It is within tolerance parity. |
+| SQ-LEN | a phoneme whose `duration × stress × cluster × sample_rate` is a whole number in decimal, such as an unstressed 0.1 s vowel at 44.1 kHz | 3,969 samples | 3,968 | 3.0.0, found 3.6.5 | Same cause as PH-2. f32 computes `0.1 × 0.9 × 44100` as 3968.9998 and truncates down, and f64 computes it as 3969.0000000000005. The V-C-V and V-CC-V sequences of Rust's `test_cluster_renders_shorter` are 6,703 and 5,767 samples, Rust's 6,701 and 5,765, one per vowel. `tests/oracle.tcyr` pins both. |
 | — | an infinite formant bandwidth | refused, `SVARA_ERR_INVALID_FORMANT` | accepted | 3.6.3 | ADR-0007 already says "reject non-finite formant frequencies and bandwidths". The code checked only the frequency, and 3.6.3 brings it into line with the ADR. |
+| — | a finite formant bandwidth past `asinh(f64::MAX) × sr / π`, 9,973,280 Hz at 44.1 kHz | refused, `SVARA_ERR_INVALID_FORMANT` | accepted, renders NaN | 3.6.5 | [ADR-0010](0010-refuse-a-bandwidth-whose-coefficients-overflow.md). Every coefficient is NaN past that bound, so a refusal costs nothing a caller could use. |
 | — | contour points with NaN times, more than 20 of them | stable insertion sort | `sort_by`, a merge sort above 20 elements | 3.6.3 | Without NaN the two sorts give the same order, because both are stable. With NaN the comparator is not a total order, and the orders can differ above 20 points. A contour with NaN times is refused by `f0_at` anyway. |
 
 ### A divergence with no decision yet
@@ -91,8 +93,11 @@ preserved Rust quirks.
   load or store at the null page is a fail-stop on Linux. Rust aborts here too.
   Checking all 52 raw `alloc` sites would add a branch to each for no change in
   outcome.
-- **A huge finite bandwidth gives NaN, as in Rust.** Only non-finite bandwidths are
-  refused, because any finite ceiling would be invented. Rust has none.
+- ~~**A huge finite bandwidth gives NaN, as in Rust.** Only non-finite bandwidths are
+  refused, because any finite ceiling would be invented. Rust has none.~~
+  **Superseded in 3.6.5 by [ADR-0010](0010-refuse-a-bandwidth-whose-coefficients-overflow.md):**
+  the ceiling is not invented, because `sinh` in the coefficient formula defines it,
+  and a bandwidth past it is refused.
 - **A glottal source given an infinite vibrato rate cannot round-trip.**
   `svara_glottal_set_vibrato` records the rate, as Rust does, and naad's LFO refuses
   it. `svara_glottal_restore` refuses a non-finite rate, because the LFO it rebuilds

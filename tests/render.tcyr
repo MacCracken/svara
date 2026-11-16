@@ -34,9 +34,14 @@ fn rn_finite(v) {
 #must_use
 fn rn_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 
-# progress callback: increments the counter cell in `user`; also checks fraction.
+# progress callback: increments the counter cell at `user`, and counts in the cell
+# at `user + 8` every call whose fraction is above 1 or whose samples_rendered is
+# not positive -- the two things Rust's closure asserts on every call
+# (`git show 3.6.4:rust-old/src/render.rs`, test_batch_render_with_progress).
 fn rn_count_cb(user, progress) {
     store64(user, load64(user) + 1);
+    if (f64_gt(svara_render_progress_fraction(progress), F64_ONE) == 1) { store64(user + 8, load64(user + 8) + 1); }
+    if (SvRenderProgress_samples_rendered(progress) <= 0) { store64(user + 8, load64(user + 8) + 1); }
     return 0;
 }
 
@@ -69,6 +74,10 @@ svara_batch_push(r3, SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED);
 svara_batch_push(r3, SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_PRIMARY);
 var o3 = svara_batch_render_all(r3);
 assert_eq(SvRenderProgress_total_phonemes(SvRenderOutput_progress(o3)), 3, "seq total 3");
+# The BatchRenderer doctest (`git show 3.6.4:rust-old/src/render.rs`, the struct's
+# example) renders these three events and asserts the final phoneme_index is 3.
+assert_eq(SvRenderProgress_phoneme_index(SvRenderOutput_progress(o3)), 3, "seq progress index 3");
+assert_eq(vec_len(SvRenderOutput_samples(o3)) > 0, 1, "seq non-empty");
 assert_eq(rn_finite(SvRenderOutput_samples(o3)), 1, "seq finite");
 
 # ================================================================
@@ -77,10 +86,12 @@ var rp = svara_batch_new(male, SR);
 svara_batch_push(rp, SVARA_PH_VOWEL_A, 0.08, SVARA_STRESS_PRIMARY);
 svara_batch_push(rp, SVARA_PH_FRIC_S, 0.06, SVARA_STRESS_UNSTRESSED);
 svara_batch_push(rp, SVARA_PH_VOWEL_E, 0.08, SVARA_STRESS_PRIMARY);
-var counter = alloc(8);
+var counter = alloc(16);
 store64(counter, 0);
+store64(counter + 8, 0);
 var po = svara_batch_render_with_progress(rp, &rn_count_cb, counter);
 assert_eq(load64(counter), 3, "progress callback invoked once per phoneme");
+assert_eq(load64(counter + 8), 0, "every call: fraction <= 1 and samples_rendered > 0");
 assert_eq(f64_gt(f64_from(vec_len(SvRenderOutput_samples(po))), 0), 1, "progress render non-empty");
 
 # ================================================================

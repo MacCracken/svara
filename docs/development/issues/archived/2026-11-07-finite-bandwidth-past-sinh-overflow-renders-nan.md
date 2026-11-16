@@ -1,8 +1,8 @@
-# A finite bandwidth past `sinh`'s overflow passes validation and renders NaN — OPEN
+# A finite bandwidth past `sinh`'s overflow passes validation and renders NaN — RESOLVED
 
-**Status:** 🟡 **OPEN**. This asks to revisit one item that
-[ADR-0009](../../adr/0009-what-the-3-6-3-audit-leaves-open.md) leaves open. Nothing in svara is changed.
-**Placement:** roadmap 3.7.x, "A finite bandwidth above about 226 × the sample rate renders NaN". It needs an ADR that supersedes the ADR-0009 item.
+**Status:** ✅ **RESOLVED in 3.6.5** by [ADR-0010](../../../adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md),
+which supersedes the [ADR-0009](../../../adr/0009-what-the-3-6-3-audit-leaves-open.md) item (see *Resolution* at the end)
+**Placement:** 3.6.5.
 **Re-verified:** against 3.6.4 on 2026-11-16: the same nine rows, `wrong rows: 4`, exit 4.
 **Where the fix would live:** `svara_formant_validate`, `src/formant.cyr:441-445` at 3.6.3.
 **Discovered:** 2026-11-07, during prani 2.1.1's bump to svara 3.6.3. prani was pinning svara's new
@@ -10,7 +10,7 @@ infinite-bandwidth refusal through `crtract_set_formant_blend` when it found thi
 **Reporter:** prani 2.1.1
 **Severity:** Medium.
 - **Why it matters.** The call returns `SVARA_ERR_NONE`, and every sample after it is NaN. That is a silent wrong
-  answer, which is the class of defect [ADR-0007](../../adr/0007-reject-nan-formant-parameters.md) exists to
+  answer, which is the class of defect [ADR-0007](../../../adr/0007-reject-nan-formant-parameters.md) exists to
   refuse.
 - **Who can reach it.** Only a caller passing its own bandwidth. svara's vowel tables never get near the bound.
   Neither do prani's species parameters, which are capped at 20 kHz.
@@ -61,7 +61,7 @@ A row is WRONG when the retarget returns `SVARA_ERR_NONE` and any sample is non-
 of wrong rows.
 
 ```
-cyrius build docs/development/issues/repros/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.cyr /tmp/bw-nan
+cyrius build docs/development/issues/archived/repros/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.cyr /tmp/bw-nan
 /tmp/bw-nan; echo "exit=$?"
 ```
 
@@ -125,3 +125,26 @@ with an error code. So ADR-0009's item would need to be revisited, not just the 
   here.
 
 If svara takes the fix, prani adds the 9.98e6 case to that test group, and nothing in prani's source changes.
+
+## Resolution
+
+Resolved in **3.6.5**. [ADR-0010](../../../adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md)
+accepts this issue's argument: the ceiling is the coefficient formula's, not an
+invented one. `svara_formant_validate` and `svara_formant_filter_update` now refuse a
+bandwidth whose coefficients overflow, with `SVARA_ERR_INVALID_FORMANT`.
+
+The bound is taken from the code, not from a constant beside it.
+`svara_formant_bw_overflows` forms `pi * bw / sr` exactly as
+`svara_formant_biquad_coeffs` does and asks the same `f64_sinh`, so it refuses where
+that function overflows. Below `222 × sample_rate` `sinh` cannot overflow, so
+`validate` pays one comparison per formant there, which replaced the finiteness
+call it made before.
+
+**Verified** in `tests/hardening.tcyr`, against 3.6.4's `formant.cyr` and this tree:
+
+| Check | 3.6.4 | 3.6.5 |
+|---|---|---|
+| this issue's rows past the bound (9.98e6, 1e8, f32::MAX, f64::MAX) | accepted, all 2,205 samples NaN | refused, the tract stays finite |
+| the rows below it (100, 22,050, 1e6, 9.97e6) | accepted, finite | accepted, finite |
+| 2,001 bandwidths from 9.96 to 9.98 MHz: accepted exactly where the coefficients are finite | 672 mismatches | 0 |
+| `update_formants` with 100 MHz | accepted, NaN from then on | refused, finite |

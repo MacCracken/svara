@@ -259,6 +259,13 @@ fn svara_voice_create_glottal_source_with_effort(self, effort, sample_rate) {
 # sqrt(f0/120) (+ optional singing widening at f0>300). Returns a new VowelTarget.
 #must_use
 fn svara_voice_apply_formant_scale(self, target) {
+    return svara_voice_apply_formant_scale_into(self, target, alloc(sizeof(SvVowelTarget)));
+}
+
+# apply_formant_scale_into -- as above, written into `dst`, which it returns. Every
+# field of `target` is read before `dst` is written, so `dst` may be `target`.
+#must_use
+fn svara_voice_apply_formant_scale_into(self, target, dst) {
     var f0 = SvVoiceProfile_base_f0(self);
     var bw_scale = f64_sqrt(f64_div(f0, f64_from(120)));
     if ((f64_gt(SvVoiceProfile_bandwidth_widening(self), 0) == 1) & (f64_gt(f0, f64_from(300)) == 1)) {
@@ -267,7 +274,7 @@ fn svara_voice_apply_formant_scale(self, target) {
           f64_add(F64_ONE, f64_mul(SvVoiceProfile_bandwidth_widening(self), f64_sub(extra, F64_ONE))));
     }
     var fs = SvVoiceProfile_formant_scale(self);
-    return svara_vowel_target_with_bandwidths(
+    return svara_vowel_target_set(dst,
       f64_mul(SvVowelTarget_f1(target), fs), f64_mul(SvVowelTarget_f2(target), fs),
       f64_mul(SvVowelTarget_f3(target), fs), f64_mul(SvVowelTarget_f4(target), fs),
       f64_mul(SvVowelTarget_f5(target), fs),

@@ -101,8 +101,15 @@ var _sv_spec_pk = 0;
 var _sv_spec_pk_cap = 0;
 var _sv_spec_fft = 0;
 var _sv_spec_fft_cap = 0;
+# One lock per buffer, taken by the public function around everything that uses
+# it. Through 3.6.4 they were unlocked, and two threads in the same function at
+# once overwrote each other's working set (filed by hoosh). See svara_lock_acquire.
+var _sv_spec_sq_lock = 0;
+var _sv_spec_pk_lock = 0;
+var _sv_spec_fft_lock = 0;
 
 # Scratch of at least n f64 slots for sum_squares, or 0 if it cannot grow.
+# Callers hold _sv_spec_sq_lock; svara_spectral_sum_squares takes it.
 #must_use
 fn svara_spectral_sq_scratch(n) {
     if (_sv_spec_sq_cap < n) {
@@ -122,7 +129,8 @@ fn svara_spectral_sq_scratch(n) {
 fn svara_spectral_peak_slots(bins) { return bins / 2 + 1; }
 
 # Scratch of four arrays of svara_spectral_peak_slots(bins) slots each, for
-# estimate_formants, or 0 if it cannot grow.
+# estimate_formants, or 0 if it cannot grow. Callers hold _sv_spec_pk_lock;
+# svara_spectrum_estimate_formants takes it.
 #must_use
 fn svara_spectral_peak_scratch(bins) {
     var n = svara_spectral_peak_slots(bins);
@@ -188,6 +196,15 @@ fn svara_spectral_sort_pairs(pf, pm, tf, tm, n, by_freq) {
 fn svara_spectral_sum_squares(mags, lo, hi) {
     var n = hi - lo;
     if (n <= 0) { return 0; }
+    var held = svara_lock_acquire(&_sv_spec_sq_lock);
+    var r = svara_spectral_sum_squares_held(mags, lo, n);
+    svara_lock_release(&_sv_spec_sq_lock, held);
+    return r;
+}
+
+# sum_squares_held -- the body of sum_squares, n > 0, run under _sv_spec_sq_lock.
+#must_use
+fn svara_spectral_sum_squares_held(mags, lo, n) {
     var buf = svara_spectral_sq_scratch(n);
     if (buf == 0) { svara_alloc_refused(); }
     var i = 0;
@@ -222,6 +239,16 @@ fn svara_spectrum_band_energy(self, lo_hz, hi_hz) {
 # Local maxima above 10% of the peak magnitude; keep the strongest N, sort by freq.
 #must_use
 fn svara_spectrum_estimate_formants(self, max_formants) {
+    var held = svara_lock_acquire(&_sv_spec_pk_lock);
+    var r = svara_spectrum_estimate_formants_held(self, max_formants);
+    svara_lock_release(&_sv_spec_pk_lock, held);
+    return r;
+}
+
+# estimate_formants_held -- the body of estimate_formants, run under
+# _sv_spec_pk_lock.
+#must_use
+fn svara_spectrum_estimate_formants_held(self, max_formants) {
     var mags = SvSpectrum_magnitudes(self);
     var len = vec_len(mags);
     var result = vec_new();
@@ -282,6 +309,15 @@ fn svara_spectrum_estimate_formants(self, max_formants) {
 # ================================================================
 #must_use
 fn svara_spectral_analyze(samples, sample_rate) {
+    var held = svara_lock_acquire(&_sv_spec_fft_lock);
+    var r = svara_spectral_analyze_held(samples, sample_rate);
+    svara_lock_release(&_sv_spec_fft_lock, held);
+    return r;
+}
+
+# analyze_held -- the body of analyze, run under _sv_spec_fft_lock.
+#must_use
+fn svara_spectral_analyze_held(samples, sample_rate) {
     var len = vec_len(samples);
     if (len == 0) { return SVARA_ERR_COMPUTATION; }
 

@@ -136,6 +136,35 @@ fn f0_at_bytes(contour) {
     return alloc_used() - a;
 }
 
+# Bytes one pass over every phoneme class keeps, through context `ctx`: each
+# class the context renders differently, nasalized vowels and diphthongs, both
+# ejective releases, and silence, at 0.1 s each.
+#must_use
+fn ctx_pass_bytes(ctx, voice) {
+    var nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_N);
+    var ps = vec_new();
+    vec_push(ps, SVARA_PH_VOWEL_A); vec_push(ps, SVARA_PH_DIPH_AI); vec_push(ps, SVARA_PH_NASAL_M);
+    vec_push(ps, SVARA_PH_LATERAL_L); vec_push(ps, SVARA_PH_APPROX_R); vec_push(ps, SVARA_PH_TRILL_ALVEOLAR);
+    vec_push(ps, SVARA_PH_FRIC_S); vec_push(ps, SVARA_PH_FRIC_Z); vec_push(ps, SVARA_PH_FRIC_H);
+    vec_push(ps, SVARA_PH_PLOSIVE_P); vec_push(ps, SVARA_PH_PLOSIVE_D); vec_push(ps, SVARA_PH_AFFR_CH);
+    vec_push(ps, SVARA_PH_AFFR_J); vec_push(ps, SVARA_PH_CLICK_DENTAL); vec_push(ps, SVARA_PH_EJECTIVE_T);
+    vec_push(ps, SVARA_PH_EJECTIVE_S); vec_push(ps, SVARA_PH_IMPLOSIVE_B); vec_push(ps, SVARA_PH_SILENCE);
+    var a = alloc_used();
+    var i = 0;
+    var bad = 0;
+    while (i < vec_len(ps)) {
+        var n = svara_synthctx_synthesize(ctx, vec_get(ps, i), voice, 0.1, 0);
+        if (n <= 0) { bad = bad + 1; }
+        i = i + 1;
+    }
+    var nv = svara_synthctx_synthesize(ctx, SVARA_PH_VOWEL_A, voice, 0.1, nas);
+    var nd = svara_synthctx_synthesize(ctx, SVARA_PH_DIPH_AI, voice, 0.1, nas);
+    var used = alloc_used() - a;
+    if ((nv <= 0) | (nd <= 0)) { bad = bad + 1; }
+    if (bad > 0) { return 0 - 1; }
+    return used;
+}
+
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
@@ -325,6 +354,19 @@ fn main() {
     var spec2 = svara_spectral_analyze(frame, SR);
     assert_eq(alloc_used() - ab < 32688, 1, "analyze allocates less than its old 32,688 bytes");
     assert_eq(svara_is_err(spec2), 0, "control: the second analyze succeeds");
+
+    # ================================================================
+    test_group("a warmed synthesis context allocates nothing per phoneme");
+    # ================================================================
+    # Filed by hoosh against 3.6.3: a server renders on every request and the bump
+    # allocator never frees, and a warmed context kept 160 to 1,048 bytes a
+    # phoneme -- its targets, and a new filter per fricative and burst. 3.6.5 keeps
+    # them in the context and re-initializes the filters in place.
+    var wctx = svara_synthctx_new(voice, SR);
+    var warm_bytes = ctx_pass_bytes(wctx, voice);
+    assert_eq(warm_bytes > 0, 1, "control: the first pass builds the context's filters, so the measure can see it");
+    assert_eq(ctx_pass_bytes(wctx, voice), 0, "a second pass over every class keeps no bytes");
+    assert_eq(ctx_pass_bytes(wctx, voice), 0, "and a third");
 
     return assert_summary();
 }

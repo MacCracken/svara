@@ -47,6 +47,7 @@ struct SvVocalTract {
     filter; nasal_coupling; nasal_antiformant; lip_prev; lip_radiation;
     interaction_strength; interaction_feedback; subglottal_coupling;
     subglottal_filter; gain; quality; sample_rate; formants; nasal_place;
+    target_scratch;
 }
 
 # new -- default neutral vowel (schwa), Full quality. Returns a tract pointer,
@@ -106,6 +107,7 @@ fn svara_tract_new(sample_rate) {
     SvVocalTract_set_quality(self, SVARA_QUALITY_FULL);
     SvVocalTract_set_sample_rate(self, sample_rate);
     SvVocalTract_set_nasal_place(self, SVARA_NASAL_NEUTRAL);
+    SvVocalTract_set_target_scratch(self, 0);
     return self;
 }
 
@@ -260,19 +262,25 @@ fn svara_tract_record_formants(self, formants) {
     return 0;
 }
 
-var _sv_tract_target_scratch = 0;
-
 # set_formants_from_target -- as above, from a VowelTarget. Builds the five
-# formants in a module scratch vec, so set_formants validates them before the
-# tract's record changes. Writing into the record first left a rejected target
-# there, and a record of six to eight formants kept its upper slots, so the bank
-# went on ringing at formants the vowel does not have. The filter copies values
-# and keeps no pointer to the vec, so one scratch serves every tract.
+# formants in the tract's own scratch vec, so set_formants validates them before
+# the tract's record changes. Writing into the record first left a rejected
+# target there, and a record of six to eight formants kept its upper slots, so the
+# bank went on ringing at formants the vowel does not have.
+#
+# The scratch is the tract's, built on first use. Through 3.6.4 one module-level
+# vec served every tract, and two threads retargeting their own tracts at once
+# set each other's formants (filed by hoosh). It runs once per sample on the
+# trajectory path, so it is kept, not allocated per call.
 #must_use
 fn svara_tract_set_formants_from_target(self, target) {
-    if (_sv_tract_target_scratch == 0) { _sv_tract_target_scratch = svara_formant_scratch_vec(); }
-    svara_vowel_target_to_formants_into(target, _sv_tract_target_scratch);
-    return svara_tract_set_formants(self, _sv_tract_target_scratch);
+    var sc = SvVocalTract_target_scratch(self);
+    if (sc == 0) {
+        sc = svara_formant_scratch_vec();
+        SvVocalTract_set_target_scratch(self, sc);
+    }
+    svara_vowel_target_to_formants_into(target, sc);
+    return svara_tract_set_formants(self, sc);
 }
 
 # set_vowel -- retarget the tract at `vowel`. Returns what

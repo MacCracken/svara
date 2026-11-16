@@ -30,7 +30,11 @@ namespace gets a coherent set rather than two versions of the same symbol.
 
 The Cyrius pin in `cyrius.cyml [package].cyrius` is the single source of truth.
 CI reads it and hands it to the canonical installer — never hardcode a version in
-YAML. Bumping it re-vendors the 33 stdlib files in `lib/` via `cyrius deps`.
+YAML. Bumping it re-vendors the 42 stdlib files in `lib/` via `cyrius deps`. Nine of
+them are `thread` and its companions (`sync`, `mmap`, `thread_local` and the
+platform variants), declared since 3.6.5 for `tests/concurrency.tcyr` alone. Nothing
+in `src/` or `dist/svara.cyr` creates a thread, so consumers do not need them. The
+locks in `src/error.cyr` use `lib/atomic.cyr`, which `alloc` already includes.
 
 `cyrius deps` keeps old commit rows in `cyrius.lock` beside the new ones, and leaves
 stdlib files the pin no longer declares. Regenerate from clean on a bump, then

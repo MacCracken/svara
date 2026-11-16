@@ -16,8 +16,9 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.6.4** | ✅ Yes | current; needs cyrius 6.7.2 or later |
-| 3.6.3 | ✅ Yes, with naad 2.3.3 | ⚠ upgrade before linking naad 2.3.4 or later, below |
+| **3.6.5** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| 3.6.4 | ⚠ Upgrade | concurrent renders and a huge finite bandwidth can give silent wrong answers, below |
+| 3.6.3 | ⚠ Upgrade | as 3.6.4, and do not link it with naad 2.3.4 or later, below |
 | 3.6.0 – 3.6.2 | ⚠ Upgrade | have the defects 3.6.3 fixed, below |
 | 3.5.x | ⚠ Limited | for consumers still below that cyrius floor; has the defects 3.6.3 fixed, and there is no backport |
 | 3.2 – 3.4 | ⚠ Upgrade | have the defects 3.6.3 fixed, and miss later hardening |
@@ -28,6 +29,24 @@ The attack surface, and what is and is not mitigated, is
 > The previous version of this file said "1.x: Yes" and listed nothing else. That
 > was inherited from the Rust crate and was materially misleading by the time
 > 3.1.3 shipped.
+
+## Defects fixed in 3.6.5
+
+Both are silent wrong answers: the call reports success and the samples are wrong.
+Neither needs unusual input from a caller that keeps to one thread and to real
+bandwidths, which is why 3.6.4 stays supported for such callers.
+
+- **Concurrent renders.** Through 3.6.4, module-level scratch was shared between
+  objects, so two threads rendering at once, each on its own context, could read
+  each other's formants: 2 to 7 of 4,000 renders came back wrong. 3.6.5 moves the
+  scratch into each object or onto the stack, and locks what must stay shared.
+  `tests/concurrency.tcyr` pins it. One object used by two threads at once is
+  still unsafe, and so is `-D LOGGING` with concurrent renders (sakshi's span
+  stack). On 3.6.4 or earlier, serialize every call into svara.
+- **A finite bandwidth past `asinh(f64::MAX) × sr / π`**, 9,973,280 Hz at 44.1 kHz,
+  passed validation and rendered NaN.
+  [ADR-0010](docs/adr/0010-refuse-a-bandwidth-whose-coefficients-overflow.md) refuses
+  it, pinned by `tests/hardening.tcyr`.
 
 ## 3.6.4 — move svara with naad
 

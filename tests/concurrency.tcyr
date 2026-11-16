@@ -1,0 +1,328 @@
+# concurrency.tcyr -- renders that share nothing can run on threads at once.
+#
+# Filed by hoosh against 3.6.3 (docs/development/issues/
+# 2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md): four threads, each
+# rendering on a context of its own, gave 2 to 7 wrong renders in 4,000, and each
+# wrong one returned success. One render wrote formants into module-level scratch
+# that another then read. 3.6.5 moved each scratch into its object or onto the
+# stack, and put a lock on the two that have to stay at module level (prosody past
+# 64 points, and the spectral buffers).
+#
+# Group 1 is the issue's repro. The rest hammer each former scratch from two
+# threads, comparing every result bit for bit with one computed alone first,
+# which fails far more often than whole renders do. Each worker counts its own
+# mismatches, and every reference is built before any thread starts.
+#
+# `thread` is declared in cyrius.cyml for this suite only.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "lib/thread.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/spectral.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+include "src/prosody.cyr"
+
+var SR = 0x40E5888000000000;   # 44100.0
+var SR24 = 0x40D7700000000000; # 24000.0
+var BAD = 0;                   # mismatch count per worker, 8 slots
+var VOICE = 0;
+
+# Run `fp` on `n` threads with args 0..n-1, wait for all, and return the summed
+# mismatch counts they left in BAD.
+fn cc_run(fp, n) {
+    var k = 0;
+    while (k < 8) { store64(BAD + k * 8, 0); k = k + 1; }
+    var ts = alloc(n * 8);
+    k = 0;
+    while (k < n) { store64(ts + k * 8, thread_create(fp, k)); k = k + 1; }
+    k = 0;
+    while (k < n) { thread_join(load64(ts + k * 8)); k = k + 1; }
+    var bad = 0;
+    k = 0;
+    while (k < n) { bad = bad + load64(BAD + k * 8); k = k + 1; }
+    return bad;
+}
+
+# FNV-1a over the raw bits of n f64s at a buffer.
+#must_use
+fn cc_hash_buf(b, n) {
+    var h = 1469598103934665603;
+    var i = 0;
+    while (i < n) { h = (h ^ load64(b + i * 8)) * 1099511628211; i = i + 1; }
+    return h;
+}
+
+# FNV-1a over the raw bits of a vec<f64>.
+#must_use
+fn cc_hash_vec(v) {
+    var h = 1469598103934665603;
+    var i = 0;
+    while (i < vec_len(v)) { h = (h ^ vec_get(v, i)) * 1099511628211; i = i + 1; }
+    return h;
+}
+
+# ---- group 1: the issue's repro ----------------------------------------------
+var RENDER_REF = 0;   # [0] /a/ alone, [1] /i/ alone
+
+# Hash of 50 ms of phoneme `p` rendered at 24 kHz on a fresh context.
+#must_use
+fn cc_render_hash(p) {
+    var ctx = svara_synthctx_new(VOICE, SR24);
+    var n = svara_synthctx_synthesize(ctx, p, VOICE, 0.05, 0);
+    return cc_hash_buf(svara_synthctx_buffer(ctx), n);
+}
+
+# Worker `arg`: 1,000 renders of /a/ (even arg) or /i/ (odd), each compared with
+# the hash rendered alone; leaves its mismatch count in BAD.
+fn cc_render_worker(arg) {
+    var p = SVARA_PH_VOWEL_A;
+    if (arg % 2 == 1) { p = SVARA_PH_VOWEL_I; }
+    var want = load64(RENDER_REF + (arg % 2) * 8);
+    var bad = 0;
+    var k = 0;
+    while (k < 1000) {
+        if (cc_render_hash(p) != want) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
+# ---- group 2: the tract's target scratch ---------------------------------------
+var TRACT_TGT = 0;   # [arg] the VowelTarget that worker retargets to
+var TRACT_REF = 0;   # [arg * 10 + slot * 2] frequency, [+1] bandwidth
+
+# Worker `arg`: retargets its own tract 20,000 times to its own vowel and checks
+# the tract's recorded formants each time; leaves its mismatch count in BAD.
+fn cc_tract_worker(arg) {
+    var t = svara_tract_new(SR);
+    var tgt = load64(TRACT_TGT + arg * 8);
+    var ref = TRACT_REF + arg * 80;
+    var bad = 0;
+    var k = 0;
+    while (k < 20000) {
+        var e = svara_tract_set_formants_from_target(t, tgt);
+        var rec = SvVocalTract_formants(t);
+        var s = 0;
+        while (s < 5) {
+            var f = vec_get(rec, s);
+            if (SvFormant_frequency(f) != load64(ref + s * 16)) { bad = bad + 1; }
+            if (SvFormant_bandwidth(f) != load64(ref + s * 16 + 8)) { bad = bad + 1; }
+            s = s + 1;
+        }
+        if (e != SVARA_ERR_NONE) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
+# ---- group 3: the glottal source's LF triple -----------------------------------
+var GLOT_RD = 0;    # [arg] the rd that worker sets
+var GLOT_REF = 0;   # [arg * 3 + 0..2] lf_ta, lf_te, lf_ee
+
+# Worker `arg`: sets its own rd on its own source 50,000 times and checks the LF
+# params each time; leaves its mismatch count in BAD.
+fn cc_glottal_worker(arg) {
+    var g = svara_glottal_new(f64_from(120), SR);
+    var rd = load64(GLOT_RD + arg * 8);
+    var ref = GLOT_REF + arg * 24;
+    var bad = 0;
+    var k = 0;
+    while (k < 50000) {
+        svara_glottal_set_rd(g, rd);
+        if (SvGlottalSource_lf_ta(g) != load64(ref)) { bad = bad + 1; }
+        if (SvGlottalSource_lf_te(g) != load64(ref + 8)) { bad = bad + 1; }
+        if (SvGlottalSource_lf_ee(g) != load64(ref + 16)) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
+# ---- group 4: the prosody contour's interpolation buffers ------------------------
+var PROS_C = 0;     # [arg] contour: 0 and 1 have 80 points (locked path), 2 and 3 have 6
+var PROS_REF = 0;   # [arg * 8 + j] f0_at(contour, j / 7)
+
+# A contour of n points at times k/(n-1), with values that differ per `seed`.
+#must_use
+fn cc_contour(n, seed) {
+    var pts = vec_new();
+    var k = 0;
+    while (k < n) {
+        var t = f64_div(f64_from(k), f64_from(n - 1));
+        var v = f64_add(F64_ONE, f64_mul(f64_from((k * (seed + 3)) % 11), 0.02));
+        vec_push(pts, svara_pt_new(t, v));
+        k = k + 1;
+    }
+    return svara_prosody_make(pts, F64_ONE, F64_ONE);
+}
+
+# Worker `arg`: reads its own contour at eight times, 4,000 rounds, against the
+# values read alone; leaves its mismatch count in BAD.
+fn cc_prosody_worker(arg) {
+    var c = load64(PROS_C + arg * 8);
+    var ref = PROS_REF + arg * 64;
+    var bad = 0;
+    var k = 0;
+    while (k < 4000) {
+        var j = 0;
+        while (j < 8) {
+            var t = f64_div(f64_from(j), f64_from(7));
+            if (svara_prosody_f0_at(c, t) != load64(ref + j * 8)) { bad = bad + 1; }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
+# ---- group 5: the spectral buffers -----------------------------------------------
+var SPEC_IN = 0;    # [arg] a 1024-sample frame
+var SPEC_SP = 0;    # [arg] its spectrum, analyzed alone
+var SPEC_REF = 0;   # [arg * 3 + 0] rms, [+1] hash of analyze's magnitudes, [+2] hash of formants
+
+# 1024 samples of two sines whose frequencies depend on `seed`.
+#must_use
+fn cc_frame(seed) {
+    var v = vec_new();
+    var f1 = f64_from(300 + seed * 250);
+    var f2 = f64_from(1700 + seed * 400);
+    var k = 0;
+    while (k < 1024) {
+        var ph = f64_div(f64_mul(F64_TAU, f64_from(k)), SR);
+        vec_push(v, f64_add(f64_sin(f64_mul(ph, f1)), f64_mul(F64_HALF, f64_sin(f64_mul(ph, f2)))));
+        k = k + 1;
+    }
+    return v;
+}
+
+# Worker `arg`: 400 rounds of rms_level and analyze on its own frame, and
+# estimate_formants on its own spectrum, against the results computed alone;
+# leaves its mismatch count in BAD.
+fn cc_spectral_worker(arg) {
+    var frame = load64(SPEC_IN + arg * 8);
+    var sp = load64(SPEC_SP + arg * 8);
+    var ref = SPEC_REF + arg * 24;
+    var bad = 0;
+    var k = 0;
+    while (k < 400) {
+        if (svara_spectral_rms_level(frame) != load64(ref)) { bad = bad + 1; }
+        var a = svara_spectral_analyze(frame, SR);
+        if (cc_hash_vec(SvSpectrum_magnitudes(a)) != load64(ref + 8)) { bad = bad + 1; }
+        if (cc_hash_vec(svara_spectrum_estimate_formants(sp, 4)) != load64(ref + 16)) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(BAD + arg * 8, bad);
+    return 0;
+}
+
+alloc_init();
+BAD = alloc(64);
+VOICE = svara_voice_new_male();
+
+# ================================================================
+test_group("the issue's repro: four threads render vowels on their own contexts");
+RENDER_REF = alloc(16);
+store64(RENDER_REF, cc_render_hash(SVARA_PH_VOWEL_A));
+store64(RENDER_REF + 8, cc_render_hash(SVARA_PH_VOWEL_I));
+assert_eq(cc_render_hash(SVARA_PH_VOWEL_A), load64(RENDER_REF), "control: a render alone is deterministic");
+assert_eq(load64(RENDER_REF) != load64(RENDER_REF + 8), 1, "control: /a/ and /i/ hash differently");
+assert_eq(cc_run(&cc_render_worker, 4), 0, "4,000 concurrent renders match the ones rendered alone");
+
+# ================================================================
+test_group("two threads retarget their own tracts");
+TRACT_TGT = alloc(16);
+store64(TRACT_TGT, svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+store64(TRACT_TGT + 8, svara_vowel_target_from_vowel(SVARA_VOWEL_I));
+TRACT_REF = alloc(160);
+var tw = 0;
+while (tw < 2) {
+    var tr = svara_tract_new(SR);
+    var te = svara_tract_set_formants_from_target(tr, load64(TRACT_TGT + tw * 8));
+    var rec = SvVocalTract_formants(tr);
+    var ts = 0;
+    while (ts < 5) {
+        store64(TRACT_REF + tw * 80 + ts * 16, SvFormant_frequency(vec_get(rec, ts)));
+        store64(TRACT_REF + tw * 80 + ts * 16 + 8, SvFormant_bandwidth(vec_get(rec, ts)));
+        ts = ts + 1;
+    }
+    tw = tw + 1;
+}
+assert_eq(load64(TRACT_REF) != load64(TRACT_REF + 80), 1, "control: the two vowels' F1 differ");
+assert_eq(cc_run(&cc_tract_worker, 2), 0, "every retarget records the worker's own formants");
+
+# ================================================================
+test_group("two threads set rd on their own glottal sources");
+GLOT_RD = alloc(16);
+store64(GLOT_RD, 0.6);
+store64(GLOT_RD + 8, 2.2);
+GLOT_REF = alloc(48);
+var gw = 0;
+while (gw < 2) {
+    var gs = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_rd(gs, load64(GLOT_RD + gw * 8));
+    store64(GLOT_REF + gw * 24, SvGlottalSource_lf_ta(gs));
+    store64(GLOT_REF + gw * 24 + 8, SvGlottalSource_lf_te(gs));
+    store64(GLOT_REF + gw * 24 + 16, SvGlottalSource_lf_ee(gs));
+    gw = gw + 1;
+}
+assert_eq(load64(GLOT_REF) != load64(GLOT_REF + 24), 1, "control: the two rd values give different LF params");
+assert_eq(cc_run(&cc_glottal_worker, 2), 0, "every set_rd stores the worker's own LF params");
+
+# ================================================================
+test_group("four threads read their own contours, past and within the stack size");
+PROS_C = alloc(32);
+store64(PROS_C, cc_contour(80, 0));
+store64(PROS_C + 8, cc_contour(80, 1));
+store64(PROS_C + 16, cc_contour(6, 2));
+store64(PROS_C + 24, cc_contour(6, 3));
+assert_eq(vec_len(SvProsodyContour_f0_points(load64(PROS_C))) > SV_PROSODY_STACK_POINTS, 1,
+  "control: the 80-point contours take the locked path");
+PROS_REF = alloc(256);
+var pw = 0;
+while (pw < 4) {
+    var pj = 0;
+    while (pj < 8) {
+        store64(PROS_REF + pw * 64 + pj * 8,
+          svara_prosody_f0_at(load64(PROS_C + pw * 8), f64_div(f64_from(pj), f64_from(7))));
+        pj = pj + 1;
+    }
+    pw = pw + 1;
+}
+assert_eq(load64(PROS_REF + 24) != load64(PROS_REF + 64 + 24), 1, "control: the two long contours differ at 3/7");
+assert_eq(cc_run(&cc_prosody_worker, 4), 0, "every f0_at reads the worker's own contour");
+
+# ================================================================
+test_group("two threads analyze their own frames");
+SPEC_IN = alloc(16);
+SPEC_SP = alloc(16);
+SPEC_REF = alloc(48);
+var sw = 0;
+while (sw < 2) {
+    var fr = cc_frame(sw);
+    store64(SPEC_IN + sw * 8, fr);
+    var spc = svara_spectral_analyze(fr, SR);
+    store64(SPEC_SP + sw * 8, spc);
+    store64(SPEC_REF + sw * 24, svara_spectral_rms_level(fr));
+    store64(SPEC_REF + sw * 24 + 8, cc_hash_vec(SvSpectrum_magnitudes(spc)));
+    store64(SPEC_REF + sw * 24 + 16, cc_hash_vec(svara_spectrum_estimate_formants(spc, 4)));
+    sw = sw + 1;
+}
+assert_eq(load64(SPEC_REF + 16) != load64(SPEC_REF + 24 + 16), 1, "control: the two frames' formants differ");
+assert_eq(cc_run(&cc_spectral_worker, 2), 0, "every rms, analyze and estimate_formants matches its own frame");
+
+var rc = assert_summary();
+syscall(60, rc);

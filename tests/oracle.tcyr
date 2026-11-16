@@ -43,6 +43,7 @@ include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
+include "src/pool.cyr"
 include "src/bridge.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
@@ -89,6 +90,345 @@ fn or_bufdiff(a, b, n) {
         i = i + 1;
     }
     return acc;
+}
+
+# ---- 3.6.5 helpers ---------------------------------------------------------
+
+# 1 if every slot of a vec<f64> is finite.
+#must_use
+fn or_vec_finite(v) {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (svara_is_finite(vec_get(v, i)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Largest |s| in a vec<f64>.
+#must_use
+fn or_vec_peak(v) {
+    var pk = 0;
+    var i = 0;
+    while (i < vec_len(v)) { pk = f64_max(pk, f64_abs(vec_get(v, i))); i = i + 1; }
+    return pk;
+}
+
+# Sum of |a[i] - b[i]| over the shorter of two vec<f64>.
+#must_use
+fn or_vec_diffsum(a, b) {
+    var n = vec_len(a);
+    if (vec_len(b) < n) { n = vec_len(b); }
+    var acc = 0;
+    var i = 0;
+    while (i < n) { acc = f64_add(acc, f64_abs(f64_sub(vec_get(a, i), vec_get(b, i)))); i = i + 1; }
+    return acc;
+}
+
+# Largest |s[i+1] - s[i]| in a vec<f64>.
+#must_use
+fn or_vec_max_jump(v) {
+    var j = 0;
+    var i = 1;
+    while (i < vec_len(v)) {
+        j = f64_max(j, f64_abs(f64_sub(vec_get(v, i), vec_get(v, i - 1))));
+        i = i + 1;
+    }
+    return j;
+}
+
+# 1 if all of the first n f64s of a raw buffer are finite.
+#must_use
+fn or_buf_finite(b, n) {
+    var i = 0;
+    while (i < n) {
+        if (svara_is_finite(load64(b + i * 8)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Largest |s| over the first n f64s of a raw buffer.
+#must_use
+fn or_buf_peak(b, n) {
+    var pk = 0;
+    var i = 0;
+    while (i < n) { pk = f64_max(pk, f64_abs(load64(b + i * 8))); i = i + 1; }
+    return pk;
+}
+
+# Synthesize each phoneme in `ps` (a vec of ids) at `dur` seconds, or at its own
+# phoneme_duration when dur is 0. Returns how many came back as an error, a
+# non-finite sample, or (when need_sound is 1) silence at 1e-6.
+#must_use
+fn or_synth_all(ps, voice, dur, need_sound) {
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(ps)) {
+        var p = vec_get(ps, i);
+        var d = dur;
+        if (d == 0) { d = svara_phoneme_duration(p); }
+        var v = svara_phoneme_synthesize(p, voice, SR, d);
+        if (svara_is_err(v) == 1) { bad = bad + 1; }
+        else {
+            if (or_vec_finite(v) == 0) { bad = bad + 1; }
+            elif (need_sound == 1) {
+                if (f64_gt(or_vec_peak(v), TOL_1EM6) == 0) { bad = bad + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# Render each phoneme in `ps` through one context at `dur` seconds. Returns how
+# many came back as an error or with a non-finite sample.
+#must_use
+fn or_ctx_all(ctx, ps, voice, dur) {
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(ps)) {
+        var n = svara_synthctx_synthesize(ctx, vec_get(ps, i), voice, dur, 0);
+        if (svara_is_err(n) == 1) { bad = bad + 1; }
+        elif (or_buf_finite(svara_synthctx_buffer(ctx), n) == 0) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# A vec of phoneme ids from a raw list of `n` i64s.
+#must_use
+fn or_ids(list, n) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) { vec_push(v, load64(list + i * 8)); i = i + 1; }
+    return v;
+}
+
+# A sequence of up to four (phoneme, duration, stress) events; phoneme -1 ends it.
+#must_use
+fn or_seq(p0, d0, s0, p1, d1, s1, p2, d2, s2, p3, d3, s3) {
+    var q = svara_sequence_new();
+    svara_sequence_push(q, svara_phoneme_event_new(p0, d0, s0));
+    if (p1 >= 0) { svara_sequence_push(q, svara_phoneme_event_new(p1, d1, s1)); }
+    if (p2 >= 0) { svara_sequence_push(q, svara_phoneme_event_new(p2, d2, s2)); }
+    if (p3 >= 0) { svara_sequence_push(q, svara_phoneme_event_new(p3, d3, s3)); }
+    return q;
+}
+
+# GAPS 6-9, closed in 3.6.5 before rust-old/ is retired: every Rust #[test] was
+# mapped onto the Cyrius suites, and these are the ones with no assertion (4) or a
+# weaker one (the rest). Each cites `git show 3.6.4:rust-old/...`, the last tag
+# that will carry the Rust. Where a control goes beyond what the Rust asserted,
+# its expectation was read from the compiled oracle, never from svara.
+fn or_sweep_365(voice) {
+    var U = SVARA_STRESS_UNSTRESSED;
+    var P = SVARA_STRESS_PRIMARY;
+    var S = SVARA_STRESS_SECONDARY;
+    var nas_n = svara_nasalization_for_nasal(SVARA_PH_NASAL_N);
+
+    # ================================================================
+    test_group("GAP 6: four Rust tests no Cyrius suite asserted");
+    # sequence.rs:698-740 -- V-CC-V renders shorter than V-C-V plus a full consonant.
+    # The oracle renders V-C-V at 6701 samples and V-CC-V at 5765: compression
+    # makes the cluster version shorter outright, so no "longer" control applies.
+    var out_no = svara_sequence_render(or_seq(SVARA_PH_VOWEL_A, 0.1, U, SVARA_PH_FRIC_S, 0.08, U,
+        SVARA_PH_VOWEL_I, 0.1, U, 0 - 1, 0, 0), voice, SR);
+    var out_cl = svara_sequence_render(or_seq(SVARA_PH_VOWEL_A, 0.1, U, SVARA_PH_FRIC_S, 0.08, U,
+        SVARA_PH_PLOSIVE_T, 0.08, U, SVARA_PH_VOWEL_I, 0.1, U), voice, SR);
+    assert_eq(svara_is_err(out_no) | svara_is_err(out_cl), 0, "both sequences render");
+    assert_eq(or_vec_finite(out_cl), 1, "the cluster render is finite");
+    var naive_extra = svara_count_from_f64(f64_mul(f64_mul(0.08, 0.9), SR));   # 3175
+    assert_eq(naive_extra, 3175, "control: (0.08 * 0.9 * 44100) as usize is 3175, as in Rust");
+    assert_eq(vec_len(out_cl) < vec_len(out_no) + naive_extra, 1,
+      "the cluster is compressed below V-C-V plus a full consonant");
+    # The oracle renders 6701 and 5765. Each unstressed 0.1 s vowel is 3969 samples
+    # here and 3968 there: f32 computes 0.1 * 0.9 * 44100 as 3968.9998 and truncates
+    # down, f64 as 3969.0000000000005 (ADR-0009, SQ-LEN). So svara is one longer per
+    # vowel, and the consonants agree (3175, and 2222 each in the cluster).
+    assert_eq(vec_len(out_no), 6701 + 2, "V-C-V is the oracle's 6701 plus one sample per vowel");
+    assert_eq(vec_len(out_cl), 5765 + 2, "V-CC-V is the oracle's 5765 plus one sample per vowel");
+
+    # voice.rs:479-482 -- a new male voice has no bandwidth widening.
+    assert_eq(or_approx(SvVoiceProfile_bandwidth_widening(svara_voice_new_male()), 0, SV_EPSILON), 1,
+      "male bandwidth_widening defaults to 0");
+
+    # voice.rs:524-544 -- widening grows with f0. Rust asserts B1(800) > B1(400),
+    # which sqrt(f0/120) alone would satisfy, so the factor itself is asserted too:
+    # voice.rs:355-358 gives 1 + w * 0.3 * (f0 - 300) / 500, so 1.06 at 400 Hz and
+    # 1.30 at 800 Hz with w = 1.
+    var tgt = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+    var w400 = svara_voice_with_bandwidth_widening(
+      svara_voice_with_f0(svara_voice_new_female(), f64_from(400)), F64_ONE);
+    var w800 = svara_voice_with_bandwidth_widening(
+      svara_voice_with_f0(svara_voice_new_female(), f64_from(800)), F64_ONE);
+    var n400 = svara_voice_with_f0(svara_voice_new_female(), f64_from(400));
+    var n800 = svara_voice_with_f0(svara_voice_new_female(), f64_from(800));
+    var b_w400 = SvVowelTarget_b1(svara_voice_apply_formant_scale(w400, tgt));
+    var b_w800 = SvVowelTarget_b1(svara_voice_apply_formant_scale(w800, tgt));
+    var b_n400 = SvVowelTarget_b1(svara_voice_apply_formant_scale(n400, tgt));
+    var b_n800 = SvVowelTarget_b1(svara_voice_apply_formant_scale(n800, tgt));
+    assert_eq(f64_gt(b_w800, b_w400), 1, "widened B1 at 800 Hz exceeds widened B1 at 400 Hz");
+    assert_eq(or_approx(f64_div(b_w400, b_n400), 1.06, TOL_1EM6), 1, "widening factor at 400 Hz is 1.06");
+    assert_eq(or_approx(f64_div(b_w800, b_n800), 1.3, TOL_1EM6), 1, "widening factor at 800 Hz is 1.30");
+
+    # phoneme.rs:2285-2300 -- a nasalized diphthong renders. phoneme.rs:1510-1517
+    # nasalizes diphthongs as well as vowels, and the oracle's nasalized /ai/
+    # differs from its oral /ai/ (sum |diff| 0.0051), so that is asserted too.
+    var nd = svara_phoneme_synthesize_nasalized(SVARA_PH_DIPH_AI, voice, SR, 0.15, nas_n);
+    assert_eq(svara_is_err(nd), 0, "nasalized /ai/ synthesizes");
+    assert_eq(or_vec_finite(nd), 1, "nasalized /ai/ is finite");
+    assert_eq(f64_gt(or_vec_peak(nd), TOL_1EM6), 1, "nasalized /ai/ is not silent");
+    var od = svara_phoneme_synthesize(SVARA_PH_DIPH_AI, voice, SR, 0.15);
+    assert_eq(vec_len(nd), vec_len(od), "control: same length as the oral /ai/");
+    assert_eq(f64_gt(or_vec_diffsum(od, nd), TOL_1EM6), 1, "nasalization changes the diphthong");
+
+    # ================================================================
+    test_group("GAP 7: whole phoneme sets, not one member each");
+    var lst = alloc(34 * 8);
+    # phoneme.rs:2350-2367 -- every click, 0.04 s, ok and finite.
+    store64(lst, SVARA_PH_CLICK_BILABIAL); store64(lst + 8, SVARA_PH_CLICK_DENTAL);
+    store64(lst + 16, SVARA_PH_CLICK_ALVEOLAR); store64(lst + 24, SVARA_PH_CLICK_PALATAL);
+    store64(lst + 32, SVARA_PH_CLICK_LATERAL);
+    assert_eq(or_synth_all(or_ids(lst, 5), voice, 0.04, 0), 0, "all five clicks render finite");
+    # phoneme.rs:2370-2387 -- every ejective, 0.1 s.
+    store64(lst, SVARA_PH_EJECTIVE_P); store64(lst + 8, SVARA_PH_EJECTIVE_T);
+    store64(lst + 16, SVARA_PH_EJECTIVE_K); store64(lst + 24, SVARA_PH_EJECTIVE_S);
+    store64(lst + 32, SVARA_PH_EJECTIVE_CH);
+    assert_eq(or_synth_all(or_ids(lst, 5), voice, 0.1, 0), 0, "all five ejectives render finite");
+    # phoneme.rs:2390-2409 -- every implosive, 0.08 s, finite and not silent.
+    store64(lst, SVARA_PH_IMPLOSIVE_B); store64(lst + 8, SVARA_PH_IMPLOSIVE_D);
+    store64(lst + 16, SVARA_PH_IMPLOSIVE_G);
+    assert_eq(or_synth_all(or_ids(lst, 3), voice, 0.08, 1), 0, "all three implosives render and sound");
+    # phoneme.rs:2447-2470 -- the seven IPA vowels, 0.08 s, finite and not silent.
+    var k = 0;
+    while (k < 7) { store64(lst + k * 8, SVARA_PH_VOWEL_Y + k); k = k + 1; }
+    assert_eq(load64(lst + 48), SVARA_PH_VOWEL_CLOSE_CENTRAL_ROUNDED, "control: ids 46-52 are the seven IPA vowels");
+    assert_eq(or_synth_all(or_ids(lst, 7), voice, 0.08, 1), 0, "all seven IPA vowels render and sound");
+    # phoneme.rs:2473-2521 -- the 34 IPA consonants, each at its own duration.
+    k = 0;
+    while (k < 34) { store64(lst + k * 8, SVARA_PH_PLOSIVE_UVULAR_Q + k); k = k + 1; }
+    assert_eq(load64(lst + 33 * 8), SVARA_PH_AFFR_LATERAL, "control: ids 53-86 are the 34 IPA consonants");
+    assert_eq(or_synth_all(or_ids(lst, 34), voice, 0, 0), 0, "all 34 IPA consonants render finite");
+
+    # ================================================================
+    test_group("GAP 8: the synthesis context, every class and in sequence");
+    # phoneme.rs:2223-2244 -- nine classes through one context, 0.08 s each.
+    var ctx = svara_synthctx_new(voice, SR);
+    store64(lst, SVARA_PH_VOWEL_A); store64(lst + 8, SVARA_PH_DIPH_AI);
+    store64(lst + 16, SVARA_PH_PLOSIVE_P); store64(lst + 24, SVARA_PH_FRIC_S);
+    store64(lst + 32, SVARA_PH_NASAL_N); store64(lst + 40, SVARA_PH_AFFR_CH);
+    store64(lst + 48, SVARA_PH_APPROX_R); store64(lst + 56, SVARA_PH_LATERAL_L);
+    store64(lst + 64, SVARA_PH_SILENCE);
+    assert_eq(or_ctx_all(ctx, or_ids(lst, 9), voice, 0.08), 0, "all nine classes render finite in one context");
+    # phoneme.rs:2412-2426 -- the three non-pulmonic classes in a context.
+    store64(lst, SVARA_PH_CLICK_DENTAL); store64(lst + 8, SVARA_PH_EJECTIVE_T);
+    store64(lst + 16, SVARA_PH_IMPLOSIVE_D);
+    assert_eq(or_ctx_all(ctx, or_ids(lst, 3), voice, 0.08), 0, "click, ejective and implosive render in a context");
+    # phoneme.rs:2303-2324 -- state does not leak: a vowel after a fricative sounds.
+    var c2 = svara_synthctx_new(voice, SR);
+    var n1 = svara_synthctx_synthesize(c2, SVARA_PH_FRIC_S, voice, 0.06, 0);
+    assert_eq(or_buf_finite(svara_synthctx_buffer(c2), n1), 1, "/s/ first is finite");
+    var n2 = svara_synthctx_synthesize(c2, SVARA_PH_VOWEL_A, voice, 0.08, 0);
+    assert_eq(or_buf_finite(svara_synthctx_buffer(c2), n2), 1, "/a/ after /s/ is finite");
+    assert_eq(f64_gt(or_buf_peak(svara_synthctx_buffer(c2), n2), TOL_1EM6), 1, "/a/ after /s/ is not silent");
+    var n3 = svara_synthctx_synthesize(c2, SVARA_PH_NASAL_M, voice, 0.06, 0);
+    assert_eq(or_buf_finite(svara_synthctx_buffer(c2), n3), 1, "/m/ after them is finite");
+
+    # ================================================================
+    test_group("GAP 9: the Rust thresholds and inputs, where the port's differed");
+    # bridge.rs:329-334 -- the range bounds, besides the ordering.
+    assert_eq(f64_le(svara_bridge_breathiness_from_arousal(0), F64_ONE), 1, "calm breathiness <= 1");
+    assert_eq(f64_ge(svara_bridge_breathiness_from_arousal(F64_ONE), 0), 1, "excited breathiness >= 0");
+    # glottal.rs:676-700 -- whisper RMS below 0.8 x voiced RMS over 4410 samples.
+    var gv = svara_glottal_new(f64_from(120), SR);
+    var gw = svara_glottal_new(f64_from(120), SR);
+    svara_glottal_set_whisper(gw);
+    var ev = 0;
+    var ew = 0;
+    k = 0;
+    while (k < 4410) {
+        var sv = svara_glottal_next_sample(gv);
+        var sw = svara_glottal_next_sample(gw);
+        ev = f64_add(ev, f64_mul(sv, sv));
+        ew = f64_add(ew, f64_mul(sw, sw));
+        k = k + 1;
+    }
+    assert_eq(f64_lt(f64_sqrt(ew), f64_mul(f64_sqrt(ev), 0.8)), 1, "whisper RMS < 0.8 x voiced RMS");
+    # glottal.rs:723-731 -- creaky at 80 Hz, rd 0.4, jitter 0.01, a full second.
+    var gc = svara_glottal_new(f64_from(80), SR);
+    svara_glottal_set_creaky(gc, 0.4);
+    svara_glottal_set_jitter(gc, 0.01);
+    var cbad = 0;
+    k = 0;
+    while (k < 44100) {
+        if (svara_is_finite(svara_glottal_next_sample(gc)) == 0) { cbad = cbad + 1; }
+        k = k + 1;
+    }
+    assert_eq(cbad, 0, "a second of creaky voice at 80 Hz stays finite");
+    # voice.rs:447-453 -- F2 is scaled by 1.17 too, not only F1.
+    var fsc = svara_voice_apply_formant_scale(svara_voice_new_female(), tgt);
+    assert_eq(or_approx(SvVowelTarget_f2(fsc), f64_mul(SvVowelTarget_f2(tgt), 1.17), 0.01), 1, "female F2 = F2 x 1.17");
+    # voice.rs:608-626 -- every effort gives 1024 finite samples.
+    var ebad = 0;
+    var ef = SVARA_EFFORT_WHISPER;
+    while (ef <= SVARA_EFFORT_SHOUT) {
+        var eg = svara_voice_create_glottal_source_with_effort(voice, ef, SR);
+        if (svara_is_err(eg) == 1) { ebad = ebad + 1; }
+        else {
+            k = 0;
+            while (k < 1024) {
+                if (svara_is_finite(svara_glottal_next_sample(eg)) == 0) { ebad = ebad + 1; k = 1024; }
+                k = k + 1;
+            }
+        }
+        ef = ef + 1;
+    }
+    assert_eq(ebad, 0, "all five efforts give finite output");
+    # sequence.rs:766-776 -- render_planned through a nasal.
+    var pl = svara_sequence_render_planned(or_seq(SVARA_PH_VOWEL_A, 0.1, P, SVARA_PH_NASAL_N, 0.06, U,
+        SVARA_PH_VOWEL_I, 0.1, S, 0 - 1, 0, 0), voice, SR);
+    assert_eq(svara_is_err(pl), 0, "planned A-N-I renders");
+    assert_eq(vec_len(pl) > 0, 1, "planned A-N-I is not empty");
+    assert_eq(or_vec_finite(pl), 1, "planned A-N-I is finite");
+    # pool.rs:236-249 -- the batch is finite.
+    var pool = svara_pool_new(voice, SR);
+    var bp = vec_new();
+    var bd = vec_new();
+    vec_push(bp, SVARA_PH_VOWEL_A); vec_push(bd, 0.08);
+    vec_push(bp, SVARA_PH_NASAL_N); vec_push(bd, 0.05);
+    vec_push(bp, SVARA_PH_VOWEL_I); vec_push(bd, 0.08);
+    var bo = svara_pool_render_batch(pool, bp, bd, voice);
+    assert_eq(svara_is_err(bo), 0, "pool batch renders");
+    assert_eq(or_vec_finite(bo), 1, "pool batch is finite");
+    assert_eq(svara_pool_render_count(pool), 3, "pool counted three renders");
+    # phoneme.rs:2134-2148 -- the place of all six nasals.
+    assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_M)), SVARA_NASAL_BILABIAL, "m bilabial");
+    assert_eq(SvNasalization_place(nas_n), SVARA_NASAL_ALVEOLAR, "n alveolar");
+    assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_NG)), SVARA_NASAL_VELAR, "ng velar");
+    assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_RETRO)), SVARA_NASAL_ALVEOLAR,
+      "retroflex nasal alveolar");
+    assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_PALATAL)), SVARA_NASAL_ALVEOLAR,
+      "palatal nasal alveolar");
+    assert_eq(SvNasalization_place(svara_nasalization_for_nasal(SVARA_PH_NASAL_UVULAR)), SVARA_NASAL_VELAR,
+      "uvular nasal velar");
+    # phoneme.rs:2163-2182 -- nasalized /a/ (before /n/) differs from oral by more
+    # than 0.01 summed. The oracle measures 0.76.
+    var oa = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.1);
+    var na = svara_phoneme_synthesize_nasalized(SVARA_PH_VOWEL_A, voice, SR, 0.1, nas_n);
+    assert_eq(f64_gt(or_vec_diffsum(oa, na), 0.01), 1, "nasalized /a/ differs from oral by > 0.01");
+    # integration.rs:6-15 -- half a second of /a/, finite, peak above 0.001.
+    var a5 = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, F64_HALF);
+    assert_eq(or_vec_finite(a5), 1, "0.5 s of /a/ is finite");
+    assert_eq(f64_gt(or_vec_peak(a5), TOL_1EM3), 1, "0.5 s of /a/ peaks above 0.001");
+    # integration.rs:67-90 -- /a/ to /i/ at 0.15 s each, no jump past 2.5 x peak.
+    # The Rust guards the check with peak > 0.001, so that is asserted first.
+    var ai = svara_sequence_render(or_seq(SVARA_PH_VOWEL_A, 0.15, P, SVARA_PH_VOWEL_I, 0.15, P,
+        0 - 1, 0, 0, 0 - 1, 0, 0), voice, SR);
+    var ai_pk = or_vec_peak(ai);
+    assert_eq(f64_gt(ai_pk, TOL_1EM3), 1, "control: the 0.15 s /a/-/i/ peaks above 0.001");
+    assert_eq(f64_lt(or_vec_max_jump(ai), f64_mul(ai_pk, 2.5)), 1, "no click: max jump < 2.5 x peak");
+    return 0;
 }
 
 # Test entry point — runs this file's suite and returns the assert summary.
@@ -315,6 +655,7 @@ fn main() {
       "90 dB -> 30 Hz (exactly at the cap)");
     assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(1000)), f64_from(30), TOL_1EM6), 1,
       "1000 dB -> capped");
+    or_sweep_365(voice);
     return assert_summary();
 }
 

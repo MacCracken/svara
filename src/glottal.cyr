@@ -64,20 +64,18 @@ fn svara_lf_params_from_rd(rd, out) {
     store64(out + 16, ee);
 }
 
-# Three f64s for apply_rd's LF params. Read straight back into the source, so one
-# buffer serves every source.
-var _sv_glottal_rd_out = 0;
-
 # apply_rd -- compute + store LF params on the source.
 fn svara_glottal_apply_rd(self, rd) {
-    # One scratch triple for every call: this ran on each new, set_rd and
-    # set_creaky, and the bump allocator never frees.
-    if (_sv_glottal_rd_out == 0) { _sv_glottal_rd_out = alloc(24); }
-    var out = _sv_glottal_rd_out;
-    svara_lf_params_from_rd(rd, out);
-    SvGlottalSource_set_lf_ta(self, load64(out));
-    SvGlottalSource_set_lf_te(self, load64(out + 8));
-    SvGlottalSource_set_lf_ee(self, load64(out + 16));
+    # The three LF params go through a stack triple. Through 3.6.4 this was one
+    # module-level buffer for every source, so two threads setting rd at once
+    # could give each other's params (filed by hoosh). It runs on each new,
+    # set_rd and set_creaky, and the bump allocator never frees, so it was never
+    # allocated per call either.
+    var out[24];
+    svara_lf_params_from_rd(rd, &out);
+    SvGlottalSource_set_lf_ta(self, load64(&out));
+    SvGlottalSource_set_lf_te(self, load64(&out + 8));
+    SvGlottalSource_set_lf_ee(self, load64(&out + 16));
 }
 
 # f0_in_range -- 1 iff f0 is inside [20, 2000] Hz, 0 otherwise INCLUDING NaN.

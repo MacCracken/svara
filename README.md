@@ -112,7 +112,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.6.4"
+tag = "3.6.5"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
