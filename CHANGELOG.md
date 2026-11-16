@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.1] - 2026-11-16 — `render_planned` in 0.84x the instructions
+
+Performance release, the first of 3.8.x's bit-identical items. **`render_planned` retires 0.845x
+of 3.8.0's instructions and the toned render 0.840x, both in about 0.80x the cycles. No output
+moves**: against 3.8.0, 558,721 values, the JSON and all 638 hostile cases are identical. No public
+name changes. **1,297 assertions / 26 suites.**
+
+### How it was found
+
+A component profile of `render_planned`'s per-sample loop, counting retired instructions per
+call, put 57% of it in `svara_tract_set_formants_from_target`. Nearly all of that was the bank
+rebuild computing `cos`, `sin` and `sinh` for five slots on every sample: 1,519 of a coefficient
+set's 1,533 instructions. `svara_trajectory_formants_at_into` took 21%, the synthesis itself 15%,
+and the toned path's `f0_at` added 627 M. The table is in `docs/benchmarks.md`.
+
+### Changed
+
+Each change was measured on its own against 3.8.0, and each leaves every value the same bits:
+
+- **The formant bank memoizes each slot's trig** (-6.9% of `render_planned`'s instructions).
+  Bank slot memo:
+  - `cos` and `sin` are kept keyed on the slot's frequency and the sample rate, and `sinh` on its
+    bandwidth and the sample rate. The keys are compared as raw bits.
+  - A rebuild still discards the delay lines every sample, as Rust's does. Only the transcendentals
+    are reused.
+  - On the probe sequence a slot's frequency repeats on 48% of samples and its bandwidth on 35%; on
+    a longer sentence, 54% and 75%.
+  - The coefficient arithmetic is now written once, in `svara_formant_biquad_from_trig`, so a
+    memoized coefficient and a fresh one go through the same operations.
+- **`svara_tract_set_formants_from_target` writes the target straight into the tract's record**
+  (-5.8%), roadmap 3.8.x's "copies into the tract's record on every sample". It validates the ten
+  target values first with `svara_formant_validate_target`, which shares `svara_formant_check`
+  with `svara_formant_validate`, then rebuilds without validating again. A rejected target still
+  leaves the record alone.
+- **`render_planned` computes per-event values once per event** (-2.0%): class, voicing, stressed
+  f0, contour, nasal onset and segment spans.
+- **`svara_tract_set_nasal_place` returns early for the place the tract already has** (-0.8%).
+  `render_planned` asked for it on every sample of a nasalized vowel, at a `cos` and a `sin` each.
+  The recorded place changes only when naad takes the notch's parameters, and a new tract's
+  notch is exactly a retune to neutral, so the skip changes nothing.
+- **The toned path fills each tone contour's buffers once per event** (-2.6% of the toned
+  render's instructions). `svara_prosody_f0_at_filled` evaluates from filled buffers, and
+  `svara_prosody_f0_at` now fills and then calls the same evaluator.
+- **Left as it is:** `svara_trajectory_formants_at_into`. Its cost is ten-component Catmull-Rom
+  arithmetic, with no exact shortcut. Caching its segment search would save about 1%.
+
+### Added
+
+- `svara_formant_biquad_from_trig`, `svara_formant_bank_coeffs`, `svara_formant_check`,
+  `svara_formant_validate_target`, `svara_formant_filter_rebuild_valid`, `svara_prosody_fill`,
+  `svara_prosody_f0_at_filled` and `svara_prosody_eval`.
+- **`tests/allocbudget.tcyr`: the shortcuts against the long way** (11 assertions):
+  - the memo's coefficients against fresh ones across eight key changes, a sample-rate change
+    among them;
+  - `validate_target` against `validate` on 93 hostile targets and rates;
+  - a refused target leaving the record alone;
+  - `f0_at_filled` against `f0_at` on all nine tones, one- and zero-point contours, t outside
+    [0, 1] and NaN;
+  - the notch keeping its coefficients on a retune to its own place.
+
+  Three mutants each fail their own check: a memo ignoring the sample rate, a target validator
+  skipping B5, and `f0_at_filled` mishandling one point.
+
+### Verified
+
+- `scripts/sweep/compare.py 3.8.0`: 558,721 values, the JSON and 638 hostile cases are identical.
+  Retired instructions are equal on the four per-sample probes, 1.0004 on `phoneme /a/` (the
+  memo's bookkeeping in a bank built once), and 0.8448 and 0.8401 on the two `render_planned`
+  probes.
+- `cyrius audit`, `cyrius fuzz`, `cyrius deny`, `scripts/check-logging.sh` both ways, the five
+  examples, `cyrius distlib` current, and `cyrius deps --verify` and `--locked`.
+
 ## [3.8.0] - 2026-11-16 — a streaming sequence render
 
 Feature release, and the first of the 3.8.x lane. It adds `svara_sequence_render_into`, the

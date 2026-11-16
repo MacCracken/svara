@@ -693,21 +693,61 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         ci = ci + 1;
     }
 
+    # Everything below that depends only on the event is computed when the event
+    # changes, not on every sample (3.8.1): the same arithmetic, held in locals.
     var idx = 0;
+    var cur = 0 - 1;
+    var phoneme = 0;
+    var c = 0;
+    var voiced = 0;
+    var nasal = 0;
+    var nasal_onset = 0;
+    var nasal_len = 1;
+    var base_f0 = 0;
+    var contour = 0;
+    var cn = 0;           # the contour's points, copied once per event when they fit
+    var cxs[512];
+    var cys[512];
+    var seg_start = 0;
+    var seg_len = 1;
+    var span = 1;
     var s = 0;
     while (s < total) {
         while (((idx + 1) < n) & (s >= vec_get(boundaries, idx + 1))) { idx = idx + 1; }
-        var phoneme = SvPhonemeEvent_phoneme(vec_get(events, idx));
+        if (idx != cur) {
+            cur = idx;
+            var ev = vec_get(events, idx);
+            phoneme = SvPhonemeEvent_phoneme(ev);
+            c = svara_phoneme_class(phoneme);
+            voiced = svara_phoneme_is_voiced(phoneme);
+            seg_start = vec_get(boundaries, idx);
+            var seg_end = vec_get(boundaries, idx + 1);
+            span = seg_end - seg_start;
+            if (span < 1) { span = 1; }
+            seg_len = span;
+            nasal = vec_get(nasals, idx);
+            if (nasal != 0) {
+                var onset_off = svara_count_from_f64(f64_mul(f64_from(seg_end - seg_start),
+                    SvNasalization_onset(nasal)));
+                nasal_onset = seg_start + onset_off;
+                nasal_len = seg_end - nasal_onset;
+                if (nasal_len < 1) { nasal_len = 1; }
+            }
+            base_f0 = svara_seq_stress_f0(SvVoiceProfile_base_f0(voice), SvPhonemeEvent_stress(ev));
+            contour = vec_get(contours, idx);
+            cn = 0 - 1;
+            if (contour != 0) {
+                var cpts = SvProsodyContour_f0_points(contour);
+                if (vec_len(cpts) <= SV_PROSODY_STACK_POINTS) {
+                    cn = vec_len(cpts);
+                    svara_prosody_fill(cpts, cn, &cxs, &cys);
+                }
+            }
+        }
         svara_trajectory_formants_at_into(plan, s, target);
 
-        var nasal = vec_get(nasals, idx);
         if (nasal != 0) {
-            var seg_span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
-            var onset_off = svara_count_from_f64(f64_mul(f64_from(seg_span), SvNasalization_onset(nasal)));
-            var nasal_onset = vec_get(boundaries, idx) + onset_off;
             if (s >= nasal_onset) {
-                var nasal_len = vec_get(boundaries, idx + 1) - nasal_onset;
-                if (nasal_len < 1) { nasal_len = 1; }
                 var nt = f64_div(f64_from(s - nasal_onset), f64_from(nasal_len));
                 var nc = f64_mul(SvNasalization_peak_coupling(nasal), ease_in_out_smooth(nt));
                 svara_tract_set_nasal_coupling(tract, nc);
@@ -722,24 +762,15 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         var sfe = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(sfe) == 1) { sfe = 0; }   # ignored, like Rust `let _`
 
-        var ev = vec_get(events, idx);
-        var st = SvPhonemeEvent_stress(ev);
-        var base_f0 = SvVoiceProfile_base_f0(voice);
-        if (st == SVARA_STRESS_PRIMARY) { base_f0 = f64_mul(base_f0, 1.10); }
-        elif (st == SVARA_STRESS_SECONDARY) { base_f0 = f64_mul(base_f0, 1.05); }
         var effective_f0 = base_f0;
-        var contour = vec_get(contours, idx);
         if (contour != 0) {
-            var seg_start = vec_get(boundaries, idx);
-            var seg_len = vec_get(boundaries, idx + 1) - seg_start;
-            if (seg_len < 1) { seg_len = 1; }
             var tt = f64_div(f64_from(s - seg_start), f64_from(seg_len));
-            effective_f0 = f64_mul(base_f0, svara_prosody_f0_at(contour, tt));
+            if (cn >= 0) { effective_f0 = f64_mul(base_f0, svara_prosody_f0_at_filled(&cxs, &cys, cn, tt)); }
+            else { effective_f0 = f64_mul(base_f0, svara_prosody_f0_at(contour, tt)); }
         }
         var f0e = svara_glottal_set_f0(glottal, effective_f0);
         if (svara_is_err(f0e) == 1) { f0e = 0; }   # ignored, like Rust `let _`
 
-        var c = svara_phoneme_class(phoneme);
         var sample = 0;
         if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG) | (c == SVARA_CLASS_APPROXIMANT)
           | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
@@ -747,7 +778,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
             sample = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
         } elif (c == SVARA_CLASS_FRICATIVE) {
             var nz = f64_mul(svara_rng_next_f32(noise), F64_HALF);
-            if (svara_phoneme_is_voiced(phoneme) == 1) {
+            if (voiced == 1) {
                 var voicing = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), SV_PH_R04);
                 sample = f64_add(f64_mul(nz, SV_PH_R06), voicing);
             } else {
@@ -755,9 +786,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
             }
         } elif ((c == SVARA_CLASS_PLOSIVE) | (c == SVARA_CLASS_AFFRICATE)
           | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
-            var span = vec_get(boundaries, idx + 1) - vec_get(boundaries, idx);
-            if (span < 1) { span = 1; }
-            var bf = f64_div(f64_from(s - vec_get(boundaries, idx)), f64_from(span));
+            var bf = f64_div(f64_from(s - seg_start), f64_from(span));
             if (f64_lt(bf, SV_PH_R04) == 1) {
                 sample = 0;
             } else {

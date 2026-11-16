@@ -274,6 +274,20 @@ fn svara_tract_record_formants(self, formants) {
 # trajectory path, so it is kept, not allocated per call.
 #must_use
 fn svara_tract_set_formants_from_target(self, target) {
+    # The usual case, a five-formant record on a built filter (3.8.1): validate
+    # the target's ten values first, then write them straight into the record and
+    # rebuild from it. A rejected target still leaves the record alone, and the
+    # per-sample copy from scratch into the record, 4.8% of render_planned's
+    # instructions, is gone, with the second validation rebuild would make.
+    var rec = SvVocalTract_formants(self);
+    var filt = SvVocalTract_filter(self);
+    if ((filt != 0) & (vec_len(rec) == SVARA_VOWEL_FORMANT_COUNT)) {
+        var v = svara_formant_validate_target(target, SvFormantFilter_sample_rate(filt));
+        if (svara_is_err(v) == 1) { return v; }
+        svara_vowel_target_to_formants_into(target, rec);
+        svara_formant_filter_rebuild_valid(filt, rec);
+        return SVARA_ERR_NONE;
+    }
     var sc = SvVocalTract_target_scratch(self);
     if (sc == 0) {
         sc = svara_formant_scratch_vec();
@@ -306,6 +320,13 @@ fn svara_tract_set_lip_radiation(self, coefficient) {
 # svara_tract_restore could not reproduce it.
 fn svara_tract_set_nasal_place(self, place) {
     if ((place < SVARA_NASAL_BILABIAL) | (place > SVARA_NASAL_NEUTRAL)) { return 0; }
+    # Already there (3.8.1). The recorded place changes only when naad has taken the
+    # notch's parameters for it, svara_tract_new sets the same parameters as a
+    # retune to SVARA_NASAL_NEUTRAL would, and a retune recomputes coefficients from
+    # them and touches no state. So retuning to the recorded place changes nothing.
+    # render_planned asked for it on every sample of a nasalized vowel, at a cos and
+    # a sin each.
+    if (place == SvVocalTract_nasal_place(self)) { return 0; }
     var freq = svara_nasal_place_antiformant_frequency(place);
     var q = f64_div(freq, f64_from(SV_T_NASAL_BW));
     # Record the place only if naad retuned the notch: at a low sample rate it can

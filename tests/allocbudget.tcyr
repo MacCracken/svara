@@ -136,6 +136,28 @@ fn f0_at_bytes(contour) {
     return alloc_used() - a;
 }
 
+# 1 if bank slot i's four coefficients equal, bit for bit, what
+# svara_formant_biquad_coeffs computes afresh for (freq, bw, sr).
+#must_use
+fn ab_slot_fresh(bank, i, freq, bw, sr, buf) {
+    svara_formant_biquad_coeffs(freq, bw, sr, buf);
+    if (load64(SvFormantBank_b0(bank) + i * 8) != load64(buf)) { return 0; }
+    if (load64(SvFormantBank_b2(bank) + i * 8) != load64(buf + 8)) { return 0; }
+    if (load64(SvFormantBank_a1(bank) + i * 8) != load64(buf + 16)) { return 0; }
+    if (load64(SvFormantBank_a2(bank) + i * 8) != load64(buf + 24)) { return 0; }
+    return 1;
+}
+
+# 1 if validate_target and validate over the five formants to_formants builds give
+# the same code for `target` at `sr`.
+#must_use
+fn ab_same_verdict(target, sr) {
+    var a = svara_formant_validate_target(target, sr);
+    var b = svara_formant_validate(svara_vowel_target_to_formants(target), sr);
+    if (a == b) { return 1; }
+    return 0;
+}
+
 # A sink for svara_sequence_render_into that keeps nothing.
 fn ab_sink(user, samples, count) { return 0; }
 
@@ -370,6 +392,123 @@ fn main() {
     assert_eq(warm_bytes > 0, 1, "control: the first pass builds the context's filters, so the measure can see it");
     assert_eq(ctx_pass_bytes(wctx, voice), 0, "a second pass over every class keeps no bytes");
     assert_eq(ctx_pass_bytes(wctx, voice), 0, "and a third");
+
+    # ================================================================
+    test_group("3.8.1's shortcuts give what the long way gives");
+    # ================================================================
+    # The trig memo: a slot fed repeats, changes of one key at a time, a sample
+    # rate change with frequency and bandwidth held, and a revisit, must hold
+    # exactly the coefficients a fresh computation gives each time.
+    var mf = vec_new();
+    vec_push(mf, svara_formant_new(f64_from(700), f64_from(90), F64_ONE));
+    var mfilt = svara_formant_filter_new(mf, SR);
+    var mbank = SvFormantFilter_bank(mfilt);
+    var mbuf = alloc(32);
+    var mbad = 0;
+    var steps = alloc(8 * 24);
+    store64(steps, f64_from(700)); store64(steps + 8, f64_from(90)); store64(steps + 16, SR);
+    store64(steps + 24, f64_from(700)); store64(steps + 32, f64_from(90)); store64(steps + 40, SR);
+    store64(steps + 48, f64_from(710)); store64(steps + 56, f64_from(90)); store64(steps + 64, SR);
+    store64(steps + 72, f64_from(710)); store64(steps + 80, f64_from(95)); store64(steps + 88, SR);
+    store64(steps + 96, f64_from(710)); store64(steps + 104, f64_from(95)); store64(steps + 112, f64_from(48000));
+    store64(steps + 120, f64_from(700)); store64(steps + 128, f64_from(90)); store64(steps + 136, SR);
+    store64(steps + 144, f64_from(700)); store64(steps + 152, f64_from(95)); store64(steps + 160, SR);
+    store64(steps + 168, f64_from(710)); store64(steps + 176, f64_from(90)); store64(steps + 184, f64_from(48000));
+    var ms = 0;
+    while (ms < 8) {
+        var fq = load64(steps + ms * 24);
+        var bw = load64(steps + ms * 24 + 8);
+        var rate = load64(steps + ms * 24 + 16);
+        var ue = svara_formant_bank_update(mbank, 3, fq, bw, F64_ONE, rate);
+        mbad = mbad + 1 - ab_slot_fresh(mbank, 3, fq, bw, rate, mbuf);
+        ms = ms + 1;
+    }
+    assert_eq(mbad, 0, "the memo's coefficients equal fresh ones across eight changes of key");
+    # The record written in place: validate_target refuses exactly what validate
+    # refuses over the five formants built from the target.
+    var vbad = 0;
+    var hostile = alloc(8 * 9);
+    store64(hostile, f64_div(0, 0)); store64(hostile + 8, 0x7FF0000000000000); store64(hostile + 16, 0);
+    store64(hostile + 24, f64_from(0 - 5)); store64(hostile + 32, f64_from(22050));
+    store64(hostile + 40, f64_from(30000)); store64(hostile + 48, f64_from(10000000));
+    store64(hostile + 56, 0x7FEFFFFFFFFFFFFF); store64(hostile + 64, f64_from(500));
+    var comp = 0;
+    while (comp < 10) {
+        var hv = 0;
+        while (hv < 9) {
+            var vt = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+            var val = load64(hostile + hv * 8);
+            if (comp == 0) { SvVowelTarget_set_f1(vt, val); }
+            if (comp == 1) { SvVowelTarget_set_f2(vt, val); }
+            if (comp == 2) { SvVowelTarget_set_f3(vt, val); }
+            if (comp == 3) { SvVowelTarget_set_f4(vt, val); }
+            if (comp == 4) { SvVowelTarget_set_f5(vt, val); }
+            if (comp == 5) { SvVowelTarget_set_b1(vt, val); }
+            if (comp == 6) { SvVowelTarget_set_b2(vt, val); }
+            if (comp == 7) { SvVowelTarget_set_b3(vt, val); }
+            if (comp == 8) { SvVowelTarget_set_b4(vt, val); }
+            if (comp == 9) { SvVowelTarget_set_b5(vt, val); }
+            vbad = vbad + 1 - ab_same_verdict(vt, SR);
+            hv = hv + 1;
+        }
+        comp = comp + 1;
+    }
+    var vt_ok = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+    vbad = vbad + 1 - ab_same_verdict(vt_ok, f64_from(0 - 1));
+    vbad = vbad + 1 - ab_same_verdict(vt_ok, f64_div(0, 0));
+    vbad = vbad + 1 - ab_same_verdict(vt_ok, f64_from(8000));
+    assert_eq(vbad, 0, "validate_target and validate agree on 93 hostile targets and rates");
+    assert_eq(svara_formant_validate_target(vt_ok, SR), SVARA_ERR_NONE, "control: a real vowel passes");
+    # A rejected target leaves the record alone on the in-place path too.
+    var rt = svara_tract_new(SR);
+    var rok = svara_tract_set_vowel(rt, SVARA_VOWEL_I);
+    var rec_f1 = SvFormant_frequency(vec_get(SvVocalTract_formants(rt), 0));
+    var bad_t = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+    SvVowelTarget_set_b3(bad_t, f64_div(0, 0));
+    assert_eq(svara_tract_set_formants_from_target(rt, bad_t), SVARA_ERR_INVALID_FORMANT, "a NaN B3 is refused");
+    assert_eq(SvFormant_frequency(vec_get(SvVocalTract_formants(rt), 0)), rec_f1, "and the record keeps /i/'s F1");
+    # The contour read from filled buffers: f0_at_filled matches f0_at.
+    var fbad = 0;
+    var fx = alloc(64 * 8);
+    var fy = alloc(64 * 8);
+    var tone = 0;
+    while (tone < 9) {
+        var ct = svara_tone_to_contour(tone);
+        var cp = SvProsodyContour_f0_points(ct);
+        var fill = svara_prosody_fill(cp, vec_len(cp), fx, fy);
+        var tq = 0 - 4;
+        while (tq < 25) {
+            var tt = f64_div(f64_from(tq), f64_from(20));
+            if (svara_prosody_f0_at_filled(fx, fy, vec_len(cp), tt) != svara_prosody_f0_at(ct, tt)) { fbad = fbad + 1; }
+            tq = tq + 1;
+        }
+        if (svara_prosody_f0_at_filled(fx, fy, vec_len(cp), f64_div(0, 0)) != svara_prosody_f0_at(ct, f64_div(0, 0))) {
+            fbad = fbad + 1;
+        }
+        tone = tone + 1;
+    }
+    var one_pt = vec_new();
+    vec_push(one_pt, svara_pt_new(F64_HALF, 1.3));
+    var c1 = svara_prosody_make(one_pt, F64_ONE, F64_ONE);
+    var fill1 = svara_prosody_fill(SvProsodyContour_f0_points(c1), 1, fx, fy);
+    if (svara_prosody_f0_at_filled(fx, fy, 1, 0.7) != svara_prosody_f0_at(c1, 0.7)) { fbad = fbad + 1; }
+    var c0 = svara_prosody_make(vec_new(), F64_ONE, F64_ONE);
+    if (svara_prosody_f0_at_filled(fx, fy, 0, 0.7) != svara_prosody_f0_at(c0, 0.7)) { fbad = fbad + 1; }
+    assert_eq(fbad, 0, "f0_at_filled matches f0_at: nine tones, 1 and 0 points, t outside [0, 1], NaN t");
+    # The notch: a retune to the recorded place changes nothing, another place retunes.
+    var nt = svara_tract_new(SR);
+    var notch = SvVocalTract_nasal_antiformant(nt);
+    var nb0 = BiquadFilter_b0(notch);
+    svara_tract_set_nasal_place(nt, SVARA_NASAL_NEUTRAL);
+    assert_eq(BiquadFilter_b0(notch), nb0, "a retune to the recorded place keeps the coefficients");
+    svara_tract_set_nasal_place(nt, SVARA_NASAL_VELAR);
+    assert_eq(BiquadFilter_b0(notch) != nb0, 1, "control: another place retunes");
+    assert_eq(svara_tract_nasal_place(nt), SVARA_NASAL_VELAR, "and is recorded");
+    var nb0v = BiquadFilter_b0(notch);
+    svara_tract_set_nasal_place(nt, SVARA_NASAL_NEUTRAL);
+    var new_t = svara_tract_new(SR);
+    assert_eq(BiquadFilter_b0(notch), nb0, "back to neutral, the coefficients a new tract has");
+    assert_eq(BiquadFilter_a1(notch), BiquadFilter_a1(SvVocalTract_nasal_antiformant(new_t)), "a1 too");
 
     # ================================================================
     test_group("a warmed context streams a sequence with no allocation");

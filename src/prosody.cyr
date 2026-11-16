@@ -135,6 +135,12 @@ fn svara_prosody_f0_at_internal(self, t) {
 # contour reads as 1.0, as svara_prosody_f0_at_internal documents.
 #must_use
 fn svara_prosody_interp(pts, n, tc, xs, ys) {
+    svara_prosody_fill(pts, n, xs, ys);
+    return svara_prosody_eval(xs, ys, n, tc);
+}
+
+# fill -- copy the n points' times into xs and values into ys.
+fn svara_prosody_fill(pts, n, xs, ys) {
     var i = 0;
     while (i < n) {
         var p = vec_get(pts, i);
@@ -142,6 +148,23 @@ fn svara_prosody_interp(pts, n, tc, xs, ys) {
         store64(ys + i * 8, svara_pt_value(p));
         i = i + 1;
     }
+    return 0;
+}
+
+# f0_at_filled -- svara_prosody_f0_at for a contour of n points already copied
+# into xs and ys by svara_prosody_fill, for a caller that reads one contour many
+# times, such as render_planned once per sample (3.8.1). Same answers, bit for bit.
+#must_use
+fn svara_prosody_f0_at_filled(xs, ys, n, t) {
+    if (n == 0) { return F64_ONE; }
+    if (n == 1) { return load64(ys); }
+    return svara_prosody_eval(xs, ys, n, f64_clamp(t, 0, F64_ONE));
+}
+
+# eval -- hisab's monotone cubic over n >= 2 filled points at tc in [0, 1]. A
+# refusal of the contour reads as 1.0; a refused allocation ends the process.
+#must_use
+fn svara_prosody_eval(xs, ys, n, tc) {
     var r = 0;
     var tag, err = calc_monotone_cubic_checked(xs, ys, n, tc, &r);
     if (is_err_result(tag) == 1) {

@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned` |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -26,6 +26,14 @@ of it per sample moved `render_planned` only 20.6 → 18.6 ms. The cost that mat
 was arena bytes, which no timer can see. Anything trading memory for time needs the
 `tests/allocbudget.tcyr` treatment, and a timing gap needs checking against retired
 instructions.
+
+**Profile by component first.** 3.8.1 counted retired instructions per call for
+each piece of `render_planned`'s loop and found 57% in the bank rebuild's trig, where
+the roadmap had pointed at a 4.3% copy. `docs/benchmarks.md` has the table, and the
+method is a scratch probe that replays each component the number of times a render
+does, timed with `scripts/sweep/compare.py`'s `counters`.
+`svara_trajectory_formants_at_into` is the largest piece left there, at about a
+quarter of the loop now, and has no exact shortcut.
 
 ⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
 predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
@@ -45,16 +53,7 @@ measured effect does not earn a place in the source.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
-- [ ] **`render_planned` recomputes per-event values on every sample.** Hoist what is
-      fixed for the event out of the sample loop.
-- [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls
-      it per sample.
 - [ ] **A voice is cloned, and a progress object built, per event.**
-- [ ] **`set_formants_from_target` copies into the tract's record on every sample.**
-      3.6.3 builds the target in scratch so a rejected one cannot reach the record,
-      then copies it over. That costs `render_planned` 4.3% of its instructions,
-      measured against the old write-in-place path. Validate the five target values
-      first, then write in place.
 
 ### Refactors the 3.6.3 sweep left
 
@@ -63,8 +62,12 @@ Each changes the shape of a hot path, so each needs the measurement above.
 - [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
       repeat each other. Share what is the same, and leave what differs to 3.9.x.
 - [ ] **13 test files define their own `approx`.** Move it to one include.
-- [ ] **The crossfade's fade-out loop is written twice**, and the stress table four
-      times.
+- [ ] **The crossfade is written twice over.** `svara_seq_crossfade` has its fade-out
+      loop twice, and `svara_seq_xf_segment` (3.8.0) repeats all of it for the stream.
+      `tests/stream.tcyr` pins the two to the same bits, so a shared step is safe to
+      try. The stress table is down to `svara_seq_stress_f0` and
+      `svara_seq_event_duration` (3.8.0 and 3.8.1), with one copy left in
+      `svara_batch_render_with_progress`.
 
 **Gate:** `scripts/sweep/compare.py` shows no moved value, and `tests/allocbudget.tcyr`
 holds.

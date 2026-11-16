@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.8.1** (2026-11-16) — **`render_planned` in 0.84x the instructions.** A component
+profile put 57% of the loop in the per-sample bank rebuild's `cos`, `sin` and `sinh`.
+The bank now memoizes each slot's trig on its exact keys. The tract writes a validated
+target straight into its record, per-event values are computed once per event, the
+nasal notch is not retuned to its own place, and tone contours are filled once per
+event. `render_planned` retires 0.845x of 3.8.0's instructions and the toned render
+0.840x, both in about 0.80x the cycles; every value is the same bits. **1,297
+assertions / 26 suites**, `cyrius audit` exit 0.
+
 **3.8.0** (2026-11-16) — **a streaming sequence render.** `svara_sequence_render_into`
 renders a sequence on the caller's context and passes each sample to a sink as soon as
 no later crossfade can change it. The plan is `svara_sequence_render`'s, and on a warmed
@@ -333,7 +342,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,286 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,297 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -378,7 +387,7 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   measured counts, never by written-down indices. A refused naad allocation must
   come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
   source it reports 0 of 6 and `restore` ends the run.
-- **`allocbudget.tcyr` (49)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (60)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
@@ -412,7 +421,7 @@ All green on the 6.7.18 pin:
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,286 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,297 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

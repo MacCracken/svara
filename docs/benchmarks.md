@@ -65,6 +65,31 @@ probe is within 0.01%. `scripts/sweep/compare.py` measures that with retired-
 instruction counters, which this host's timers cannot resolve. See the 3.6.3
 CHANGELOG entry and roadmap 3.8.x.
 
+**3.8.1 cut `render_planned` to 0.845x of 3.8.0's retired instructions, and the toned
+render to 0.840x; both run in about 0.80x the cycles.** The output is bit-identical.
+The rows in the table above predate it. A component profile said where the
+instructions went, per 20 renders of the probe's three phonemes (3,196 M in all):
+
+| Component | M instructions | Share |
+|---|---:|---:|
+| `svara_tract_set_formants_from_target`, nearly all of it the bank rebuild's `cos`, `sin` and `sinh` | 1,832 | 57% |
+| `svara_trajectory_formants_at_into` | 664 | 21% |
+| the glottal source and tract per sample | 468 | 15% |
+| the toned path's `svara_prosody_f0_at` | +627 on the toned render | |
+
+Four changes took it down:
+
+| Change | `render_planned` instructions |
+|---|---:|
+| memoize each bank slot's trig on its exact frequency, bandwidth and sample rate | -6.9% |
+| validate the target, then write it straight into the tract's record | -5.8% |
+| compute per-event values once per event, not per sample | -2.0% |
+| skip retuning the nasal notch to the place it already has | -0.8% |
+
+and on the toned render, filling the tone contour's buffers once per event takes
+2.6% more. `svara_trajectory_formants_at_into` was left as it is: its cost is the
+ten-component Catmull-Rom arithmetic, with no exact shortcut.
+
 Per-release deltas are not tracked in this table — `benches/history.csv` has one
 row per benchmark per run, which is the honest place for them. A single run on
 this host is not trustworthy on its own: an unrelated run showed
