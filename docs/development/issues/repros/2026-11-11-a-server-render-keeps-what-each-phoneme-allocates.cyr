@@ -1,0 +1,75 @@
+# svara 3.6.3: what a render keeps on the heap, which never frees.
+#
+# From the repository root:
+#   cyrius build docs/development/issues/repros/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.cyr /tmp/keep
+#   /tmp/keep; echo "exit=$?"
+#
+# 1. svara_sequence_render of a 12-phoneme sequence (male voice, 24 kHz): the samples it returns and the bytes it
+#    kept, per output sample.
+# 2. One context, warmed by a first pass, then each phoneme class rendered again for 0.1 s: the bytes each render
+#    keeps. A warmed context would keep 0 if it reused what it builds per phoneme.
+# The exit code is the number of class renders that kept anything.
+include "lib/sakshi.cyr"
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "dist/svara.cyr"
+
+fn out(s) {
+    syscall(1, 1, s, strlen(s));
+    return 0;
+}
+
+fn out_int(x) {
+    var b[24];
+    var n = fmt_int_buf(x, &b);
+    syscall(1, 1, &b, n);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    var voice = svara_voice_new_male();
+    var sr = f64_from(24000);
+    var phs = vec_new();
+    vec_push(phs, SVARA_PH_VOWEL_A); vec_push(phs, SVARA_PH_FRIC_S); vec_push(phs, SVARA_PH_PLOSIVE_P);
+    vec_push(phs, SVARA_PH_NASAL_M); vec_push(phs, SVARA_PH_LATERAL_L); vec_push(phs, SVARA_PH_SILENCE);
+    vec_push(phs, SVARA_PH_AFFR_CH); vec_push(phs, SVARA_PH_DIPH_AI); vec_push(phs, SVARA_PH_FRIC_Z);
+    vec_push(phs, SVARA_PH_VOWEL_I); vec_push(phs, SVARA_PH_PLOSIVE_D); vec_push(phs, SVARA_PH_VOWEL_O);
+    var seq = svara_sequence_new();
+    var k = 0;
+    while (k < vec_len(phs)) {
+        svara_sequence_push(seq, svara_phoneme_event_new(vec_get(phs, k), 0.08, SVARA_STRESS_UNSTRESSED));
+        k = k + 1;
+    }
+    var u0 = alloc_used();
+    var out_v = svara_sequence_render(seq, voice, sr);
+    var u1 = alloc_used();
+    out("sequence_render samples: "); out_int(vec_len(out_v));
+    out("sequence_render bytes kept: "); out_int(u1 - u0);
+    out("  per sample: "); out_int((u1 - u0) / vec_len(out_v));
+    var p = svara_pool_new(voice, sr);
+    k = 0;
+    while (k < vec_len(phs)) { var w = svara_pool_render(p, vec_get(phs, k), voice, 0.1); k = k + 1; }
+    var kept = 0;
+    k = 0;
+    while (k < vec_len(phs)) {
+        var b0 = alloc_used();
+        var r = svara_pool_render(p, vec_get(phs, k), voice, 0.1);
+        var b1 = alloc_used();
+        out("warmed context, phoneme "); out_int(vec_get(phs, k));
+        out("  bytes kept: "); out_int(b1 - b0);
+        if (b1 - b0 > 0) { kept = kept + 1; }
+        k = k + 1;
+    }
+    var c0 = alloc_used();
+    var ctx = svara_synthctx_new(voice, sr);
+    out("synthctx_new bytes: "); out_int(alloc_used() - c0);
+    return kept;
+}
+
+var rc = main();
+syscall(60, rc);

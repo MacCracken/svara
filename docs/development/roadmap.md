@@ -8,8 +8,9 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate needs a decision |
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | ready |
+| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate is met |
+| **3.7.x** | [What consumers filed against 3.6.3](#37x--what-consumers-filed-against-363): concurrent renders, a NaN bandwidth | ready |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-phoneme memory, a streaming render, the refactors 3.6.3 left | ready |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -23,22 +24,15 @@ took: sweep at 2.1.3, delete at 2.2.0. Every divergence it found is recorded in
 the obstacle. A name-by-name sweep of every Rust `pub` item found zero missing
 counterparts.
 
-### The gate, measured 2026-11-07
+### The gate, met 2026-11-16
 
-This used to read "dhvani has not been updated to the Cyrius svara", which stopped
-being true. dhvani links `dist/svara.cyr` through its `voice_synth` wrapper, and
-prani, shabda and shabdakosh link it too.
-
-| Consumer | Pins today | Against svara 3.6.1, cyrius 6.7.18, hisab 3.4.1, goonj 2.3.1, naad 2.3.3 |
-|---|---|---|
-| dhvani 2.2.6 | svara 3.5.5, cyrius 6.6.10 | **Builds, and 65 of 65 suites pass**, in a scratch copy. `tests/voice_synth.tcyr` calls svara directly, 61 assertions |
-
-naad measured the same stack and found no failure that traces to it. What is left for
-dhvani is moving its pins, which is dhvani's to do. They are below the 6.7.2 floor.
-
-- [ ] **Decide whether a measurement in a scratch copy clears the gate**, or whether
-      a consumer has to move its pins first. naad holds on the second reading, and
-      goonj deleted on the first.
+3.6.2 left a decision open: does a measurement in a scratch copy clear the gate, or
+does a consumer have to move its own pins first? naad held on the second reading,
+and goonj deleted on the first. **The second is now met, so the decision is moot.**
+Between 2026-11-07 and 2026-11-11 five consumers moved to svara 3.6.3 on cyrius
+6.7.18 in their own manifests: dhvani 2.3.1, prani 2.1.1, hoosh 2.12.3, shabda 3.1.1
+and shabdakosh 3.1.1. Each vendors `dist/svara.cyr`. The 2026-11-07 scratch-copy
+measurement (dhvani 2.2.6, 65 of 65 suites against svara 3.6.1) came first.
 
 ### Steps
 
@@ -53,6 +47,35 @@ dhvani is moving its pins, which is dhvani's to do. They are below the 6.7.2 flo
       `CLAUDE.md`'s rules, `docs/benchmarks-rust-v-cyrius.md`'s
       `cd rust-old && cargo bench`, and `.gitignore`'s `rust-old/target/`.
 - [ ] **Delete**, and regenerate `dist/svara.cyr`.
+
+---
+
+## 3.7.x — what consumers filed against 3.6.3
+
+Filed in [`issues/`](issues/), each with a repro. All three were re-run against 3.6.4
+and still reproduce. Each fix changes behaviour, so each gets its own release and a
+test that fails without it. The memory filing is under 3.8.x.
+
+- [ ] **Concurrent renders can give wrong samples**
+      ([issue](issues/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.md),
+      hoosh). Module-level scratch is shared between objects:
+      `_sv_tract_target_scratch`, `_sv_glottal_rd_out`, `_sv_prosody_xs/_ys/_cap` and
+      the `_sv_spec_*` buffers. Four threads, each on its own context, give 2 to 7
+      wrong renders of 4,000, and every wrong one reports success. Since 3.6.4 the
+      integration guide says to serialize every call. The fix is the issue's option
+      1, scratch per object, allocated with the object. The repro needs the stdlib
+      thread module, which `lib/` does not vendor, so the suite needs a way to run it.
+      Each scratch moved costs memory per object, so measure it with
+      `tests/allocbudget.tcyr`.
+- [ ] **A finite bandwidth above about 226 × the sample rate renders NaN**
+      ([issue](issues/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.md),
+      prani). The call returns success, and every sample is NaN. ADR-0009 kept it
+      because "any finite ceiling would be invented". The issue argues the ceiling is
+      not invented: `sinh` in the coefficient formula overflows past
+      `asinh(f64::MAX) * sr / pi`, and every coefficient is NaN from there. Decide in
+      an ADR that supersedes that ADR-0009 item. If the bound is adopted, refuse at it
+      in `svara_formant_validate`, test the rows on both sides of it, and add an
+      ADR-0009 table row for the new divergence from Rust.
 
 ---
 
@@ -83,6 +106,25 @@ measured effect does not earn a place in the source.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
+- [ ] **A warmed context should allocate nothing per phoneme**
+      ([issue](issues/2026-11-11-a-server-render-keeps-what-each-phoneme-allocates.md),
+      hoosh). Measured at 3.6.4: 160 bytes per vowel, nasal or lateral (a
+      `VowelTarget`), 400 per diphthong, 816 to 976 per fricative or affricate and 1,048
+      per plosive. The fricative and plosive paths build a formant filter each call.
+      Keep them in the context and re-initialize them in place, for example with a
+      `svara_formant_filter_reset_into` beside the other `_into` forms. Then
+      `allocbudget.tcyr` can pin the context path at zero bytes per render after one
+      render of each class. A server allocates on every request and never frees, so
+      this is the memory a long-running consumer keeps.
+- [ ] **A streaming sequence render** (same issue). `svara_sequence_render` keeps about
+      127 bytes per output sample, and a consumer that wants to stream has to copy the
+      crossfade, as hoosh does. The issue proposes
+      `svara_sequence_render_into(seq, ctx, sample_rate, sink, user)`, which calls the
+      sink with output no later fade-in can change. A fade-in reaches back at most
+      `min(cf_prev, len)` samples. Optional, from the same issue: `_a` forms of
+      `svara_seq_detect_clusters`, `svara_seq_durations` and
+      `svara_detect_nasalization`, or the plan computed into caller storage. Gate it
+      bit for bit against `svara_sequence_render`, as hoosh's copy already is.
 - [ ] **`render_planned` recomputes per-event values on every sample.** Hoist what is
       fixed for the event out of the sample loop.
 - [ ] **`f0_at` refills both contour buffers on every call**, and the toned path calls

@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.6.4** (2026-11-16) — **each dep's newest tag.** hisab 3.5.0, naad 2.3.5, goonj
+2.3.2; sakshi 2.5.10 is now a stdlib leaf, declared in `[deps].stdlib`. cyrius stays
+6.7.18, and the consumer floor stays 6.7.2, re-measured. No API change, and audio,
+JSON and hostile-input results are identical to 3.6.3 across 558,721 values and 638
+cases. ⭐ naad 2.3.4 made three constructors return `NAAD_ERR_ALLOCATION` where they
+used to stop inside naad, and `svara_glottal_new` kept two of those results as
+handles: a refused noise allocation then faulted at `0xfffffffffffffffa` on the first
+sample. It now returns `SVARA_ERR_COMPUTATION`, pinned by the new
+`tests/allocrefused.tcyr`. **1,150 assertions / 24 suites**, `cyrius audit` exit 0.
+
 **3.6.3** (2026-11-07) — **the P(-1) sweep.** The first audit since 3.1.3 and the
 first against the compiled oracle: six cluster audits, a real fuzz target, fault
 injection, an all-zero sweep, coverage and an independent review. 39 findings: 30
@@ -236,9 +246,9 @@ parity oracle.
   source of truth; CI reads it and never hardcodes a version)
 - **Consumer floor**: cyrius **6.7.2**, measured from `dist/svara.cyr`. It is what
   a consumer needs, and it is lower than the pin.
-- `lib/` holds 32 stdlib files vendored from `~/.cyrius/versions/6.7.18/lib`
-  (verified byte-identical file by file) plus the 4 dependency bundles.
-  `cyrius.lock`: 36 deps locked, 4 commit-pinned.
+- `lib/` holds 33 stdlib files vendored from `~/.cyrius/versions/6.7.18/lib`
+  (verified byte-identical file by file, sakshi among them since 3.6.4) plus the 3
+  dependency bundles. `cyrius.lock`: 36 deps locked, 3 commit-pinned.
 - **`cyrfmt` canonical continuation indent is 2 spaces per open-paren level**
   (4 also accepted). 6.5.28 fixed the formatter, which had never tracked
   parentheses; the pre-6.5.28 8-space convention is retired.
@@ -296,11 +306,12 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,127 `.tcyr` assertions across 23 suites: error / rng / smooth / lod / formant /
+1,150 `.tcyr` assertions across 24 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
-**oracle** / **integration** / **logging** (+ the `svara.tcyr` smoke) — all passing, all
-lint-clean, zero build warnings. Run one suite: `cyrius test tests/<mod>.tcyr`;
+**allocrefused** / **oracle** / **integration** / **logging** (+ the `svara.tcyr`
+smoke) — all passing, all lint-clean. One build warning, on purpose:
+`allocrefused.tcyr` redefines `alloc`, and cyrius reports the duplicate. Run one suite: `cyrius test tests/<mod>.tcyr`;
 the whole tree recursively: `cyrius test tests`. `tests/logging.tcyr` needs
 `./scripts/check-logging.sh` to be exercised with logging ON (58 more
 assertions), because `cyrius test` does not forward `-D`.
@@ -326,6 +337,11 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
 - **`logging.tcyr` (12 off / 58 on)** — the `-D LOGGING` contract. The OFF half
   asserts the four instrumented entry points still behave identically, which is
   what proves the `#ifdef` blocks in their return paths changed nothing.
+- **`allocrefused.tcyr` (23, 3.6.4)** — replaces the stdlib `alloc` and refuses
+  each allocation naad makes for svara's glottal source and tract, located by
+  measured counts, never by written-down indices. A refused naad allocation must
+  come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
+  source it reports 0 of 6 and `restore` ends the run.
 - **`allocbudget.tcyr` (41)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
@@ -356,10 +372,10 @@ All green on the 6.7.18 pin:
 
 | Gate | Command | Result |
 |---|---|---|
-| fmt | `cyrfmt --check <f>` | clean (43 files) |
+| fmt | `cyrfmt --check <f>` | clean (44 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 23/23 suites, 1,127 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 24/24 suites, 1,150 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (58 more assertions on) |
@@ -404,18 +420,18 @@ this pin `cyrius fmt <file>` **rewrites in place** (it does not print to stdout)
 
 ## Dependencies
 
-Pinned tags as of **3.6.1**; see [`dependency-watch.md`](dependency-watch.md) for
+Pinned tags as of **3.6.4**; see [`dependency-watch.md`](dependency-watch.md) for
 the upgrade policy and the symbols svara actually consumes.
 
 | Dep | Pin | Declared | What svara uses |
 |---|---|---|---|
-| **hisab** | `3.4.1` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic_checked` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| **naad** | `2.3.3` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` (glottal.cyr) |
-| **goonj** | `2.3.1` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
-| **sakshi** | `2.5.10` | transitive (via hisab) | nothing directly — goonj's logging backend |
+| **hisab** | `3.5.0` | `[deps.hisab]` | `num_fft` + `num_neumaier_sum` (spectral.cyr), `calc_monotone_cubic_checked` (prosody.cyr), `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| **naad** | `2.3.5` | `[deps.naad]` | `filter_biquad_*` + `NAAD_FILTER_NOTCH`/`_BANDPASS` (tract.cyr), `noise_*` + `modulation_lfo_*` + `Lfo_set_depth` + the `NoiseGenerator`/`Lfo` accessors (glottal.cyr) |
+| **goonj** | `2.3.2` | `[deps.goonj]` | nothing directly — the naad bundle references it, so it must resolve from this manifest |
+| **sakshi** | `2.5.10`, the leaf 6.7.18 ships | `[deps].stdlib` (3.6.4; a package through hisab before) | `src/logging.cyr`, only under `-D LOGGING`; also goonj's logging backend |
 
 **stdlib** (`[deps].stdlib`) — syscalls, string, alloc, str, fmt, vec, io, args,
-assert, math, ganita, tagged, result, fnptr, bench. `bayan` + `hashmap` are **opt-in
+assert, math, ganita, tagged, result, fnptr, bench, sakshi. `bayan` + `hashmap` are **opt-in
 via explicit `include`**, not stdlib entries (auto-vendor fails for them); every
 entry file that includes a `#derive(Serialize)` module also includes those two so
 the codecs are callable and warning-free. Consumers of `dist/svara.cyr` need
@@ -434,19 +450,21 @@ diff the used-symbol set against the new bundle before assuming a clean build.
 
 ## Consumers
 
-Five repos vendor `dist/svara.cyr`, as of 2026-11-07:
+Six repos vendor `dist/svara.cyr`, read from their manifests on 2026-11-16:
 
-| Repo | `lib/svara.cyr` | cyrius | svara fns called |
-|---|---|---|---|
-| dhvani | 3.5.5 | 6.6.10 | 5, through `voice_synth` |
-| prani | 3.5.6 | 6.6.20 | 11 |
-| shabda | 3.5.5 | 6.6.3 | 7 |
-| shabdakosh | 3.5.5 | 6.6.3 | none directly |
-| jalwa | 3.5.5 | 6.6.3 | none directly |
+| Repo | svara | cyrius | naad / hisab / goonj | svara fns called |
+|---|---|---|---|---|
+| dhvani 2.3.1 | 3.6.3 | 6.7.18 | 2.3.3 / 3.4.1 / 2.3.1 | 5, through `voice_synth` (as of 2026-11-07) |
+| prani 2.1.1 | 3.6.3 | 6.7.18 | 2.3.3 / 3.4.1 / 2.3.1 | 11 (as of 2026-11-07) |
+| hoosh 2.12.3 | 3.6.3 | 6.7.18 | 2.3.3 / 3.4.1 / 2.3.1 | the context path, `POST /v1/audio/speech` |
+| shabda 3.1.1 | 3.6.3 | 6.7.18 | through svara | 7 (as of 2026-11-07) |
+| shabdakosh 3.1.1 | 3.6.3 | 6.7.18 | through svara | none directly |
+| jalwa 1.4.5 | 3.5.5 | 6.6.3 | through dhvani | none directly |
 
-⚠ **All five are below the consumer floor of cyrius 6.7.2**, so none can take svara
-3.6.x until it moves its own pin. dhvani was measured in a scratch copy at the current
-stack with svara 3.6.1: it builds, and 65 of 65 suites pass. vansh has no repo here.
+Five of the six moved to svara 3.6.3 on cyrius 6.7.18 between 2026-11-07 and
+2026-11-11, so the 3.7.0 gate's stricter reading (a consumer has moved its own pins)
+is met; see the roadmap. jalwa is still below the 6.7.2 floor. None pairs svara 3.6.3
+with naad 2.3.4 or later, which is the pairing 3.6.4 exists for. vansh has no repo here.
 
 ## Serde — 22 derived types, and a decided boundary
 
@@ -530,7 +548,9 @@ returns an empty vec. Silently. Use `_from_json_str`.
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
 list here. **3.7.0 is next**: retiring `rust-old/`. The 3.6.3 sweep was the oracle's
-last planned use, and its gate still needs a decision.
+last planned use, and five consumers now build against svara 3.6.3 at their own pins,
+which meets its gate under either reading. Three issues consumers filed against 3.6.3
+are open in [`issues/`](issues/) and on the roadmap.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

@@ -11,18 +11,18 @@ Track upstream dependencies for updates, breaking renames, and compatibility.
 
 | Dep | Pin | What svara consumes |
 |-----|-----|---------------------|
-| [hisab](https://github.com/MacCracken/hisab) | 3.4.1 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic_checked` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
-| [naad](https://github.com/MacCracken/naad) | 2.3.3 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) |
-| [goonj](https://github.com/MacCracken/goonj) | 2.3.1 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
+| [hisab](https://github.com/MacCracken/hisab) | 3.5.0 | `num_fft`, `num_neumaier_sum` (spectral.cyr) · `calc_monotone_cubic_checked` (prosody.cyr) · `ease_in_out_smooth` (phoneme / trajectory / sequence) |
+| [naad](https://github.com/MacCracken/naad) | 2.3.5 | `filter_biquad_new/process_sample/set_params/reset` + `NAAD_FILTER_NOTCH` / `NAAD_FILTER_BANDPASS` (tract.cyr) · `noise_new`/`noise_next_sample` + `NOISE_WHITE`, `modulation_lfo_new/next_value/set_frequency` + `MODULATION_LFO_SINE` + `Lfo_set_depth` (glottal.cyr) · the `NoiseGenerator` and `Lfo` accessors (glottal save/restore) |
+| [goonj](https://github.com/MacCracken/goonj) | 2.3.2 | **nothing directly** — the naad bundle references it, so it must resolve from svara's manifest |
 
-## Direct as of 3.4.0
+## The stdlib leaf svara calls directly
 
-| Dep | Pin | What svara uses |
+| Dep | Version | What svara uses |
 |-----|-----|---------------------|
-| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.10 | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`. **Only under `-D LOGGING`**, but `dist/svara.deps` names it unconditionally because the bundle carries the module. It also still arrives transitively via hisab, and is goonj's logging backend, so this is a newly *explicit* dependency rather than a new one. |
+| [sakshi](https://github.com/MacCracken/sakshi) | 2.5.10, the leaf cyrius 6.7.18 ships | `src/logging.cyr` — levels, spans, `sakshi_err_at_span`, **only under `-D LOGGING`**. Declared in `[deps].stdlib` since 3.6.4. Through 3.6.3 it was a commit-pinned package that arrived through hisab's `[deps.sakshi]`; hisab 3.4.2 dropped that package, and a consumer that still declares one gets `warning: refusing to overwrite stdlib leaf 'sakshi'` on every build. goonj's sidecar names the leaf too, as its logging backend. |
 
-Pins are chosen to match what the bundles themselves pin — naad 2.3.3 pins hisab
-3.4.1 and goonj 2.3.1; hisab 3.4.1 pins sakshi 2.5.10 — so a downstream consumer
+Pins are chosen to match what the bundles themselves pin — naad 2.3.5 pins hisab
+3.5.0 and goonj 2.3.2, and goonj 2.3.2 pins hisab 3.5.0 — so a downstream consumer
 (dhvani / vansh) that bundles svara **and** naad **and** hisab in one flat
 namespace gets a coherent set rather than two versions of the same symbol.
 
@@ -30,7 +30,7 @@ namespace gets a coherent set rather than two versions of the same symbol.
 
 The Cyrius pin in `cyrius.cyml [package].cyrius` is the single source of truth.
 CI reads it and hands it to the canonical installer — never hardcode a version in
-YAML. Bumping it re-vendors the 32 stdlib files in `lib/` via `cyrius deps`.
+YAML. Bumping it re-vendors the 33 stdlib files in `lib/` via `cyrius deps`.
 
 `cyrius deps` keeps old commit rows in `cyrius.lock` beside the new ones, and leaves
 stdlib files the pin no longer declares. Regenerate from clean on a bump, then
@@ -50,7 +50,7 @@ tag and the bundled copy agree on 2.5.10.
 
 **Measure the consumer floor at each bump.** It is not the pin. Build a from-scratch
 consumer of `dist/svara.cyr` on older toolchains and record the first that works.
-It is **cyrius 6.7.2** as of 3.6.1.
+It is **cyrius 6.7.2** as of 3.6.4, re-measured at 3.6.1 and 3.6.4.
 
 ## The failure mode this file exists to catch
 
@@ -66,12 +66,23 @@ system to disambiguate, so upstream de-collision work arrives as bare renames:
 | naad 2.2.0 | `lerp` / `rms` / `peak` / `normalize` / `chromagram` / `crossfade_equal_power` → `naad_*` | no |
 | naad 2.2.0 | `white_noise_sample`, `U32_MAXF` removed | no |
 | hisab 3.4.0 | `calc_monotone_cubic` → `calc_monotone_cubic_checked(…, out)`, one of 27 retired names | **yes** — `prosody.cyr` |
+| naad 2.3.4 | `power_spectrum` → `naad_power_spectrum` (it collided with abaco 2.8.0) | no |
+| hisab 3.5.0 | 16 names retired, 23 `public var` constants turned into enum members | no |
 
 These break the **build**, which is the good case. The dangerous case is a rename
 that silently *agrees* — naad renamed all eight `FILTER_*` constants precisely
 because `nidhi` defines `FILTER_LOWPASS..NOTCH` at identical values, so a
 flat-namespace collision between two enums that happen to match is invisible until
 one side renumbers.
+
+A constructor's failure mode can change with no change to its signature. Through
+naad 2.3.3, a refused allocation inside `noise_new`, `modulation_lfo_new` or
+`filter_biquad_new` wrote through 0 and stopped inside naad. From 2.3.4 it returns
+`NAAD_ERR_ALLOCATION` (-6). svara's glottal source kept those results unchecked,
+so the bump turned a stop inside naad into a handle of -6, and the first sample
+faulted at `0xfffffffffffffffa`. The suite stayed green, because nothing in it
+refused an allocation. `tests/allocrefused.tcyr` does now. Read every changed body
+on a used symbol's call tree for a new negative return, not only for moved values.
 
 A return-type change can be just as quiet. hisab 3.0.0 made `num_fft` return a
 `Result`, and `if (num_fft(data, n) != 0)` kept compiling, because a `Result` in
@@ -92,17 +103,28 @@ gap means layout, as at 3.6.1, and a change in instructions means codegen.
 
 ## Checking a bump
 
-Before assuming a clean build, diff the used-symbol set against the new bundles:
+Before assuming a clean build, diff the used-symbol set against the new bundles.
+Get the old and new bundles with `git show <tag>:dist/<dep>.cyr` in `~/Repos/<dep>`,
+then extract the top-level names from each:
 
 ```sh
 cat lib/naad.cyr lib/hisab.cyr lib/goonj.cyr lib/sakshi.cyr \
-  | grep -oE '^(fn|var|const|struct)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' | awk '{print $2}' | sort -u > /tmp/dep-symbols.txt
+  | grep -oE '^(public[[:space:]]+|pub[[:space:]]+)?(fn|var|const|struct|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
+  | awk '{print $NF}' | sort -u > /tmp/dep-symbols.txt
 ```
+
+The `public`/`pub` and `enum` forms matter: naad 2.3.4 found that the plain
+`^(fn|var|const|struct)` pattern saw 1,673 of hisab's 2,783 top-level names. Add
+enum members and the `Type_field` accessors that `#derive(accessors)` generates,
+which svara uses on naad's `NoiseGenerator` and `Lfo`.
 
 Intersect that with the identifiers in `src/`, `tests/` and `benches/`, subtract
 svara's own definitions, and check every survivor against the *new* bundle. Filter
 the result by hand — bare names like `peak` and `rms` show up as matches while
-being local variables. Signatures matter too, not just presence.
+being local variables. Signatures matter too, not just presence, and so does each
+used function's **call tree**: at 3.6.4, `filter_biquad_new`'s own body was
+unchanged while `filter_biquad_with_gain`, which it calls, gained the new
+allocation return.
 
 A replacement can change meaning as well as spelling. The old
 `calc_monotone_cubic` returned 0 for a refusal, and svara's handling of that hid a

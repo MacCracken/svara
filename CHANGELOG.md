@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.4] - 2026-11-16 — each dep's newest tag, and a refused naad allocation is reported
+
+Dependency release. `hisab` 3.4.1 -> **3.5.0**, `naad` 2.3.3 -> **2.3.5**, `goonj` 2.3.1 ->
+**2.3.2**. sakshi stays **2.5.10**, now a stdlib leaf rather than a package. cyrius stays
+**6.7.18**, still its newest tag, with ganita 1.2.15. Each dep is at its newest tag, and they agree:
+naad 2.3.5 and goonj 2.3.2 both pin hisab 3.5.0 and cyrius 6.7.18.
+
+No public name or signature changes. **Audio on valid input, the JSON and every hostile-input
+result are identical to 3.6.3.** One behaviour changes under a refused allocation, below.
+**1,150 assertions / 24 suites.** The consumer floor stays cyrius 6.7.2.
+
+### Fixed
+
+- **A refused allocation inside naad built a glottal source that reported success.** From naad
+  2.3.4, `noise_new` and `modulation_lfo_new` return `NAAD_ERR_ALLOCATION` (-6) when an allocation
+  is refused, where they used to write through 0 and stop inside naad (naad's ADR-0010).
+  `svara_glottal_new` stored both results unchecked, so on the new naad a refusal there returned a
+  source holding -6 as a handle. Measured on that tree with gdb:
+  - a refused noise allocation faulted on the first sample at `0xfffffffffffffffa`. That is away
+    from the null page, where [ADR-0009](docs/adr/0009-what-the-3-6-3-audit-leaves-open.md) says
+    every other refusal in svara stops;
+  - a refused LFO allocation faulted at `0x2`, in `set_vibrato`;
+  - `svara_glottal_restore` faulted at `0x2`.
+
+  `svara_glottal_new` now returns `SVARA_ERR_COMPUTATION`, as `svara_tract_new` already did for its
+  two biquads. Both voice wrappers and `restore` pass the code on. This never shipped: 3.6.3 pins
+  naad 2.3.3, where the same refusal stops inside naad. ⚠ A consumer that moves its own naad pin
+  to 2.3.4 or later while keeping svara 3.6.3 gets the fault. No consumer has that pairing on
+  2026-11-16.
+
+### Added
+
+- **`tests/allocrefused.tcyr` (23 assertions).** It replaces the stdlib `alloc`, as naad's
+  `tests/alloc_refused.tcyr` does, and refuses each of naad's six allocations in
+  `svara_glottal_new`, once and from then on. It also refuses them through the two voice wrappers
+  and `restore`, and refuses each biquad allocation in `svara_tract_new`. Counts are measured, not
+  written down. Each loop has a floor, and a control refuses one past the last request.
+  - **Without the fix**, the glottal groups report 0 of 6 refusals, and `restore` ends the run
+    with SIGSEGV.
+  - ⚠ It is the one test build that warns, `duplicate fn 'alloc'`, because the override is how it
+    works. cyrius cannot mark the override as intended, and naad's suite has the same warning.
+
+### Changed
+
+- **`sakshi` is declared in `[deps].stdlib`.** hisab 3.4.2 dropped its `[deps.sakshi]` package, so
+  sakshi is no longer a commit-pinned dep. It is the stdlib leaf, and `lib/sakshi.cyr` has the same
+  bytes as before. svara calls it from `src/logging.cyr`, so svara declares it itself instead of
+  relying on goonj's sidecar. `cyrius.lock` has 3 commit rows, down from 4.
+- **The integration guide is current again.**
+  - Its dependency stanza named svara 3.5.2 and hisab 2.11.2. It also told consumers to declare
+    `[deps.sakshi]`, which now draws `warning: refusing to overwrite stdlib leaf 'sakshi'` on
+    every build.
+  - It said a sample takes 0.56 µs, which 3.5.3 corrected everywhere else.
+  - It said svara allocates nothing per sample, which is true, but did not say that each phoneme
+    allocates.
+  - It said nothing about threads. Concurrent renders can give wrong samples, because module-level
+    scratch is shared. Both of these were filed by hoosh; see the roadmap.
+
+### Dependencies
+
+- **hisab 3.4.1 -> 3.5.0**, through 3.4.2. 3.5.0 retires 16 names and turns 23 constants into enum
+  members, and svara uses none of them. svara calls five hisab functions:
+  - `num_fft`, `num_neumaier_sum` and `ease_in_out_smooth` are unchanged through their call trees;
+  - `calc_monotone_cubic_checked`, and `cx_i` in a test, now allocate through `hisab_alloc`. Its
+    pointer defaults to `alloc`, so nothing moves unless a caller sets hisab's allocation scope.
+- **naad 2.3.3 -> 2.3.5.** 2.3.4 renames `power_spectrum` to `naad_power_spectrum`, which svara does
+  not call. It also makes the three constructors svara uses return `NAAD_ERR_ALLOCATION` (see
+  Fixed). Nothing svara reaches changes in 2.3.5. The `NoiseGenerator` and `Lfo` layouts, which
+  svara reads through accessors, are unchanged.
+- **goonj 2.3.1 -> 2.3.2.** svara calls nothing in goonj; naad's bundle needs it.
+- **Size:** `build/svara` grows from 4,067,744 to 4,392,112 bytes, mostly from hisab's larger
+  bundle. `dist/svara.cyr` changes only in its version line and the glottal fix.
+
+### Verified
+
+- **Old tree against new** (`scripts/sweep/compare.py 3.6.3`):
+  - **values:** 558,721, none moved;
+  - **JSON:** byte-identical, 40,729 bytes;
+  - **hostile inputs:** 638 cases, no change in exit code or output. `render_planned` at a 3e9 Hz
+    sample rate times out on both trees, as it did before;
+  - **retired instructions:** equal on six of seven probes, and 0.9994 on the toned render.
+- **The used-symbol diff.** svara references 46 dep functions and constants by name, plus the
+  `NoiseGenerator` and `Lfo` accessors. Only `noise_new` and `modulation_lfo_new` changed body,
+  and `filter_biquad_new` changed in its call tree. All three changes are the allocation result
+  above.
+- **Consumer floor**, re-measured with a from-scratch consumer: `examples/basic.cyr` built against
+  `dist/svara.cyr` and the new bundles.
+  - 6.7.2, 6.7.5, 6.7.9, 6.7.12, 6.7.17 and 6.7.18 build with no warning and print identical
+    output;
+  - 6.6.20, 6.7.0 and 6.7.1 fail at compile time, now in naad's bundle (`array size identifier
+    must be an enum constant`).
+- **Gates:** `cyrius audit` exit 0, `cyrius fuzz` 2,400 cases, `cyrius deny` 23 deps with 0
+  violations, `scripts/check-logging.sh` both ways, examples 5/5, `cyrius distlib` current and
+  deterministic, `cyrius deps --verify` and `--locked`.
+- **The three filed issues** in `docs/development/issues/` were re-run against this tree, and all
+  three still reproduce. They are on the roadmap.
+
+### Upgrading
+
+- **Move the pins together:** hisab 3.5.0, naad 2.3.5, goonj 2.3.2. Then remove any
+  `[deps.sakshi]` package, and put `"sakshi"` in `[deps].stdlib` if you call it yourself.
+- **If you move naad to 2.3.4 or later, move svara to 3.6.4 with it.** See Fixed.
+
 ## [3.6.3] - 2026-11-07 — the P(-1) sweep
 
 Audit and repair release. It is the first audit since 3.1.3 and the first ever run against the

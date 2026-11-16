@@ -1,0 +1,285 @@
+# allocrefused.tcyr -- a refused allocation inside a naad constructor is reported,
+# never kept as a handle.
+#
+# From naad 2.3.4, noise_new, modulation_lfo_new and filter_biquad_new return
+# NAAD_ERR_ALLOCATION (-6) when one of their allocations is refused (naad
+# ADR-0010). Before that they wrote through the null pointer and stopped inside
+# naad. svara kept the two glottal handles unchecked, so on naad 2.3.4 a refusal
+# there built a glottal source holding -6 that reported success. Measured on that
+# tree: a refused noise allocation faulted on the first sample at
+# 0xfffffffffffffffa, away from the null page where ADR-0009 says every other
+# refusal in svara stops; a refused LFO allocation faulted at 0x2 in set_vibrato;
+# and restore faulted at 0x2. Without the fix, the glottal groups below report
+# 0 of 6 and restore ends the run. svara_tract_new already checked its biquads.
+#
+# This suite replaces the stdlib `alloc`, as naad's tests/alloc_refused.tcyr does.
+# cycc keeps the last definition of a function, so the stand-in below serves every
+# allocation in the unit. While armed it counts requests and refuses one:
+#   FI_ONE   the Nth request only
+#   FI_FROM  the Nth request and every later one (a heap that stays exhausted)
+#
+# Only naad's allocations are refused here. svara's own fixed-size allocations
+# still stop at the null page (ADR-0009, PH-3), which would end the run rather than
+# fail an assertion. They are located by measurement: each constructor's count is
+# taken here, so a toolchain whose vec_new allocates differently moves the indices,
+# not the expectations. Every loop has a floor, so it cannot pass by refusing
+# nothing, and a control refuses one past the last request.
+#
+# ⚠ This is the one test build that warns, on purpose:
+#   warning: duplicate fn 'alloc' (last definition wins; first defined in lib/alloc.cyr)
+# The override is the mechanism. cyrius has no way to mark it intended, and naad's
+# suite carries the same warning.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+
+var FI_OFF = 0;
+var FI_ONE = 1;
+var FI_FROM = 2;
+
+var FI_MODE = 0;
+var FI_COUNT = 0;
+var FI_N = 0;
+var FI_BASE = 0;
+var FI_PTR = 0;
+var FI_END = 0;
+var FI_ARENA = 0x10000000;   # 256 MiB, reserved lazily
+
+# The stand-in allocator: the stdlib's refusals for a size it can never serve,
+# then the armed refusal, then zeroed memory bumped from one private mapping.
+fn alloc(size): i64 {
+    if (size <= 0) { return 0; }
+    if (size > ALLOC_MAX) { return 0; }
+    if (FI_MODE != FI_OFF) {
+        FI_COUNT = FI_COUNT + 1;
+        if (FI_MODE == FI_ONE) {
+            if (FI_COUNT == FI_N) { return 0; }
+        }
+        if (FI_MODE == FI_FROM) {
+            if (FI_COUNT >= FI_N) { return 0; }
+        }
+    }
+    if (FI_BASE == 0) {
+        # PROT_READ|WRITE, MAP_PRIVATE|ANONYMOUS|NORESERVE
+        FI_BASE = syscall(9, 0, FI_ARENA, 3, 0x4022, 0 - 1, 0);
+        if (FI_BASE < 0) { FI_BASE = 0; return 0; }
+        FI_PTR = FI_BASE;
+        FI_END = FI_BASE + FI_ARENA;
+    }
+    size = (size + 7) & (0 - 8);
+    if (FI_PTR + size > FI_END) { return 0; }
+    var p = FI_PTR;
+    FI_PTR = p + size;
+    return p;
+}
+
+# Arm the stand-in: start counting, and refuse request `n` the way `mode` says.
+# n = 0 counts without refusing anything.
+fn fi_arm(mode, n) {
+    FI_MODE = mode;
+    FI_N = n;
+    FI_COUNT = 0;
+    return 0;
+}
+
+# Disarm and report how many requests were made while armed.
+fn fi_disarm() {
+    FI_MODE = FI_OFF;
+    return FI_COUNT;
+}
+
+var SR = f64_from(44100);
+var F0 = f64_from(120);
+var VIB_RATE = f64_from(5);
+var VIB_DEPTH = 0x3FB999999999999A;   # 0.1
+
+# 1 if `g` is a glottal source that renders: both naad handles are live and
+# 256 samples with breathiness and vibrato on are all finite. That touches the
+# noise generator and the LFO on every sample.
+fn glottal_renders(g) {
+    if (svara_is_err(g) == 1) { return 0; }
+    if (SvGlottalSource_aspiration_noise(g) <= 0) { return 0; }
+    if (SvGlottalSource_vibrato_lfo(g) <= 0) { return 0; }
+    svara_glottal_set_breathiness(g, F64_HALF);
+    svara_glottal_set_vibrato(g, VIB_RATE, VIB_DEPTH);
+    var i = 0;
+    while (i < 256) {
+        var s = svara_glottal_next_sample(g);
+        if (svara_is_finite(s) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 1 if `t` is a tract that processes 256 samples to finite output.
+fn tract_renders(t) {
+    if (svara_is_err(t) == 1) { return 0; }
+    var i = 0;
+    while (i < 256) {
+        var s = svara_tract_process_sample(t, F64_HALF);
+        if (svara_is_finite(s) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# ================================================================
+test_group("control: the stand-in serves a source and a tract that render");
+var g0 = svara_glottal_new(F0, SR);
+assert_eq(glottal_renders(g0), 1, "an unarmed glottal source renders with noise and vibrato");
+var t0 = svara_tract_new(SR);
+assert_eq(tract_renders(t0), 1, "an unarmed tract renders");
+
+# ================================================================
+# Each count is taken after the calls above, so the lazily built module scratch
+# (the LF triple, the tract's target scratch) is already in place.
+test_group("allocation counts, measured");
+fi_arm(FI_ONE, 0);
+var nz_probe = noise_new(NOISE_WHITE, 42);
+var N_NOISE = fi_disarm();
+fi_arm(FI_ONE, 0);
+var lfo_probe = modulation_lfo_new(MODULATION_LFO_SINE, SV_G_0_001, SR);
+var N_LFO = fi_disarm();
+fi_arm(FI_ONE, 0);
+var bq_probe = filter_biquad_new(NAAD_FILTER_NOTCH, SR, f64_from(250), F64_TWO);
+var N_BQ = fi_disarm();
+fi_arm(FI_ONE, 0);
+var sm_probe = svara_smooth_new(F64_ONE, SR);
+var N_SM = fi_disarm();
+fi_arm(FI_ONE, 0);
+var g_probe = svara_glottal_new(F0, SR);
+var N_G = fi_disarm();
+fi_arm(FI_ONE, 0);
+var t_probe = svara_tract_new(SR);
+var N_T = fi_disarm();
+var male = svara_voice_new_male();
+fi_arm(FI_ONE, 0);
+var v_probe = svara_voice_create_glottal_source(male, SR);
+var N_V = fi_disarm();
+fi_arm(FI_ONE, 0);
+var ve_probe = svara_voice_create_glottal_source_with_effort(male, SVARA_EFFORT_LOUD, SR);
+var N_VE = fi_disarm();
+fi_arm(FI_ONE, 0);
+var ep_probe = svara_effort_params(SVARA_EFFORT_LOUD);
+var N_EP = fi_disarm();
+var st0 = svara_glottal_save(g0);
+fi_arm(FI_ONE, 0);
+var r_probe = svara_glottal_restore(st0);
+var N_R = fi_disarm();
+var N_NAAD_G = N_NOISE + N_LFO;
+assert_eq(N_NOISE >= 1, 1, "noise_new allocates");
+assert_eq(N_LFO >= 1, 1, "modulation_lfo_new allocates");
+assert_eq(N_BQ >= 1, 1, "filter_biquad_new allocates");
+assert_eq(N_SM >= 1, 1, "svara_smooth_new allocates");
+# The glottal source's own allocations come first, and its two naad handles
+# last, so naad's requests are the last N_NAAD_G of the constructor.
+assert_eq(N_G > N_NAAD_G, 1, "glottal_new allocates more than its two naad handles");
+# The voice wrappers and restore call glottal_new and then only setters, so
+# naad's requests are still the last N_NAAD_G of each. The effort form first
+# builds its EffortParams.
+assert_eq(N_EP >= 1, 1, "effort_params allocates");
+assert_eq(N_V, N_G, "create_glottal_source allocates only inside glottal_new");
+assert_eq(N_VE, N_EP + N_G, "create_glottal_source_with_effort allocates its params, then glottal_new");
+assert_eq(N_R, N_G, "glottal_restore allocates only inside glottal_new");
+# The tract ends: nasal-coupling smooth, notch, bandpass, gain smooth.
+assert_eq(N_T > N_SM + N_BQ + N_BQ + N_SM, 1, "tract_new allocates more than its tail");
+
+# ================================================================
+test_group("glottal_new: each naad allocation refused once is reported");
+var k = N_G - N_NAAD_G + 1;
+var reported = 0;
+var reached = 0;
+while (k <= N_G) {
+    fi_arm(FI_ONE, k);
+    var g = svara_glottal_new(F0, SR);
+    var seen = fi_disarm();
+    if (seen >= k) { reached = reached + 1; }
+    if (g == SVARA_ERR_COMPUTATION) { reported = reported + 1; }
+    k = k + 1;
+}
+assert_eq(reached, N_NAAD_G, "every refusal fell inside the constructor");
+assert_eq(reported, N_NAAD_G, "every refused naad allocation returns SVARA_ERR_COMPUTATION");
+
+# ================================================================
+test_group("glottal_new: a heap that stays exhausted is reported");
+k = N_G - N_NAAD_G + 1;
+reported = 0;
+while (k <= N_G) {
+    fi_arm(FI_FROM, k);
+    var g = svara_glottal_new(F0, SR);
+    var seen = fi_disarm();
+    if (g == SVARA_ERR_COMPUTATION) { reported = reported + 1; }
+    k = k + 1;
+}
+assert_eq(reported, N_NAAD_G, "refusing from each naad request on returns SVARA_ERR_COMPUTATION");
+
+# ================================================================
+test_group("the voice wrappers and restore pass the code on");
+# Each call's naad requests are its last N_NAAD_G, so j counts back from the end.
+var j = 0;
+var rv = 0;
+var rve = 0;
+var rr = 0;
+while (j < N_NAAD_G) {
+    fi_arm(FI_ONE, N_V - j);
+    var v = svara_voice_create_glottal_source(male, SR);
+    var seen_v = fi_disarm();
+    if (v == SVARA_ERR_COMPUTATION) { rv = rv + 1; }
+    fi_arm(FI_ONE, N_VE - j);
+    var ve = svara_voice_create_glottal_source_with_effort(male, SVARA_EFFORT_LOUD, SR);
+    var seen_ve = fi_disarm();
+    if (ve == SVARA_ERR_COMPUTATION) { rve = rve + 1; }
+    fi_arm(FI_ONE, N_R - j);
+    var r = svara_glottal_restore(st0);
+    var seen_r = fi_disarm();
+    if (r == SVARA_ERR_COMPUTATION) { rr = rr + 1; }
+    j = j + 1;
+}
+assert_eq(rv, N_NAAD_G, "create_glottal_source reports each refusal");
+assert_eq(rve, N_NAAD_G, "create_glottal_source_with_effort reports each refusal");
+assert_eq(rr, N_NAAD_G, "glottal_restore reports each refusal");
+
+# ================================================================
+# tract_new already checked both biquads (3.5.4, for a sample rate naad refuses).
+# Under naad 2.3.3 a refused allocation inside filter_biquad_new stopped inside
+# naad instead; from 2.3.4 it reaches that check and is reported.
+test_group("tract_new: a refused allocation in either fixed biquad is reported");
+var sg_last = N_T - N_SM;
+var nasal_first = sg_last - N_BQ - N_BQ + 1;
+k = nasal_first;
+reported = 0;
+while (k <= sg_last) {
+    fi_arm(FI_ONE, k);
+    var t = svara_tract_new(SR);
+    var seen_t = fi_disarm();
+    if (t == SVARA_ERR_COMPUTATION) { reported = reported + 1; }
+    k = k + 1;
+}
+assert_eq(reported, N_BQ + N_BQ, "every refused biquad allocation returns SVARA_ERR_COMPUTATION");
+
+# ================================================================
+test_group("control: one past the last request refuses nothing");
+fi_arm(FI_ONE, N_G + 1);
+var g_after = svara_glottal_new(F0, SR);
+var seen_g = fi_disarm();
+assert_eq(seen_g, N_G, "the constructor made exactly the measured requests");
+assert_eq(glottal_renders(g_after), 1, "the source built under the armed stand-in renders");
+fi_arm(FI_ONE, N_T + 1);
+var t_after = svara_tract_new(SR);
+var seen_t2 = fi_disarm();
+assert_eq(seen_t2, N_T, "tract_new made exactly the measured requests");
+assert_eq(tract_renders(t_after), 1, "the tract built under the armed stand-in renders");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -72,9 +72,10 @@ this host is not trustworthy on its own: an unrelated run showed
 by building both trees and interleaving the runs**, taking the minimum of each;
 that is how 3.5.0's −6% was established.
 
-A full glottal → tract per-sample chain is **≈ 0.35 µs/sample**, i.e. roughly
-**64× real-time** at 44.1 kHz on one core — measured end to end by
-`tract synthesize_into 1024`, not derived.
+A full glottal → tract per-sample chain is **≈ 0.25 µs/sample**, i.e. roughly
+**91× real-time** at 44.1 kHz on one core — measured end to end by
+`tract synthesize_into 1024`, not derived (the table's ~248 ns/sample; 3.5.3
+measured 0.35 µs).
 
 ⚠ **Do not add the per-unit rows together to get the chain cost.** `tract
 process_sample` **already contains** `formant filter process_sample` — the tract

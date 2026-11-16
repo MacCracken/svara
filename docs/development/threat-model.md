@@ -79,6 +79,15 @@ NaN. The claim was written for the Rust and inherited without being re-tested.
   ends instead (`svara_alloc_refused`, 3.6.3). Under fault injection, 2,056 refused
   allocations on the release tree gave no silent wrong answer and no hang, and every
   fault was at the null page.
+- A dependency constructor's error code is checked before it becomes a handle.
+  From naad 2.3.4, a refused allocation inside `noise_new` or `modulation_lfo_new`
+  returns -6 instead of stopping inside naad. Kept unchecked, as 3.6.3 did, that
+  handle faulted at `0xfffffffffffffffa`, away from the null page. 3.6.4 reports
+  it, and `tests/allocrefused.tcyr` refuses each of those allocations to pin it.
+- ⚠ **Not mitigated: concurrent renders.** Module-level scratch is shared, so two
+  threads rendering at once can give a wrong render that reports success. The
+  integration guide says to serialize every call. Filed by hoosh, 2026-11-11; on
+  the roadmap.
 
 **Verification, not assertion**: `tests/hardening.tcyr` pins every instance.
 Its discrimination is measured — 9 of 10 public-API probes fail against a 3.1.2

@@ -40,7 +40,10 @@ modules = [
 # stdlib: math gives clamp/min/max/lerp/sign + F64_* constants; ganita gives
 # the transcendentals svara's DSP leans on (sin/cos/exp/ln/pow/sqrt/tanh/…);
 # tagged for the few Option-shaped returns; result for hisab's fallible returns
-# (`num_fft`, since hisab 3.0.0); bench for .bcyr harnesses.
+# (`num_fft`, since hisab 3.0.0); bench for .bcyr harnesses. sakshi is the
+# logging backend `src/logging.cyr` calls under `-D LOGGING`. It is a stdlib leaf
+# since hisab 3.4.2 dropped its `[deps.sakshi]` package, and svara calls it
+# directly, so it is declared here rather than left to goonj's sidecar.
 [deps]
 stdlib = [
     "syscalls",
@@ -58,30 +61,34 @@ stdlib = [
     "result",
     "fnptr",
     "bench",
+    "sakshi",
 ]
 
 # hisab (FFT / HComplex / compensated sum / easing / interp) — consumed by
 # spectral.cyr (num_fft, num_neumaier_sum). Pinned to the tag naad uses, for a
 # coherent bundle in downstream consumers (dhvani / vansh) that pull both.
-# 3.4.1 is hisab's newest tag and pins exactly cyrius 6.7.18.
+# 3.5.0 is hisab's newest tag and pins exactly cyrius 6.7.18. It retires 16
+# names and turns 23 constants into enum members; svara uses none of them.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "3.4.1"
+tag = "3.5.0"
 modules = ["dist/hisab.cyr"]
 
 # naad — biquad / noise (NoiseGenerator) / LFO (modulation) backends consumed by
 # glottal.cyr (aspiration noise + vibrato) and tract.cyr (nasal notch, subglottal
 # bandpass). The dist bundle references goonj (acoustics) + sakshi (logging), which
-# resolve from this manifest; sakshi arrives transitively via hisab. Pinned to the
-# released tags naad uses, for a coherent bundle in downstream consumers. naad
-# 2.3.3 and goonj 2.3.1 are their newest tags, and both pin cyrius 6.7.18 and hisab
-# 3.4.1, so all three agree.
+# resolve from this manifest; sakshi is the stdlib leaf declared above. Pinned to
+# the released tags naad uses, for a coherent bundle in downstream consumers. naad
+# 2.3.5 and goonj 2.3.2 are their newest tags, and both pin cyrius 6.7.18 and hisab
+# 3.5.0, so all three agree. From naad 2.3.4, `noise_new`, `modulation_lfo_new` and
+# `filter_biquad_new` return NAAD_ERR_ALLOCATION for a refused allocation, so every
+# handle svara keeps from them is checked.
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.3.3"
+tag = "2.3.5"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.3.1"
+tag = "2.3.2"
 modules = ["dist/goonj.cyr"]

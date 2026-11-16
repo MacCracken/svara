@@ -12,39 +12,43 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.5.2"
+tag = "3.6.4"
 modules = ["dist/svara.cyr"]
 ```
 
-⚠ **svara's bundle references hisab, naad, goonj and sakshi, and those resolve
-from YOUR manifest, not svara's.** Declare them at the tags svara pins, or you
-will get two versions of the same symbol in one flat namespace:
+⚠ **svara's bundle references hisab, naad and goonj, and those resolve from YOUR
+manifest, not svara's.** Declare them at the tags svara pins, or you will get two
+versions of the same symbol in one flat namespace:
 
 ```toml
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "2.11.2"
+tag = "3.5.0"
 modules = ["dist/hisab.cyr"]
 
 [deps.naad]
 git = "https://github.com/MacCracken/naad.git"
-tag = "2.2.1"
+tag = "2.3.5"
 modules = ["dist/naad.cyr"]
 
 [deps.goonj]
 git = "https://github.com/MacCracken/goonj.git"
-tag = "2.0.4"
+tag = "2.3.2"
 modules = ["dist/goonj.cyr"]
-
-# Since 3.4.0 svara's bundle carries src/logging.cyr, so `dist/svara.deps` now names
-# sakshi. It is NOT a new dependency -- sakshi already arrived transitively via
-# hisab, which svara's bundle requires -- but it is now explicit, and declaring
-# it keeps resolution independent of hisab's own pin.
-[deps.sakshi]
-git = "https://github.com/MacCracken/sakshi.git"
-tag = "2.4.11"
-modules = ["dist/sakshi.cyr"]
 ```
+
+You need **cyrius 6.7.2 or later**, measured with a from-scratch consumer of the
+bundle at each release.
+
+**sakshi is a stdlib leaf**, not a package: put `"sakshi"` in `[deps].stdlib` if
+you call it yourself or build with `-D LOGGING`. Do not declare a
+`[deps.sakshi]` package. hisab dropped its own in 3.4.2, and a package of that
+name now draws `warning: refusing to overwrite stdlib leaf 'sakshi'` on every
+build.
+
+⚠ **Move naad and svara together.** From naad 2.3.4 a refused allocation in
+`noise_new` or `modulation_lfo_new` returns an error code instead of stopping
+inside naad, and svara 3.6.3 kept that code as a handle. svara 3.6.4 reports it.
 
 `dist/svara.deps` lists the stdlib leaves the bundle needs; `cyrius deps` reads
 it. **Include order matters** — hisab → goonj → naad → svara.
@@ -68,8 +72,8 @@ sink other than stderr.
 
 Only four coarse entry points are instrumented — sequence render, batch render,
 synthesis-context render, pool render. **Never per-sample**: a span costs two
-`clock_gettime` calls, which at 44.1 kHz would dominate the ~0.56 µs it takes to
-synthesize a sample. `scripts/check-logging.sh` asserts that structurally.
+`clock_gettime` calls, which at 44.1 kHz would dominate the ~0.25 µs it takes to
+synthesize a sample ([benchmarks](../benchmarks.md)). `scripts/check-logging.sh` asserts that structurally.
 
 ## Errors: codes, not exceptions
 
@@ -141,6 +145,32 @@ synthesis context whose sample buffer grows but is never re-allocated per call.
 
 The per-sample synthesis path inside svara allocates nothing; that is pinned by
 `tests/allocbudget.tcyr`. Keep your side of the boundary the same way.
+
+⚠ **Per phoneme, svara does allocate**, and the default allocator never frees, so
+a long-running process keeps it. Measured at 3.6.4, male voice, 24 kHz:
+
+- `svara_sequence_render` keeps about 127 bytes per output sample. Each phoneme
+  gets a new glottal source, tract and sample vector, and the crossfade builds
+  another.
+- A warmed `svara_synthctx_*` context keeps 160 bytes per vowel, nasal or
+  lateral, 400 per diphthong, 816 to 976 per fricative or affricate and 1,048 per
+  plosive. `svara_synthctx_new` itself is 1,880 bytes.
+
+A server that renders on every request should render through one context and
+crossfade on its own side. Making a warmed context allocate nothing, and a
+streaming sequence render, are on the [roadmap](roadmap.md).
+
+## Threads
+
+⚠ **Render one call at a time per process.** Several functions keep scratch at
+module level, not in the object: the tract's target scratch, the glottal source's
+LF triple, the prosody contour's interpolation buffers and the spectral buffers.
+Two threads rendering at once, each on its own context, voice and buffer, can
+still overwrite each other's scratch, and the wrong render returns success.
+Measured at 3.6.4: 2 to 7 of 4,000 concurrent renders wrong, never one alone.
+
+Hold one lock around every call into svara. Moving the scratch into the objects
+is on the [roadmap](roadmap.md).
 
 ## Bridge functions
 

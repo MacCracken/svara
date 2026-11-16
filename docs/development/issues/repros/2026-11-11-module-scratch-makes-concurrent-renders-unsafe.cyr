@@ -1,0 +1,85 @@
+# svara 3.6.3: two threads rendering at once, each on a context of its own, sometimes render the wrong samples.
+#
+# svara keeps scratch in module globals between the calls of one render (src/tract.cyr:263, _sv_tract_target_scratch;
+# src/glottal.cyr:69, _sv_glottal_rd_out), so one thread can read the formants another wrote.
+#
+# Needs the stdlib's thread module, which svara's lib/ does not vendor. From the repository root:
+#   for f in thread thread_win thread_macos thread_agnos mmap sync sync_macos sync_windows; do
+#     cp ~/.cyrius/versions/6.7.18/lib/$f.cyr lib/; done
+#   cyrius build docs/development/issues/repros/2026-11-11-module-scratch-makes-concurrent-renders-unsafe.cyr /tmp/race
+#   /tmp/race; echo "exit=$?"
+#
+# Each render is 50 ms of a vowel on a FRESH 24 kHz context, checksummed. Alone, a render is deterministic (the first
+# line prints 1). Four threads then render 1000 each, two /a/ and two /i/, and count the renders whose checksum is not
+# the one rendered alone. The exit code is that count: 0 when concurrent renders are safe.
+include "lib/sakshi.cyr"
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "lib/thread.cyr"
+include "dist/svara.cyr"
+
+fn out(s) {
+    syscall(1, 1, s, strlen(s));
+    return 0;
+}
+
+fn out_int(x) {
+    var b[24];
+    var n = fmt_int_buf(x, &b);
+    syscall(1, 1, &b, n);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+var _voice = 0;
+var _ref = 0;      # [0] /a/ alone, [1] /i/ alone, [2..5] each thread's mismatches
+var ITERS = 1000;
+
+fn render_sum(p) {
+    var ctx = svara_synthctx_new(_voice, f64_from(24000));
+    var n = svara_synthctx_synthesize(ctx, p, _voice, 0.05, 0);
+    var b = svara_synthctx_buffer(ctx);
+    var h = 1469598103934665603;
+    var i = 0;
+    while (i < n) { h = (h ^ load64(b + i * 8)) * 1099511628211; i = i + 1; }
+    return h;
+}
+
+fn worker(arg) {
+    var p = SVARA_PH_VOWEL_A;
+    if (arg % 2 == 1) { p = SVARA_PH_VOWEL_I; }
+    var want = load64(_ref + (arg % 2) * 8);
+    var bad = 0;
+    var k = 0;
+    while (k < ITERS) {
+        if (render_sum(p) != want) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(_ref + (2 + arg) * 8, bad);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _voice = svara_voice_new_male();
+    _ref = alloc(64);
+    store64(_ref, render_sum(SVARA_PH_VOWEL_A));
+    store64(_ref + 8, render_sum(SVARA_PH_VOWEL_I));
+    out("deterministic alone: ");
+    out_int((render_sum(SVARA_PH_VOWEL_A) == load64(_ref)) & (render_sum(SVARA_PH_VOWEL_I) == load64(_ref + 8)));
+    var ts = alloc(32);
+    var q = 0;
+    while (q < 4) { store64(ts + q * 8, thread_create(&worker, q)); q = q + 1; }
+    q = 0;
+    while (q < 4) { thread_join(load64(ts + q * 8)); q = q + 1; }
+    var bad = load64(_ref + 16) + load64(_ref + 24) + load64(_ref + 32) + load64(_ref + 40);
+    out("wrong renders of 4000 concurrent: ");
+    out_int(bad);
+    return bad;
+}
+
+var rc = main();
+syscall(60, rc);

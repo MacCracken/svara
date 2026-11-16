@@ -1,0 +1,94 @@
+# svara 3.6.3: a finite bandwidth past the sinh overflow passes
+# svara_formant_validate, and the tract then renders NaN.
+#
+# Build and run from the repository root:
+#   cyrius build docs/development/issues/repros/2026-11-07-finite-bandwidth-past-sinh-overflow-renders-nan.cyr /tmp/bw-nan
+#   /tmp/bw-nan; echo "exit=$?"
+#
+# Each row retargets a fresh 44.1 kHz tract to a vowel whose SECOND bandwidth is
+# the row's value, then runs 2205 samples of a constant 0.5 through it.
+# Prints: the row, the retarget's return code, and non-finite samples of 2205.
+# A row is WRONG when the retarget returns SVARA_ERR_NONE and any sample is
+# non-finite. The exit code is the number of wrong rows.
+include "lib/sakshi.cyr"
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "dist/svara.cyr"
+
+var WRONG = 0;
+
+# Writes a C string to stdout.
+fn out(s) {
+    syscall(1, 1, s, strlen(s));
+    return 0;
+}
+
+# Writes a signed decimal integer and a space.
+fn out_int(x) {
+    var b = alloc(32);
+    var i = 31;
+    store8(b + i, 32);
+    var neg = 0;
+    if (x < 0) { neg = 1; x = 0 - x; }
+    if (x == 0) { i = i - 1; store8(b + i, 48); }
+    while (x > 0) {
+        i = i - 1;
+        store8(b + i, 48 + (x % 10));
+        x = x / 10;
+    }
+    if (neg == 1) { i = i - 1; store8(b + i, 45); }
+    syscall(1, 1, b + i, 32 - i);
+    return 0;
+}
+
+# One row: F2's bandwidth = bw (an f64 bit pattern).
+fn row(label, bw) {
+    var t = svara_tract_new(0x40e5888000000000);   # 44100.0
+    var v = svara_vowel_target_with_bandwidths(
+      0x4082c00000000000, 0x4093880000000000, 0x40a3880000000000, 0x40aa000000000000, 0x40b0000000000000,
+      0x4054000000000000, bw, 0x405e000000000000, 0x4062000000000000, 0x4065000000000000);
+    var rc = svara_tract_set_formants_from_target(t, v);
+    var bad = 0;
+    var i = 0;
+    while (i < 2205) {
+        if (svara_is_finite(svara_tract_process_sample(t, F64_HALF)) == 0) { bad = bad + 1; }
+        i = i + 1;
+    }
+    var wrong = 0;
+    if (rc == SVARA_ERR_NONE) {
+        if (bad > 0) { wrong = 1; }
+    }
+    WRONG = WRONG + wrong;
+    if (wrong == 1) { out("  WRONG "); } else { out("  ok    "); }
+    out(label);
+    out(" rc=");
+    out_int(rc);
+    out("nonfinite=");
+    out_int(bad);
+    out("\n");
+    return 0;
+}
+
+# Every row, smallest bandwidth first.
+fn main() {
+    alloc_init();
+    row("bw 100 Hz (control)          ", 0x4059000000000000);
+    row("bw 22050 Hz (nyquist)        ", 0x40d5888000000000);
+    row("bw 1e6 Hz                    ", 0x412e848000000000);
+    row("bw 9.97e6 Hz (just below)    ", 0x4163042a00000000);
+    row("bw 9.98e6 Hz (just above)    ", 0x4163090c00000000);
+    row("bw 1e8 Hz                    ", 0x4197d78400000000);
+    row("bw f32::MAX                  ", 0x47efffffe0000000);
+    row("bw f64::MAX                  ", 0x7fefffffffffffff);
+    row("bw +inf (refused since 3.6.3)", 0x7ff0000000000000);
+    out("wrong rows: ");
+    out_int(WRONG);
+    out("\n");
+    return WRONG;
+}
+
+var R = main();
+syscall(60, R);

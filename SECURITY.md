@@ -16,7 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.6.3** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| **3.6.4** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| 3.6.3 | ✅ Yes, with naad 2.3.3 | ⚠ upgrade before linking naad 2.3.4 or later, below |
 | 3.6.0 – 3.6.2 | ⚠ Upgrade | have the defects 3.6.3 fixed, below |
 | 3.5.x | ⚠ Limited | for consumers still below that cyrius floor; has the defects 3.6.3 fixed, and there is no backport |
 | 3.2 – 3.4 | ⚠ Upgrade | have the defects 3.6.3 fixed, and miss later hardening |
@@ -27,6 +28,18 @@ The attack surface, and what is and is not mitigated, is
 > The previous version of this file said "1.x: Yes" and listed nothing else. That
 > was inherited from the Rust crate and was materially misleading by the time
 > 3.1.3 shipped.
+
+## 3.6.4 — move svara with naad
+
+From naad 2.3.4, a refused allocation inside `noise_new` or `modulation_lfo_new`
+returns an error code instead of stopping inside naad. svara 3.6.3 stored both
+results unchecked in `svara_glottal_new`, so **svara 3.6.3 linked against naad 2.3.4
+or later** returns a glottal source holding that code as a handle. Its first sample
+faults at `0xfffffffffffffffa`, away from the null page where every other refused
+allocation in svara stops. Reaching it takes an exhausted heap, not a crafted input.
+3.6.4 returns `SVARA_ERR_COMPUTATION` instead, pinned by `tests/allocrefused.tcyr`.
+svara 3.6.3 as released pins naad 2.3.3 and is not affected, and no consumer paired
+3.6.3 with a newer naad on 2026-11-16.
 
 ## Defects fixed in 3.6.3 — upgrade from any earlier 3.x
 
