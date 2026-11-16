@@ -2,9 +2,9 @@
 
 Thank you for your interest in contributing to svara.
 
-svara is a **port**: `rust-old/` holds the original 8,785-line Rust library and is the parity
-oracle. The correctness bar is "matches what the Rust did". Never modify `rust-old/`, and diverge
-from it only with an ADR under [`docs/adr/`](docs/adr/).
+svara is a **port** of an 8,785-line Rust library, which was its parity oracle. The correctness
+bar is "matches what the Rust did", and diverging from it takes an ADR under
+[`docs/adr/`](docs/adr/). The Rust left the tree in 3.7.0 and is read at tag `3.6.5`; see below.
 
 ## Getting Started
 
@@ -68,18 +68,19 @@ Two formatter notes:
 
 ## Reading the Rust oracle
 
-`rust-old/` is the frozen parity oracle — 8,785 lines, read-only, and scheduled
-for removal (`docs/development/roadmap.md` 3.7.0). Cross-check against it before
-changing ported behaviour, and **cite a tag, not a bare path**, so the citation
-survives the deletion:
+`rust-old/` held the frozen parity oracle, 8,785 lines. 3.7.0 removed it
+([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md)), and tag `3.6.5` is the
+last that carries it. Cross-check against it before changing ported behaviour:
 
 ```sh
-git show 3.5.1:rust-old/src/phoneme.rs        # after removal, this still works
+git show 3.6.5:rust-old/src/phoneme.rs
 ```
 
-Verified against every tag from `1.0.0` to `3.5.1`. A bare `rust-old/src/x.rs:NN`
-in a comment becomes unresolvable the day the directory goes; `git show <tag>:…`
-does not.
+**Cite a tag, not a bare path.** The bare `rust-old/src/x.rs:NN` citations older code
+carries resolve at `3.6.5`. To run the oracle, or to read a value its tests do not
+assert, rebuild it with ADR-0011's recipe and add a throwaway test to that copy. Take an
+expected value from the oracle, never from svara's own output, which would freeze any
+existing bug in as correct.
 
 ## Code Standards
 
@@ -117,7 +118,7 @@ does not.
 
 The inventory is integer constants in `src/phoneme.cyr`, **in exact Rust variant order** so index
 and serialization mappings match the oracle. Adding a phoneme past 100 therefore diverges from
-`rust-old/` and needs an ADR first.
+the Rust and needs an ADR first.
 
 1. Add the `SVARA_PH_*` constant to the inventory block in
    [`src/phoneme.cyr`](src/phoneme.cyr) and bump `SVARA_PHONEME_COUNT`.
@@ -137,8 +138,9 @@ and serialization mappings match the oracle. Adding a phoneme past 100 therefore
 7. Make sure both synthesis paths reach it: the free `svara_ph_synth_dispatch()` and the pooled
    `svara_synthctx_synthesize()` both route by class, so a new class (not just a new phoneme) needs
    an arm in each plus a `svara_ph_synth_*` / `svara_synthctx_*` pair.
-8. Add tests to [`tests/phoneme.tcyr`](tests/phoneme.tcyr) and cross-check the output against
-   `rust-old/src/phoneme.rs`.
+8. Add tests to [`tests/phoneme.tcyr`](tests/phoneme.tcyr). A new phoneme has no Rust
+   counterpart, so there is no oracle to cross-check it against; derive its expectations
+   from the phonetics and say where they come from.
 
 ## Benchmarks
 

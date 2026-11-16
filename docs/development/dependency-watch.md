@@ -163,4 +163,4 @@ lint leg sums warnings only). Both run in CI.
   can change floating-point rounding without changing behaviour (naad 2.2.0's
   `fit_polynomial` thin-QR port is the worked example).
 - **Major versions**: full review, migration path, and an ADR if svara diverges
-  from what `rust-old/` did.
+  from what the Rust oracle did (tag `3.6.5`, ADR-0011).

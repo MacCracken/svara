@@ -7,8 +7,9 @@ an SOA formant filter bank, a 101-phoneme inventory, prosodic control, look-ahea
 and spectral analysis. Built on [hisab](https://github.com/MacCracken/hisab) for math and
 [naad](https://github.com/MacCracken/naad) for DSP primitives.
 
-Cyrius port of an 8,785-line Rust library; the original is preserved at `rust-old/` as the parity
-oracle. See [`docs/development/state.md`](docs/development/state.md) for current state.
+Cyrius port of an 8,785-line Rust library. The Rust was the parity oracle until 3.7.0 and is
+readable at tag `3.6.5` ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md)). See
+[`docs/development/state.md`](docs/development/state.md) for current state.
 
 ## Features
 
@@ -112,7 +113,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.6.5"
+tag = "3.7.0"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.

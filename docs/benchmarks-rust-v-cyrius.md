@@ -8,9 +8,9 @@
 > preserved as taken; the Cyrius side has moved since. 3.1.0 cut the diphthong
 > 5.42 → 0.94 ms (below the Rust oracle's 1.09 ms) and 3.1.3 removed the
 > per-sample allocation. For current Cyrius figures see
-> [`benchmarks.md`](benchmarks.md) and `benches/history.csv`; re-running the Rust
-> side needs `rust-old/`, which is scheduled for retirement (roadmap 3.7.0), so
-> this table is likely to be the last of its kind.
+> [`benchmarks.md`](benchmarks.md) and `benches/history.csv`. The Rust side left
+> the tree in 3.7.0 and can be re-run only from tag `3.6.5`, so this table is
+> likely to be the last of its kind.
 >
 > - **Rust**: criterion 0.5, `--release`. Deps from crates.io: hisab 1.2 (`num`,
 >   `calc`), naad 1. f32/f64 mixed, LLVM auto-vectorized.
@@ -148,10 +148,13 @@ Gate: tolerance `.tcyr` tests stay green; any AVX2 path is `simd_has_avx2()`
 ### Reproduce
 
 ```sh
-cd rust-old && cargo bench          # Rust baseline (crates.io hisab/naad)
-cyrius bench benches/hotpath.bcyr   # Cyrius
+mkdir /tmp/oracle && git archive 3.6.5 rust-old | tar -x -C /tmp/oracle
+(cd /tmp/oracle/rust-old && cargo bench)   # Rust baseline (crates.io hisab/naad)
+cyrius bench benches/hotpath.bcyr          # Cyrius
 ```
 
-⚠ The Rust half of that requires `rust-old/` and a cargo toolchain. When the
-oracle is retired (roadmap 3.7.0) it becomes
-`git show 3.3.0:rust-old/benches/benchmarks.rs`, and this table is the archive.
+⚠ The Rust half needs a cargo toolchain and the crates its `Cargo.lock` pins
+([ADR-0011](adr/0011-retire-rust-old-keep-its-bar.md)). Four of its 15 benches have
+no Cyrius counterpart: `vocal_tract_reduced_1024`, `vocal_tract_minimal_1024`,
+`phoneme_render_female_vowel_a` and `sequence_render_10_phonemes`. Their medians
+above are the record.

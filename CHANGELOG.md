@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-11-16 — `rust-old/` is retired, and its bar kept
+
+The Rust oracle leaves the tree.
+[ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md) records why it was safe and how
+to reach the Rust now. **No `src/` change**: `build/svara` is byte-identical to 3.6.5, and
+`dist/svara.cyr` differs only in its version line. **1,239 assertions / 25 suites.** A
+consumer needs to change nothing, and the floor stays cyrius 6.7.2.
+
+### Removed
+
+- **`rust-old/`**: 36 tracked files, 8,785 lines of Rust, and about 445 MB of ignored
+  build output. The Rust stays readable at tag **`3.6.5`**, the last that carries it:
+  `git show 3.6.5:rust-old/src/<module>.rs`. ADR-0011 gives the recipe to rebuild and run
+  it.
+- `.gitignore`'s `rust-old/target/` rule.
+
+### Changed
+
+- **The live instructions point at the tag.** CLAUDE.md's rules and principles,
+  CONTRIBUTING's *Reading the Rust oracle*, the README, the getting-started and testing
+  guides, `examples/README.md`, the two benchmark documents (whose *Reproduce* step now
+  extracts the tag) and a CI comment. The bar is unchanged: match what the Rust did,
+  diverge only with an ADR, and take an expectation from the oracle, never from svara's
+  own output.
+- **The `rust-old/src/x.rs:NN` citations in `src/`, `tests/` and the ADRs stay** as the
+  audit trail. All 74 resolve at `3.6.5`.
+- **ADR-0001's tag claim is corrected.** It said every tag from `1.0.0` carries
+  `rust-old/`. Only `3.0.0` to `3.6.5` do. The `1.x` and `2.0.0` tags are the Rust
+  releases themselves, with the source at the root, and `2.0.0:src/` is byte-identical to
+  `3.6.5:rust-old/src/`.
+- The roadmap drops the 3.7.0 lane. 3.8.x gains an item to bench the four Rust scenarios
+  with no Cyrius bench: the tract at reduced and at minimal quality, the female /a/, and
+  the 10-phoneme sequence.
+
+### Verified
+
+What ADR-0011's table rests on, measured on this tree with the directory gone unless
+noted:
+
+- **The gate.** Five consumers build against svara 3.6.3 at their own pins on cyrius
+  6.7.18: dhvani, prani, hoosh, shabda and shabdakosh.
+- **The oracle rebuilds from the tag.** `git archive 3.6.5 rust-old`, then
+  `cargo test --all-features --offline --locked`: 165 unit, 45 integration and 3 doc
+  tests pass.
+- **Nothing lives only there.** 3.6.5 mapped every Rust `#[test]` onto the suites and
+  ported the 25 that had no Cyrius assertion or a weaker one. The files found only there
+  are the Rust build, its benches and its tool configs, and the tag keeps all of them.
+- **Every gate passes without it:** `cyrius audit`, `cyrius fuzz`, `cyrius deny`,
+  `scripts/check-logging.sh`, the five examples, `cyrius bench`, `cyrius distlib` (current
+  and deterministic), and `cyrius deps --verify` and `--locked`.
+- **Nothing moved.** `scripts/sweep/compare.py 3.6.5`: 558,721 values, the JSON and all
+  638 hostile cases are identical, and retired instructions are equal on every probe.
+
 ## [3.6.5] - 2026-11-16 — the Rust tests left unported, and the three filed issues
 
 Repair release. It closes the 25 Rust tests that had no Cyrius counterpart or only a weaker one,

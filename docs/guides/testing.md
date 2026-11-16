@@ -1,8 +1,8 @@
 # Testing Guide
 
 > Rewritten 2026-08-26 for the Cyrius port. The pre-port version was Rust —
-> `cargo test`, `make check`, criterion HTML reports, and a `tests/integration.rs`
-> that lives only in `rust-old/` now.
+> `cargo test`, `make check` and criterion HTML reports. The Rust, and its
+> `tests/integration.rs`, are at tag `3.6.5` since 3.7.0 removed `rust-old/`.
 
 ## Running
 

@@ -95,8 +95,8 @@ jobs:
 
       - name: Examples build and run
         # examples/ is documentation that executes. Without this it rots against
-        # the API silently -- and it is a pre-removal gate for rust-old/, so it
-        # has to keep working after rust-old/ goes.
+        # the API silently. It was a pre-removal gate for rust-old/, which 3.7.0
+        # retired, so it is now the only executable record of the Rust examples.
         run: |
           set -e
           for f in examples/*.cyr; do

@@ -8,53 +8,9 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.7.0** | [Retire `rust-old/`](#370--retire-rust-old) | next; the gate is met and the last test gaps are closed |
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, a streaming render, the refactors 3.6.3 left | ready |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, a streaming render, the refactors 3.6.3 left | next; ready |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
-
----
-
-## 3.7.0 — retire `rust-old/`
-
-3.6.3 ran the differential, the oracle's last planned use, which is the order goonj
-took: sweep at 2.1.3, delete at 2.2.0. Every divergence it found is recorded in
-[ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md). The port itself is not
-the obstacle. A name-by-name sweep of every Rust `pub` item found zero missing
-counterparts.
-
-### The gate, met 2026-11-16
-
-3.6.2 left a decision open: does a measurement in a scratch copy clear the gate, or
-does a consumer have to move its own pins first? naad held on the second reading,
-and goonj deleted on the first. **The second is now met, so the decision is moot.**
-Between 2026-11-07 and 2026-11-11 five consumers moved to svara 3.6.3 on cyrius
-6.7.18 in their own manifests: dhvani 2.3.1, prani 2.1.1, hoosh 2.12.3, shabda 3.1.1
-and shabdakosh 3.1.1. Each vendors `dist/svara.cyr`. The 2026-11-07 scratch-copy
-measurement (dhvani 2.2.6, 65 of 65 suites against svara 3.6.1) came first.
-
-### Steps
-
-- [ ] **An ADR on the model of goonj's ADR-0006** (it will be ADR-0011): delete the
-      tree and keep its bar. It names the last tag that has the Rust, keeps the
-      `rust-old/src/x.rs:NN` citations as an audit trail, and gives the recipe to
-      rebuild the oracle. Measured 2026-11-16, to go in it: the oracle rebuilds from
-      the tree with `cargo test --all-features --offline --locked` (165 unit, 45
-      integration and 3 doc tests), and all 74 `rust-old/` citations resolve.
-- [x] **Confirm nothing lives only there.** Every Rust `#[test]` was mapped onto the
-      suites, and 3.6.5 ported the 4 with no Cyrius assertion and the 21 with a
-      weaker one. Still to record in the ADR: `Cargo.lock` pins hisab 1.4.0, naad
-      1.2.5, serde 1.0.228 and serde_json 1.0.150; 4 of the 15 Rust benches have no
-      Cyrius counterpart (tract at reduced and minimal quality, the female /a/, the
-      10-phoneme sequence), their medians archived in `benchmarks-rust-v-cyrius.md`;
-      and the Rust-only tool configs.
-- [ ] **Verify green with it moved aside:** `cyrius audit`, every suite,
-      `cyrius distlib`, `cyrius bench` and `./scripts/check-logging.sh`. Green in a
-      scratch copy at 3.6.4; re-run on the release tree.
-- [ ] **Rewrite the live instructions**: `CONTRIBUTING.md`'s cross-check,
-      `CLAUDE.md`'s rules, `docs/benchmarks-rust-v-cyrius.md`'s
-      `cd rust-old && cargo bench`, and `.gitignore`'s `rust-old/target/`.
-- [ ] **Delete**, and regenerate `dist/svara.cyr`.
 
 ---
 
@@ -82,6 +38,10 @@ measured effect does not earn a place in the source.
       `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
       2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
       form owes the path it stands for.
+- [ ] **Bench the four Rust scenarios that have none here**: the tract at reduced and
+      at minimal quality, the female /a/, and the 10-phoneme sequence. The Rust's
+      medians are in `benchmarks-rust-v-cyrius.md`, and nothing times the reduced and
+      minimal quality paths today.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.
@@ -127,6 +87,10 @@ holds.
 Four behaviours svara keeps because the oracle has them, and one where svara left the
 oracle without a decision. Each needs a decision, recorded in an ADR. A fix changes
 output, so each one gets a minor of its own and its own test.
+
+The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run it with
+[ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
+the Rust's output rather than its source.
 
 - [ ] **Unapplied per-vowel spectral tilt.**
 - [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**

@@ -8,7 +8,7 @@
 
 ## Project Identity
 
-**svara** — Cyrius port of a Rust project (8785 lines preserved at `rust-old/`).
+**svara** — Cyrius port of an 8,785-line Rust project. The Rust oracle was retired from the tree in 3.7.0 and is readable at tag `3.6.5` ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md)).
 
 - **Type**: Port (Rust → Cyrius)
 - **License**: GPL-3.0-only
@@ -40,7 +40,7 @@ This file (`CLAUDE.md`) is durable rules.
 
 ## Scaffolding
 
-Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the reference oracle — do not modify it; cross-check the port against it.
+Project was scaffolded with `cyrius port`, which moved the Rust into `rust-old/` as the reference oracle. 3.7.0 removed that directory ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md)). Read the Rust with `git show 3.6.5:rust-old/src/<module>.rs`; ADR-0011 has the recipe to rebuild and run it.
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ cyrius test                              # run tests/*.tcyr
 
 ## Key Principles
 
-- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR (recorded so far: ADR-0001's two, ADR-0007, ADR-0008 and the table in ADR-0009). **Cite a tag, not a bare path** — `git show 3.5.2:rust-old/src/x.rs` — because the directory is scheduled for removal once a consumer is green.
+- **Cross-check against the Rust oracle** — the port's correctness bar is still "matches what Rust did". Read it at tag `3.6.5` (`git show 3.6.5:rust-old/src/x.rs`) and run it with ADR-0011's recipe. Diverge only with an ADR (recorded so far: ADR-0001's two, ADR-0007, ADR-0008, ADR-0010 and the table in ADR-0009). **Cite a tag, not a bare path.** Take an expected value from the oracle, never from svara's own output.
 - **Correctness over cleverness** — if the Cyrius behavior diverges silently from Rust, the bugs win
 - Test after every change, not after the feature is "done"
 - ONE change at a time — never bundle unrelated changes
@@ -66,7 +66,7 @@ cyrius test                              # run tests/*.tcyr
 
 - **Do not commit or push** — the user handles all git operations
 - **Never use `gh` CLI** — use `curl` to the GitHub API if needed
-- Do not modify `rust-old/` — it's the parity oracle
+- Do not bring `rust-old/` back into the tree — the oracle lives at tag `3.6.5`, the last that carries it ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.md))
 - Do not skip tests before claiming changes work
 - Do not modify `lib/` files (vendored stdlib / dep symlinks)
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth
@@ -76,7 +76,7 @@ cyrius test                              # run tests/*.tcyr
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (*why X over Y?*)
 - [`docs/architecture/`](docs/architecture/) — Non-obvious constraints
 - [`docs/guides/`](docs/guides/) — Task-oriented how-tos
-- [`examples/`](examples/) — Runnable examples (5, ported from `rust-old/examples/`)
+- [`examples/`](examples/) — Runnable examples (5, ported from the Rust's `examples/`)
 - [`docs/development/state.md`](docs/development/state.md) — Live state
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — Remaining work, in release order
 

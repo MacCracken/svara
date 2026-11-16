@@ -5,6 +5,14 @@
 
 ## Version
 
+**3.7.0** (2026-11-16) — **`rust-old/` is retired, and its bar kept**
+([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)). The 36 tracked files and
+445 MB of build output are gone. The Rust stays readable at tag `3.6.5`, the last that
+carries it, and rebuilds from there: 165 unit, 45 integration and 3 doc tests pass. No
+`src/` change: `build/svara` is byte-identical and `dist/svara.cyr` differs only in its
+version line. The live instructions now point at the tag. **1,239 assertions / 25
+suites**, `cyrius audit` exit 0.
+
 **3.6.5** (2026-11-16) — **the Rust tests left unported, and the three filed issues.**
 Every Rust `#[test]` was mapped onto the suites: 4 had no Cyrius assertion and 21 a
 weaker one, and all 25 are now ported from the Rust, with no defect found. Concurrent
@@ -247,8 +255,9 @@ prototyped and reverted — the loop is memory-bound.
 **3.0.0** — Rust→Cyrius port complete (shipped 2026-07-03; started 2026-07-03
 via `cyrius port`). **Full behavioral parity** with the Rust 2.0.0 surface:
 all 19 modules ported, 634 test assertions / 18 suites (vs Rust 213 tests),
-11 hot-path benchmarks. 8,785 lines of Rust preserved at `rust-old/` as the
-parity oracle.
+11 hot-path benchmarks. 8,785 lines of Rust were kept at `rust-old/` as the
+parity oracle until 3.7.0 retired them; tag `3.6.5` still carries them
+([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)).
 
 ## Toolchain
 
@@ -565,11 +574,10 @@ returns an empty vec. Silently. Use `_from_json_str`.
 ## Next
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
-list here. **3.7.0 is next**: retiring `rust-old/`. The 3.6.3 sweep was the oracle's
-last planned use, five consumers build against svara 3.6.3 at their own pins, which
-meets its gate under either reading, and 3.6.5 ported the last Rust tests that had no
-Cyrius counterpart. Of the three issues filed against 3.6.3, two are resolved and
-archived; the third's streaming render is roadmap 3.8.x.
+list here. **3.8.x is next**: performance, including the streaming sequence render
+hoosh's open issue asks for. 3.7.0 retired `rust-old/`, so a parity question is now
+asked of tag `3.6.5` ([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md) has the
+recipe). The 3.9.x items, the preserved Rust quirks, are such questions.
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:
@@ -581,7 +589,8 @@ easy to get wrong:
   substring test, not a check that the roadmap says anything. Most of svara's
   real deferral language (`not started`, `not wired`, `blocked on`, `upstream`,
   `known limitation`, `P1`/`P2`) is invisible to it.
-- **The `rust-old/` port is complete** — a name-by-name sweep of every Rust `pub`
-  item found zero missing counterparts, and enum parity is exact on all ten enums
-  including `Phoneme` at 101/101. What holds the directory in the tree is the
-  work that still *reads* it, not a gap in the port.
+- **The port was complete before the oracle went.** A name-by-name sweep of every
+  Rust `pub` item found zero missing counterparts, enum parity is exact on all ten
+  enums including `Phoneme` at 101/101, and every Rust `#[test]` has a Cyrius
+  assertion at least as strong (3.6.5). What the tree no longer has is a quick way
+  to ask the Rust a new question: that now costs a tag extraction.

@@ -16,7 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.6.5** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| **3.7.0** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| 3.6.5 | ✅ Yes | the same library as 3.7.0, which only removes `rust-old/` |
 | 3.6.4 | ⚠ Upgrade | concurrent renders and a huge finite bandwidth can give silent wrong answers, below |
 | 3.6.3 | ⚠ Upgrade | as 3.6.4, and do not link it with naad 2.3.4 or later, below |
 | 3.6.0 – 3.6.2 | ⚠ Upgrade | have the defects 3.6.3 fixed, below |

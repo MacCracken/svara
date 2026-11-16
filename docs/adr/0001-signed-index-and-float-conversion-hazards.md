@@ -121,17 +121,20 @@ license tightening validation that the oracle also lacks — see below.
 
 ## Reading the oracle after it is retired
 
-`rust-old/` is scheduled for removal (`docs/development/roadmap.md` 3.7.0). The
-Rust cited throughout this ADR stays reachable from git:
+`rust-old/` was removed in 3.7.0
+([ADR-0011](0011-retire-rust-old-keep-its-bar.md)), and tag `3.6.5` is the last that
+carries it. The Rust cited throughout this ADR stays reachable from git:
 
 ```sh
 git show 3.5.1:rust-old/src/formant.rs      # any module, at any released tag
 git show 3.5.1:rust-old/tests/integration.rs
 ```
 
-Verified: every tag from `1.0.0` to `3.5.1` carries the full tree, and
-`git show 3.5.1:rust-old/src/formant.rs` reproduces lines 479-486 exactly as this
-ADR and `src/formant.cyr` cite them. **Cite a tag, not a bare path**, in anything
+Verified: every tag from `3.0.0` to `3.6.5` carries `rust-old/`, and lines 479-486
+of its `src/formant.rs` are the same at all 23 of them, as this ADR and
+`src/formant.cyr` cite them. (Corrected 2026-11-16: this said "every tag from
+`1.0.0`". The `1.x` and `2.0.0` tags are the Rust releases themselves, with the
+source at the root; `2.0.0:src/` is byte-identical to `3.6.5:rust-old/src/`.) **Cite a tag, not a bare path**, in anything
 written from here on — a bare `rust-old/src/x.rs:NN` becomes unresolvable the day
 the directory goes.
 

@@ -7,6 +7,9 @@
 # existing bug in as "correct". That is naad 2.2.1's lesson, learned there the
 # hard way while closing 182 untested public functions.
 #
+# rust-old/ left the tree in 3.7.0 (docs/adr/0011). Every bare `rust-old/...:NN`
+# citation below resolves at tag 3.6.5: `git show 3.6.5:rust-old/src/bridge.rs`.
+#
 # ⚠ EVERY expected value below is re-derived from the Rust source, cited by
 # line, and NOT taken from running svara. Where the Rust asserted a relation
 # (finite, non-silent, differs) rather than a number, the relation is asserted.

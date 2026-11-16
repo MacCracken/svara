@@ -3,10 +3,6 @@
 /target
 *.pdb
 
-# The frozen Rust oracle's build tree (~3 GB). rust-old/ itself is tracked --
-# it is the parity oracle, see docs/development/roadmap.md 3.6.0.
-rust-old/target/
-
 # Editor / OS
 .DS_Store
 *.swp
@@ -20,7 +16,9 @@ rust-old/target/
 # `*.csv`      shadowed benches/history.csv, so the benchmark history could never
 #              be committed -- which defeats the cross-commit regression tracking
 #              docs/benchmarks.md states as its purpose. That file is now tracked.
-# `Cargo.lock` rust-old/Cargo.lock is part of the frozen oracle and IS tracked;
-#              the rule only ever created confusion about that.
+# `Cargo.lock` rust-old/Cargo.lock was part of the frozen oracle and was tracked;
+#              the rule only ever created confusion about that. Both went with
+#              rust-old/ in 3.7.0 (docs/adr/0011), and so did its `rust-old/target/`
+#              rule.
 # `**/*.rs.bk` rustfmt backup files; there is no rustfmt here.
 # `/coverage/` tarpaulin output; there is no coverage tooling here.

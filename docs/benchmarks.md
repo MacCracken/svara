@@ -1,7 +1,7 @@
 # svara — Benchmarks
 
-Hot-path benchmarks for the Cyrius port, reproducing the intent of the 15
-criterion benches in `rust-old/benches/benchmarks.rs`. Source:
+Hot-path benchmarks for the Cyrius port, reproducing the intent of the Rust's 15
+criterion benches (`git show 3.6.5:rust-old/benches/benchmarks.rs`). Source:
 [`benches/hotpath.bcyr`](../benches/hotpath.bcyr).
 
 ## Running
