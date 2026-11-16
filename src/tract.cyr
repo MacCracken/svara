@@ -47,7 +47,28 @@ struct SvVocalTract {
     filter; nasal_coupling; nasal_antiformant; lip_prev; lip_radiation;
     interaction_strength; interaction_feedback; subglottal_coupling;
     subglottal_filter; gain; quality; sample_rate; formants; nasal_place;
-    target_scratch;
+    target_scratch; qflags;
+}
+
+# Bits of `qflags`, the four svara_quality_use_* answers for the tract's quality,
+# kept beside it so process_sample reads one field instead of making four calls
+# (3.8.2). svara_tract_store_quality is the only writer of either field.
+var SV_T_Q_INTERACTION = 1;
+var SV_T_Q_NASAL = 2;
+var SV_T_Q_SUBGLOTTAL = 4;
+var SV_T_Q_LIP = 8;
+
+# store_quality -- set the tract's quality and the flags derived from it, asking
+# lod.cyr's predicates, which stay the one place the tiers are defined.
+fn svara_tract_store_quality(self, q) {
+    var f = 0;
+    if (svara_quality_use_interaction(q) == 1) { f = f | SV_T_Q_INTERACTION; }
+    if (svara_quality_use_nasal_coupling(q) == 1) { f = f | SV_T_Q_NASAL; }
+    if (svara_quality_use_subglottal(q) == 1) { f = f | SV_T_Q_SUBGLOTTAL; }
+    if (svara_quality_use_lip_radiation(q) == 1) { f = f | SV_T_Q_LIP; }
+    SvVocalTract_set_quality(self, q);
+    SvVocalTract_set_qflags(self, f);
+    return 0;
 }
 
 # new -- default neutral vowel (schwa), Full quality. Returns a tract pointer,
@@ -104,7 +125,7 @@ fn svara_tract_new(sample_rate) {
     if (naad_is_err(sg_f) == 1) { return svara_map_naad_error(sg_f); }
     SvVocalTract_set_subglottal_filter(self, sg_f);
     SvVocalTract_set_gain(self, svara_smooth_new(F64_ONE, sample_rate));
-    SvVocalTract_set_quality(self, SVARA_QUALITY_FULL);
+    svara_tract_store_quality(self, SVARA_QUALITY_FULL);
     SvVocalTract_set_sample_rate(self, sample_rate);
     SvVocalTract_set_nasal_place(self, SVARA_NASAL_NEUTRAL);
     SvVocalTract_set_target_scratch(self, 0);
@@ -204,7 +225,7 @@ fn svara_tract_restore(st) {
     SvVocalTract_set_interaction_strength(self, SvVocalTractState_interaction_strength(st));
     SvVocalTract_set_interaction_feedback(self, SvVocalTractState_interaction_feedback(st));
     SvVocalTract_set_subglottal_coupling(self, SvVocalTractState_subglottal_coupling(st));
-    SvVocalTract_set_quality(self, SvVocalTractState_quality(st));
+    svara_tract_store_quality(self, SvVocalTractState_quality(st));
     # through the setter so the naad notch is retuned, not just the field written
     svara_tract_set_nasal_place(self, SvVocalTractState_nasal_place(st));
     return self;
@@ -360,7 +381,7 @@ fn svara_tract_set_gain(self, gain) {
 fn svara_tract_set_quality(self, quality) {
     # Rust's quality is an enum. Keep the current one rather than mix tiers.
     if ((quality < SVARA_QUALITY_FULL) | (quality > SVARA_QUALITY_MINIMAL)) { return 0; }
-    SvVocalTract_set_quality(self, quality);
+    svara_tract_store_quality(self, quality);
 }
 
 # current quality level (SVARA_QUALITY_*).
@@ -373,11 +394,11 @@ fn svara_tract_sample_rate(self) { return SvVocalTract_sample_rate(self); }
 # ---- processing -----------------------------------------------------------
 # process_sample -- one excitation sample through the full (LOD-gated) pipeline.
 fn svara_tract_process_sample(self, input) {
-    var q = SvVocalTract_quality(self);
+    var qf = SvVocalTract_qflags(self);
 
     # source-filter interaction: feed a fraction of last output back
     var excitation = input;
-    if (svara_quality_use_interaction(q) == 1) {
+    if ((qf & SV_T_Q_INTERACTION) != 0) {
         excitation = f64_sub(input,
           f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
     }
@@ -387,20 +408,20 @@ fn svara_tract_process_sample(self, input) {
     # nasal coupling: blend oral vs nasalized (smoother always advances)
     var nc = svara_smooth_next(SvVocalTract_nasal_coupling(self));
     var output = formant_out;
-    if ((svara_quality_use_nasal_coupling(q) == 1) & (f64_gt(nc, 0) == 1)) {
+    if (((qf & SV_T_Q_NASAL) != 0) & (f64_gt(nc, 0) == 1)) {
         var nasal = filter_biquad_process_sample(SvVocalTract_nasal_antiformant(self), formant_out);
         output = f64_add(f64_mul(formant_out, f64_sub(F64_ONE, nc)), f64_mul(nasal, nc));
     }
 
     # subglottal resonance coupling
-    if ((svara_quality_use_subglottal(q) == 1) & (f64_gt(SvVocalTract_subglottal_coupling(self), 0) == 1)) {
+    if (((qf & SV_T_Q_SUBGLOTTAL) != 0) & (f64_gt(SvVocalTract_subglottal_coupling(self), 0) == 1)) {
         var sg_out = filter_biquad_process_sample(SvVocalTract_subglottal_filter(self), output);
         output = f64_add(output, f64_mul(sg_out, SvVocalTract_subglottal_coupling(self)));
     }
 
     # lip radiation: first-order high-pass difference
     var radiated = output;
-    if (svara_quality_use_lip_radiation(q) == 1) {
+    if ((qf & SV_T_Q_LIP) != 0) {
         radiated = f64_sub(output, f64_mul(SvVocalTract_lip_radiation(self), SvVocalTract_lip_prev(self)));
         SvVocalTract_set_lip_prev(self, output);
     }

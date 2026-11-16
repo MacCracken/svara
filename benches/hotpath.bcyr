@@ -39,11 +39,25 @@ var _dur = 0;
 var _blk_in = 0;
 var _blk_out = 0;
 var _half = 0;
+var _tract_r = 0;
+var _tract_m = 0;
+var _female = 0;
+var _seq10 = 0;
 
 # --- block / full-render paths (allocate) ---
 fn b_formant_block() { svara_formant_filter_process_block(_formant, _blk_in, _blk_out, 1024); return 0; }
 # b tract into — helper used by hotpath.bcyr.
 fn b_tract_into() { svara_tract_synthesize_into(_tract, _tract_g, _blk_out, 1024); return 0; }
+# The four Rust benches svara had no counterpart for until 3.8.2, on their inputs
+# (`git show 3.6.5:rust-old/benches/benchmarks.rs`).
+# b tract into reduced — vocal_tract_reduced_1024.
+fn b_tract_into_reduced() { svara_tract_synthesize_into(_tract_r, _tract_g, _blk_out, 1024); return 0; }
+# b tract into minimal — vocal_tract_minimal_1024.
+fn b_tract_into_minimal() { svara_tract_synthesize_into(_tract_m, _tract_g, _blk_out, 1024); return 0; }
+# b ph vowel female — phoneme_render_female_vowel_a, 0.1 s.
+fn b_ph_vowel_female() { return svara_phoneme_synthesize(SVARA_PH_VOWEL_A, _female, _sr, 0.1); }
+# b seq10 — sequence_render_10_phonemes.
+fn b_seq10() { return svara_sequence_render(_seq10, _voice, _sr); }
 # b ph vowel — helper used by hotpath.bcyr.
 fn b_ph_vowel() { return svara_phoneme_synthesize(SVARA_PH_VOWEL_A, _voice, _sr, _dur); }
 # b ph fric — helper used by hotpath.bcyr.
@@ -106,6 +120,14 @@ fn main() {
     var e = svara_tract_set_vowel(_tract, SVARA_VOWEL_A);
     if (svara_is_err(e) == 1) { return 1; }
     _tract_g = svara_glottal_new(f64_from(120), _sr);
+    _tract_r = svara_tract_new(_sr);
+    var er = svara_tract_set_vowel(_tract_r, SVARA_VOWEL_A);
+    svara_tract_set_quality(_tract_r, SVARA_QUALITY_REDUCED);
+    _tract_m = svara_tract_new(_sr);
+    var em = svara_tract_set_vowel(_tract_m, SVARA_VOWEL_A);
+    svara_tract_set_quality(_tract_m, SVARA_QUALITY_MINIMAL);
+    if ((svara_is_err(er) == 1) | (svara_is_err(em) == 1)) { return 1; }
+    _female = svara_voice_new_female();
 
     _blk_in = alloc(1024 * 8);
     _blk_out = alloc(1024 * 8);
@@ -123,6 +145,17 @@ fn main() {
       svara_phoneme_event_with_tone(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED, SVARA_TONE_FALLING));
     svara_sequence_push(_seq_toned,
       svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_PRIMARY, SVARA_TONE_DIPPING));
+    _seq10 = svara_sequence_new();
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.06, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.04, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.06, SVARA_STRESS_SECONDARY));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.04, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_VOWEL_E, 0.06, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, 0.04, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_VOWEL_O, 0.06, SVARA_STRESS_SECONDARY));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_NASAL_M, 0.04, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_VOWEL_U, 0.06, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(_seq10, svara_phoneme_event_new(SVARA_PH_LATERAL_L, 0.04, SVARA_STRESS_UNSTRESSED));
 
     # per-sample (batch-timed: 200 rounds x 1000 = 200000 ops each)
     bench1("glottal next_sample (Rosenberg)", &svara_glottal_next_sample, _glottal, 1000, 200);
@@ -134,14 +167,18 @@ fn main() {
     # block (each call = 1024 samples)
     bench("formant filter process_block 1024", &b_formant_block, 2000);
     bench("tract synthesize_into 1024", &b_tract_into, 1000);
+    bench("tract synthesize_into 1024 (Reduced)", &b_tract_into_reduced, 1000);
+    bench("tract synthesize_into 1024 (Minimal)", &b_tract_into_minimal, 1000);
 
     # full-phoneme render (each call allocs ~2205 samples for 0.05s)
     bench("phoneme synth /a/ (vowel)", &b_ph_vowel, 200);
     bench("phoneme synth /s/ (fricative)", &b_ph_fric, 200);
     bench("phoneme synth /ai/ (diphthong)", &b_ph_diph, 200);
+    bench("phoneme synth /a/ female, 0.1 s", &b_ph_vowel_female, 200);
 
     # sequence render (3 phonemes, crossfaded)
     bench("sequence render 3 phonemes", &b_seq, 100);
+    bench("sequence render 10 phonemes", &b_seq10, 100);
     # trajectory-planned render: per-sample formant interpolation + tract retarget.
     # This is the path 3.1.3 took from ~1.1 KB to ~33 B of arena per sample; the
     # allocation budget itself is pinned in tests/allocbudget.tcyr, since a bump

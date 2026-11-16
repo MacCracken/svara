@@ -31,7 +31,7 @@ readable at tag `3.6.5` ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.m
   builders; a whisper..shout vocal-effort continuum
 - **Spectral analysis**: FFT-based spectrum, formant estimation, band energy, compensated RMS
 - **LOD**: Full / Reduced / Minimal quality levels that skip pipeline stages for background voices
-- **Performance**: ~64× real-time at 44.1 kHz on one core, f64 end-to-end — see
+- **Performance**: ~125× real-time at 44.1 kHz on one core, f64 end-to-end — see
   [`docs/benchmarks.md`](docs/benchmarks.md)
 
 ## Quick Start
@@ -113,7 +113,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.1"
+tag = "3.8.2"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
@@ -182,9 +182,9 @@ More in [`docs/architecture/`](docs/architecture/) and the ADRs under [`docs/adr
 
 ## Performance
 
-A full glottal → tract per-sample chain runs **≈ 0.35 µs/sample** on x86_64 — roughly
-**64× real-time at 44.1 kHz on one core**, measured end to end rather than derived. Per-unit:
-glottal ~77 ns, formant bank ~156 ns, tract ~275 ns per sample.
+A full glottal → tract per-sample chain runs **≈ 0.18 µs/sample** on x86_64 — roughly
+**125× real-time at 44.1 kHz on one core**, measured end to end rather than derived (3.8.2).
+Per-unit: glottal ~48 ns, formant bank ~86 ns, tract ~135 ns per sample.
 
 ⚠ Those three do not add up to the chain: `tract process_sample` **already includes** the formant
 bank. Summing them double-counts it, which is how this figure was computed until 3.5.3 — it

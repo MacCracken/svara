@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.1"
+tag = "3.8.2"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -72,7 +72,7 @@ sink other than stderr.
 
 Only four coarse entry points are instrumented — sequence render, batch render,
 synthesis-context render, pool render. **Never per-sample**: a span costs two
-`clock_gettime` calls, which at 44.1 kHz would dominate the ~0.25 µs it takes to
+`clock_gettime` calls, which at 44.1 kHz would dominate the ~0.18 µs it takes to
 synthesize a sample ([benchmarks](../benchmarks.md)). `scripts/check-logging.sh` asserts that structurally.
 
 ## Errors: codes, not exceptions

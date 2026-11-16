@@ -5,6 +5,100 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.2] - 2026-11-16 — the tract chain in 0.74x the instructions
+
+Performance release. **`tract process_sample` retires 0.744x of 3.8.1's instructions in 0.709x
+the cycles**:
+- the formant filter, 0.712x and 0.701x;
+- `synthesize_into`, 0.794x and 0.716x;
+- the Reduced and Minimal quality tiers, about 0.70x and 0.62–0.67x.
+
+The full glottal → tract chain is now ≈ 0.18 µs a sample, about 125x real time at 44.1 kHz.
+**No output moves**: against 3.8.1, 558,721 values, the JSON and all 638 hostile cases are
+identical. **1,303 assertions / 26 suites.**
+
+### How it was found
+
+Counting retired instructions per component put 59% of `tract process_sample` in the formant
+bank. The rest: the naad subglottal biquad 337 instructions a sample, two smoothers 136 each, the
+DC blocker 133, and four calls to the quality predicates about 49 each. The bank ran all eight
+slots for five formants, as Rust's does, because the unused three hold zero coefficients.
+
+### Changed
+
+Each change was measured on its own against 3.8.1, and each leaves every value the same bits:
+
+- **The bank skips the slots past `count` while that is exact** (tract -18.0% instructions,
+  -16.6% cycles):
+  - **Why it is exact.** An unused slot adds exactly nothing while it has no coefficients and no
+    state and the input is finite: the sum starts at +0.0 and can never become -0.0, so adding
+    ±0 leaves its bits alone.
+  - **When all eight still run.** A non-finite input (tested on the exponent bits) runs all eight,
+    as Rust does, so NaN reaches the unused slots' delay lines and stays there exactly as before;
+    the bank then keeps running all eight. So does a coefficient that `svara_formant_bank_update`
+    sets past `count`.
+  - **What clears that.** A reset or a rebuild returns the bank to the skip. Two new bank fields,
+    `out_coef` and `out_dirty`, carry the state.
+- **The tract keeps its quality's four flags as bits** (-3.3% instructions, -8.6% cycles).
+  `svara_tract_store_quality` asks `lod.cyr`'s predicates once whenever the quality is set, from
+  `new`, `set_quality` or `restore`. Four calls a sample cost more in cycles than in instructions.
+  3.5.0 had timed `#inline` on the predicates and concluded call overhead did not matter there;
+  `src/lod.cyr` now says otherwise.
+- **A converged, finite smoother returns at once** (-3.7%, -3.5%). The full path would have stored
+  the same bits. A non-finite value takes the full path, because a zero-time smoother at inf goes
+  to NaN through it.
+- **`svara_formant_filter_process_sample` is one expression**, so cyrius 6.7 inlines it (-0.6%,
+  -1.0%). On cyrius 6.7.18, `#inline` takes a body under 32 tokens with no `var` or control flow
+  and warns otherwise. The same marker on `svara_smooth_next` and `svara_dc_blocker_process` was
+  ignored, and was removed.
+- **Not taken:** laying the bank out one record per slot, instead of seven parallel arrays, might
+  save about 4% more. Every bank user would change, so it is left on the roadmap. Moving the
+  tract's field reads into locals would buy nothing: derived accessors have been inlined since
+  cyrius 6.5.62.
+
+### Added
+
+- **Benches for the four Rust scenarios** that had none here, on the Rust's own inputs: the tract
+  at Reduced and at Minimal quality, a female /a/ at 0.1 s, and the ten-event sequence.
+  `docs/benchmarks.md`'s table is re-measured at 3.8.2, with the Rust medians beside them.
+- `scripts/sweep/compare.py` counts the tract at Reduced and Minimal quality too.
+- **`tests/allocbudget.tcyr`: 3.8.2's shortcuts against the long way** (6 assertions):
+  - the bank skip against a bank made to run all eight slots, through finite input, +inf, NaN,
+    -inf, resets, a coefficient past `count` and a rebuild;
+  - the quality flags against the predicates, after `set_quality` and after `restore`;
+  - the smoother against 3.8.1's code over 21,000 steps and a zero-time smoother at inf.
+
+  Four mutants each fail their own check: a non-finite input not marking the unused slots,
+  `bank_update` not marking a coefficient past `count`, `restore` setting the quality without its
+  flags, and the smoother returning a non-finite value early.
+- `svara_tract_store_quality`, the bank's `out_coef` and `out_dirty`, and the tract's `qflags`.
+
+### Fixed
+
+- **Stale throughput figures.** The README, `docs/architecture/overview.md` and ADR-0003 still
+  said 0.35 µs a sample and 64x real time, which 3.6.3 had already improved on. All now give
+  3.8.2's measurement.
+
+### Verified
+
+- `scripts/sweep/compare.py 3.8.1`: 558,721 values, the JSON and 638 hostile cases are identical.
+  Retired instructions are equal on the glottal probe. Ratios on the rest:
+
+  | Probe | Instructions |
+  |---|---:|
+  | formant | 0.7122 |
+  | tract | 0.7440 |
+  | tract Reduced | 0.7015 |
+  | tract Minimal | 0.6946 |
+  | `synthesize_into` | 0.7939 |
+  | `phoneme /a/` | 0.8097 |
+  | `render_planned` | 0.9722 |
+  | toned render | 0.9766 |
+
+  The cycle geomean is 0.777.
+- `cyrius audit`, `cyrius fuzz`, `cyrius deny`, `scripts/check-logging.sh` both ways, the five
+  examples, `cyrius bench`, `cyrius distlib` current, and `cyrius deps --verify` and `--locked`.
+
 ## [3.8.1] - 2026-11-16 — `render_planned` in 0.84x the instructions
 
 Performance release, the first of 3.8.x's bit-identical items. **`render_planned` retires 0.845x

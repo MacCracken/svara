@@ -3,11 +3,14 @@
 # quality skips expensive synthesis stages to cut CPU per voice. Pure config
 # logic, no float. Quality is an integer, so it serializes as one.
 
-# MEASURED AND REJECTED (3.5.0): marking the four predicates the tract calls
-# once per sample `#inline` moved `tract process_sample` by +0.7% -- noise, in the
-# wrong direction -- over three interleaved runs taking the minimum of each. The
-# call overhead is not what this loop spends its time on. Left un-inlined so the
-# source carries no pragma that does nothing; do not re-try without a measurement.
+# The tract no longer calls these per sample (3.8.2). svara_tract_store_quality asks
+# them once whenever the quality is set and keeps the answers as bits, which took
+# `tract process_sample` 92 instructions and about 8% of its cycles lighter,
+# counted as retired instructions. 3.5.0 had timed `#inline` on them at +0.7% and
+# concluded call overhead did not matter here; the cycle counters say it did, and
+# the timer could not see it. On cyrius 6.7.18 `#inline` takes only a body under
+# 32 tokens with no `var` or control flow, and the compiler warns and ignores it
+# otherwise.
 
 # Quality levels (was `enum Quality`). Order matches the Rust variant order.
 var SVARA_QUALITY_FULL    = 0;   # all stages

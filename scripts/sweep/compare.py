@@ -34,7 +34,7 @@ HOSTILE_VALUES = ["NaN", "+Inf", "-Inf", "0", "-1", "MAX", "2^63", "1e19", "3e9"
 SUMMARISED = {0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
               25, 30, 31, 32, 33, 34, 35, 36, 43, 44, 54, 55}
 PROBES = ["setup only", "glottal 2M", "formant 1M", "tract 1M", "synthesize_into 500x1024",
-          "phoneme /a/ x100", "render_planned x20", "toned x20"]
+          "phoneme /a/ x100", "render_planned x20", "toned x20", "tract Reduced 1M", "tract Minimal 1M"]
 
 
 def limits():

@@ -295,7 +295,15 @@ fn svara_formant_biquad_from_trig(cos_omega, sin_omega, sinh_half, out) {
 # rebuilds the bank every sample, while a slot's frequency repeats on about half
 # of those samples and its bandwidth on a third to three quarters. The keys are
 # compared as raw bits, so a hit gives exactly the value a recomputation would.
-struct SvFormantBank { b0; b2; a1; a2; amp; xin1; xin2; y1; y2; count; coeff; trig; }
+#
+# `out_coef` and `out_dirty` let process skip the slots past `count` (3.8.2), which
+# Rust and svara both run on every sample with zero coefficients. A skipped slot
+# contributes exactly nothing only while it has no coefficients and no state:
+# `out_coef` is 1 once bank_update has set a coefficient past `count`, and
+# `out_dirty` once a non-finite input has run through the unused slots, where
+# 0 x inf is NaN and stays in their delay lines. While either is 1, all eight run,
+# as before. A rebuild clears both, a reset clears `out_dirty`.
+struct SvFormantBank { b0; b2; a1; a2; amp; xin1; xin2; y1; y2; count; coeff; trig; out_coef; out_dirty; }
 
 # zero a buffer of `n` f64 slots (bump alloc is not zeroed).
 fn svara_formant_zero_buf(buf, n) {
@@ -330,6 +338,8 @@ fn svara_formant_bank_new(formants, sample_rate) {
     var trig = alloc(SVARA_MAX_FORMANTS * 64);
     svara_formant_zero_buf(trig, SVARA_MAX_FORMANTS * 8);
     SvFormantBank_set_trig(self, trig);
+    SvFormantBank_set_out_coef(self, 0);
+    SvFormantBank_set_out_dirty(self, 0);
     var i = 0;
     while (i < n) {
         var f = vec_get(formants, i);
@@ -383,6 +393,7 @@ fn svara_formant_bank_coeffs(self, i, frequency, bandwidth, sample_rate, out) {
 # write into the neighbouring buffer instead.
 fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_rate) {
     if ((i < 0) | (i >= SVARA_MAX_FORMANTS)) { return SVARA_ERR_INVALID_FORMANT; }
+    if (i >= SvFormantBank_count(self)) { SvFormantBank_set_out_coef(self, 1); }
     var coeff = SvFormantBank_coeff(self);
     svara_formant_bank_coeffs(self, i, frequency, bandwidth, sample_rate, coeff);
     var off = i * 8;
@@ -405,9 +416,18 @@ fn svara_formant_bank_process(self, input) {
     # rather than re-loaded per slot, and advanced once after the loop. Same
     # arithmetic as the per-slot form -- x2i was identical in every slot.
     var x2v = SvFormantBank_xin2(self);
+    # Run only the active slots while the rest provably add nothing: no
+    # coefficients past `count` and no state there, and a finite input. A
+    # non-finite input runs all eight, as Rust does, and marks the unused slots'
+    # state. The test is on the exponent bits, all ones for inf and NaN.
+    var lim = SVARA_MAX_FORMANTS;
+    if ((SvFormantBank_out_coef(self) | SvFormantBank_out_dirty(self)) == 0) {
+        if ((input & SV_F_EXP_BITS) != SV_F_EXP_BITS) { lim = SvFormantBank_count(self); }
+        else { SvFormantBank_set_out_dirty(self, 1); }
+    }
     var sum = 0;
     var i = 0;
-    while (i < SVARA_MAX_FORMANTS) {
+    while (i < lim) {
         var off = i * 8;
         var y1i = load64(y1 + off); var y2i = load64(y2 + off);
         # y = b0*input + b2*x2 - a1*y1 - a2*y2
@@ -430,6 +450,7 @@ fn svara_formant_bank_reset(self) {
     SvFormantBank_set_xin2(self, 0);
     svara_formant_zero_buf(SvFormantBank_y1(self), SVARA_MAX_FORMANTS);
     svara_formant_zero_buf(SvFormantBank_y2(self), SVARA_MAX_FORMANTS);
+    SvFormantBank_set_out_dirty(self, 0);
 }
 
 # ================================================================
@@ -480,6 +501,7 @@ struct SvFormantFilter { bank; dc; sample_rate; }
 var SV_F_BW_SAFE = 0x406BC00000000000;     # 222.0, bandwidth per Hz of sample rate
 var SV_F_SINH_SAFE = 0x4085E00000000000;   # 700.0
 var SV_F_DBL_MAX = 0x7FEFFFFFFFFFFFFF;     # f64::MAX
+var SV_F_EXP_BITS = 0x7FF0000000000000;    # an f64's exponent field: all ones for inf and NaN
 
 # bw_overflows -- 1 if `bandwidth` at `sample_rate` makes the bandpass
 # coefficients non-finite, 0 otherwise. It forms the argument exactly as
@@ -619,6 +641,7 @@ fn svara_formant_filter_rebuild_valid(self, formants) {
     svara_formant_zero_buf(SvFormantBank_amp(bank) + z, rest);
     svara_formant_bank_reset(bank);
     SvFormantBank_set_count(bank, n);
+    SvFormantBank_set_out_coef(bank, 0);   # every slot past n was zeroed above
     var i = 0;
     while (i < n) {
         var f = vec_get(formants, i);
@@ -659,9 +682,13 @@ fn svara_formant_filter_update(self, formants) {
 }
 
 # process_sample -- bank sum through the DC blocker.
+# One expression so cyrius 6.7 inlines it (3.8.2): its `#inline` takes a body of
+# under 32 tokens with no `var` or control flow. The bank still runs before the
+# DC blocker; reading the blocker's pointer first has no effect on the bank.
+#inline
 fn svara_formant_filter_process_sample(self, input) {
-    var raw = svara_formant_bank_process(SvFormantFilter_bank(self), input);
-    return svara_dc_blocker_process(SvFormantFilter_dc(self), raw);
+    return svara_dc_blocker_process(SvFormantFilter_dc(self),
+      svara_formant_bank_process(SvFormantFilter_bank(self), input));
 }
 
 # process_block -- n samples from input buffer into output buffer (f64 slots).

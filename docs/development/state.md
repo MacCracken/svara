@@ -5,6 +5,14 @@
 
 ## Version
 
+**3.8.2** (2026-11-16) — **the tract chain in 0.74x the instructions.** The formant bank
+skips its unused slots while that is exact, the tract keeps its quality flags as bits,
+a converged smoother returns at once, and cyrius inlines the formant filter's wrapper.
+`tract process_sample` retires 0.744x of 3.8.1's instructions in 0.709x the cycles, and
+the full chain is ≈ 0.18 µs a sample, about 125x real time. Every value is the same
+bits. Benches now cover the four Rust scenarios that had none. **1,303 assertions / 26
+suites**, `cyrius audit` exit 0.
+
 **3.8.1** (2026-11-16) — **`render_planned` in 0.84x the instructions.** A component
 profile put 57% of the loop in the per-sample bank rebuild's `cos`, `sin` and `sinh`.
 The bank now memoizes each slot's trig on its exact keys. The tract writes a validated
@@ -342,7 +350,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,297 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,303 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -387,7 +395,7 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   measured counts, never by written-down indices. A refused naad allocation must
   come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
   source it reports 0 of 6 and `restore` ends the run.
-- **`allocbudget.tcyr` (60)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (66)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
@@ -397,14 +405,16 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
 
 ## Benchmarks
 
-13 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
+17 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
-per-call clock overhead: glottal ~46 ns, formant ~130 ns, tract ~197 ns/sample —
-the full glottal → tract chain **≈ 0.25 µs/sample (~91× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
-~591 µs, `/s/` ~343 µs, `/ai/` ~628 µs, 3-phoneme sequence ~2.38 ms,
-`render_planned` ~13.5 ms (~16.6 ms toned) (x86_64, 2026-11-07, cyrius 6.7.18,
-svara 3.6.3, lowest of three runs).
+per-call clock overhead: glottal ~48 ns, formant ~86 ns, tract ~135 ns/sample —
+the full glottal → tract chain **≈ 0.18 µs/sample (~125× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
+~447 µs, `/s/` ~168 µs, `/ai/` ~484 µs, 3-phoneme sequence ~1.88 ms,
+`render_planned` ~10.6 ms (~13.2 ms toned) (x86_64, 2026-11-16, cyrius 6.7.18,
+svara 3.8.2, lowest of three runs). The four Rust benches with no counterpart
+until 3.8.2 are in: the tract at Reduced and Minimal quality, a female /a/ and a
+10-phoneme sequence.
 
 ⚠ **The allocation budget is deliberately NOT benchmarked.** A bump allocation is
 a pointer add, so removing 1.1 KB of it per sample moved `render_planned` only
@@ -421,7 +431,7 @@ All green on the 6.7.18 pin:
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,297 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,303 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |
@@ -429,7 +439,7 @@ All green on the 6.7.18 pin:
 | fuzz | `cyrius fuzz` (+ `--poison`, `--bounds`) | 2,400 cases in 15 groups over the public API, 0 failures in each mode; each JSON case also decodes 8 byte-damaged documents that `svara_validate_json` accepts; replay one with `./fz <case>` |
 | coverage | `cyrius coverage --exec` | 273/307 fns executed (88%); logging's 16 need `-D LOGGING`, `svara_alloc_refused` exits, and 17 others no suite enters |
 | deny | `cyrius deny src/main.cyr` | 23 deps, 0 violations |
-| bench | `cyrius bench` | 2/2 bench files |
+| bench | `cyrius bench` | 2/2 bench files, 17 hot-path benches |
 | **aggregate** | **`cyrius audit`** | **exits 0** — but see below |
 
 

@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned` |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -35,21 +35,23 @@ does, timed with `scripts/sweep/compare.py`'s `counters`.
 `svara_trajectory_formants_at_into` is the largest piece left there, at about a
 quarter of the loop now, and has no exact shortcut.
 
+**Call overhead counts in cycles.** 3.8.2 replaced four predicate calls a sample with
+bits read once: 3.3% of the tract's instructions but 8.6% of its cycles. On cyrius
+6.7.18 `#inline` takes a body under 32 tokens with no `var` or control flow, and
+derived accessors are already inlined, so reading fields into locals buys nothing.
+
 ⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
 predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
 measured effect does not earn a place in the source.
 
-- [ ] **Tract per-sample chain** (about 200 ns/sample: formant bank, nasal, subglottal,
-      lip, feedback). Move the accessors into locals around one loop. Reducing memory
-      traffic is what has paid every time.
+- [ ] **Lay the formant bank out one record per slot** instead of seven parallel
+      arrays, so a slot's loads share one base pointer. 3.8.2 estimated about 4% of
+      the bank, which is now about half of `tract process_sample`. Every bank user
+      changes, `allocbudget.tcyr`'s slot checks with them.
 - [ ] **Call naad's block forms** where the tract's feedback allows it.
       `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
       2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
       form owes the path it stands for.
-- [ ] **Bench the four Rust scenarios that have none here**: the tract at reduced and
-      at minimal quality, the female /a/, and the 10-phoneme sequence. The Rust's
-      medians are in `benchmarks-rust-v-cyrius.md`, and nothing times the reduced and
-      minimal quality paths today.
 - [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
       and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
       never reference it.

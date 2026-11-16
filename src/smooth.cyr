@@ -11,6 +11,7 @@
 
 var SVARA_DEFAULT_SMOOTH_TIME = 0x3F747AE147AE147B;   # 0.005 s (~5 ms, fast for speech)
 var SVARA_SMOOTH_CONVERGED    = 0x3E45798EE2308C3A;   # 1e-8 convergence threshold
+var SV_SMOOTH_EXP_BITS        = 0x7FF0000000000000;   # exponent field: all ones for inf and NaN
 
 #derive(accessors)
 #derive(Serialize)
@@ -52,6 +53,11 @@ fn svara_smooth_set_target(self, target) {
 fn svara_smooth_next(self) {
     var current = SvSmoothedParam_current(self);
     var target = SvSmoothedParam_target(self);
+    # Converged (3.8.2): the branch below would store `target` over the same bits.
+    # Only for a finite value -- for inf or NaN the arithmetic below can differ.
+    if (current == target) {
+        if ((current & SV_SMOOTH_EXP_BITS) != SV_SMOOTH_EXP_BITS) { return current; }
+    }
     if (f64_lt(f64_abs(f64_sub(current, target)), SVARA_SMOOTH_CONVERGED) == 1) {
         SvSmoothedParam_set_current(self, target);
     } else {

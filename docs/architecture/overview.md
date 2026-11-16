@@ -109,10 +109,11 @@ See [`../development/roadmap.md`](../development/roadmap.md).
   f64 everywhere, because hisab and naad are f64-only. `SV_EPSILON` preserves the
   f32 tolerance the Rust tests used.
 - **SOA bank**, `SVARA_MAX_FORMANTS = 8` fixed slots; unused slots hold zeroed
-  coefficients and contribute nothing.
-- **Measured**: glottal ~77 ns/sample, formant ~156 ns, tract ~275 ns; the full
-  glottal → tract chain **≈ 0.35 µs/sample**, about **64× real-time** at 44.1 kHz
-  on one core (x86_64, cycc 6.5.35).
+  coefficients and contribute nothing, so since 3.8.2 the bank skips them while
+  that is provably exact (no coefficients there, and finite input).
+- **Measured**: glottal ~48 ns/sample, formant ~86 ns, tract ~135 ns; the full
+  glottal → tract chain **≈ 0.18 µs/sample**, about **125× real-time** at 44.1 kHz
+  on one core (x86_64, cyrius 6.7.18, svara 3.8.2).
 
   ⚠ **The chain is measured end to end, not summed.** `tract process_sample`
   already contains the formant bank, so adding the three per-unit rows

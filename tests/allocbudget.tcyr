@@ -158,6 +158,34 @@ fn ab_same_verdict(target, sr) {
     return 0;
 }
 
+# svara_smooth_next as 3.8.1 wrote it, before the converged fast path: the
+# reference the fast path is held to.
+#must_use
+fn ab_smooth_ref(sp) {
+    var current = SvSmoothedParam_current(sp);
+    var target = SvSmoothedParam_target(sp);
+    if (f64_lt(f64_abs(f64_sub(current, target)), SVARA_SMOOTH_CONVERGED) == 1) {
+        SvSmoothedParam_set_current(sp, target);
+    } else {
+        var alpha = SvSmoothedParam_alpha(sp);
+        SvSmoothedParam_set_current(sp, f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
+    }
+    return SvSmoothedParam_current(sp);
+}
+
+# Feed `count` copies of `x` to two banks and return how many outputs differ in
+# their bits.
+#must_use
+fn ab_bank_pair(a, b, x, count) {
+    var bad = 0;
+    var k = 0;
+    while (k < count) {
+        if (svara_formant_bank_process(a, x) != svara_formant_bank_process(b, x)) { bad = bad + 1; }
+        k = k + 1;
+    }
+    return bad;
+}
+
 # A sink for svara_sequence_render_into that keeps nothing.
 fn ab_sink(user, samples, count) { return 0; }
 
@@ -509,6 +537,98 @@ fn main() {
     var new_t = svara_tract_new(SR);
     assert_eq(BiquadFilter_b0(notch), nb0, "back to neutral, the coefficients a new tract has");
     assert_eq(BiquadFilter_a1(notch), BiquadFilter_a1(SvVocalTract_nasal_antiformant(new_t)), "a1 too");
+
+    # ================================================================
+    test_group("3.8.2's shortcuts give what the long way gives");
+    # ================================================================
+    # The bank's unused-slot skip, against a bank made to run all eight slots,
+    # as every bank did through 3.8.1. Finite input, then +inf, which runs NaN
+    # into the unused slots' delay lines for good, a reset, NaN, -inf, a
+    # coefficient set past `count`, and a rebuild.
+    var bv = svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+    var filt_a = svara_formant_filter_new(bv, SR);
+    var filt_b = svara_formant_filter_new(bv, SR);
+    var ba = SvFormantFilter_bank(filt_a);
+    var bb = SvFormantFilter_bank(filt_b);
+    SvFormantBank_set_out_coef(bb, 1);
+    var pinf = 0x7FF0000000000000;
+    var bbad = ab_bank_pair(ba, bb, F64_HALF, 200);
+    bbad = bbad + ab_bank_pair(ba, bb, pinf, 1);
+    bbad = bbad + ab_bank_pair(ba, bb, F64_HALF, 50);
+    assert_eq(svara_is_finite(svara_formant_bank_process(ba, F64_HALF)), 0,
+      "control: after +inf the bank stays NaN, as Rust's does");
+    var dump = svara_formant_bank_process(bb, F64_HALF);
+    svara_formant_bank_reset(ba);
+    svara_formant_bank_reset(bb);
+    bbad = bbad + ab_bank_pair(ba, bb, F64_HALF, 100);
+    bbad = bbad + ab_bank_pair(ba, bb, f64_div(0, 0), 1);
+    bbad = bbad + ab_bank_pair(ba, bb, F64_HALF, 20);
+    svara_formant_bank_reset(ba);
+    svara_formant_bank_reset(bb);
+    bbad = bbad + ab_bank_pair(ba, bb, 0xFFF0000000000000, 1);
+    bbad = bbad + ab_bank_pair(ba, bb, f64_from(0 - 3), 20);
+    svara_formant_bank_reset(ba);
+    svara_formant_bank_reset(bb);
+    var ua = svara_formant_bank_update(ba, 6, f64_from(4100), f64_from(200), F64_HALF, SR);
+    var ub = svara_formant_bank_update(bb, 6, f64_from(4100), f64_from(200), F64_HALF, SR);
+    bbad = bbad + ab_bank_pair(ba, bb, F64_HALF, 100);
+    var ra = svara_formant_filter_rebuild(filt_a, bv);
+    var rb = svara_formant_filter_rebuild(filt_b, bv);
+    SvFormantBank_set_out_coef(bb, 1);
+    bbad = bbad + ab_bank_pair(ba, bb, F64_HALF, 100);
+    assert_eq(bbad, 0, "the skip matches all eight slots through inf, NaN, -inf, resets and a slot past count");
+    assert_eq(SvFormantBank_out_coef(ba) | SvFormantBank_out_dirty(ba), 0, "control: a rebuild clears both flags");
+    # The quality flags, against lod.cyr's predicates, after set_quality and restore.
+    var qbad = 0;
+    var qv = SVARA_QUALITY_FULL;
+    while (qv <= SVARA_QUALITY_MINIMAL) {
+        var qt = svara_tract_new(SR);
+        svara_tract_set_quality(qt, qv);
+        var qr = svara_tract_restore(svara_tract_save(qt));
+        var rep = 0;
+        while (rep < 2) {
+            var tq = qt;
+            if (rep == 1) { tq = qr; }
+            var f = SvVocalTract_qflags(tq);
+            if (((f & SV_T_Q_INTERACTION) != 0) != (svara_quality_use_interaction(qv) == 1)) { qbad = qbad + 1; }
+            if (((f & SV_T_Q_NASAL) != 0) != (svara_quality_use_nasal_coupling(qv) == 1)) { qbad = qbad + 1; }
+            if (((f & SV_T_Q_SUBGLOTTAL) != 0) != (svara_quality_use_subglottal(qv) == 1)) { qbad = qbad + 1; }
+            if (((f & SV_T_Q_LIP) != 0) != (svara_quality_use_lip_radiation(qv) == 1)) { qbad = qbad + 1; }
+            rep = rep + 1;
+        }
+        qv = qv + 1;
+    }
+    assert_eq(qbad, 0, "the tract's quality flags are the predicates' answers, set and restored");
+    # The smoother's converged fast path, against 3.8.1's code: converging, held,
+    # retargeted, +0 and -0, inf with a zero-time smoother, and NaN.
+    var sbad = 0;
+    var sa = svara_smooth_new(0, SR);
+    var sb = svara_smooth_new(0, SR);
+    var targets = alloc(8 * 7);
+    store64(targets, F64_ONE); store64(targets + 8, F64_ONE); store64(targets + 16, 0x8000000000000000);
+    store64(targets + 24, 0); store64(targets + 32, 0x3FD3333333333333); store64(targets + 40, f64_div(0, 0));
+    store64(targets + 48, F64_HALF);
+    var st0 = 0;
+    while (st0 < 7) {
+        svara_smooth_set_target(sa, load64(targets + st0 * 8));
+        svara_smooth_set_target(sb, load64(targets + st0 * 8));
+        var sk = 0;
+        while (sk < 3000) {
+            if (svara_smooth_next(sa) != ab_smooth_ref(sb)) { sbad = sbad + 1; }
+            sk = sk + 1;
+        }
+        st0 = st0 + 1;
+    }
+    var za = svara_smooth_with_time(pinf, 0, SR);
+    var zb = svara_smooth_with_time(pinf, 0, SR);
+    var zk = 0;
+    while (zk < 5) {
+        if (svara_smooth_next(za) != ab_smooth_ref(zb)) { sbad = sbad + 1; }
+        zk = zk + 1;
+    }
+    assert_eq(sbad, 0, "smooth_next matches 3.8.1's over 21,000 steps and a zero-time smoother at inf");
+    assert_eq(svara_is_finite(ab_smooth_ref(svara_smooth_with_time(pinf, 0, SR))), 0,
+      "control: a zero-time smoother at inf goes to NaN, which the fast path must not skip");
 
     # ================================================================
     test_group("a warmed context streams a sequence with no allocation");
