@@ -1,0 +1,9 @@
+# approx.cyr -- the tolerance test the suites share (3.8.6). Until 3.8.6 thirteen
+# suites each defined their own copy, under eight names. Included after the
+# suite's src/ includes, like any other module.
+
+# 1 if |a - b| < eps. A NaN on either side is never within any eps.
+#must_use
+fn approx(a, b, eps) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}

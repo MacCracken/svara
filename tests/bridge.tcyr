@@ -10,12 +10,10 @@ include "src/rng.cyr"
 include "src/glottal.cyr"
 include "src/prosody.cyr"
 include "src/bridge.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
 
-# 1 if |a - b| < eps.
-#must_use
-fn br_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 # 1 if lo <= x <= hi. Both comparisons are false for NaN, so a NaN fails.
 #must_use
 fn br_in_range(x, lo, hi) {
@@ -41,9 +39,9 @@ assert_eq(br_in_range(calm, 0.3, 2.7), 1, "calm Rd in range");
 assert_eq(br_in_range(excited, 0.3, 2.7), 1, "excited Rd in range");
 # clamp
 var rd_lo = svara_bridge_rd_from_arousal(f64_neg(F64_ONE));
-assert_eq(br_approx(rd_lo, calm, TOL_1EM6), 1, "rd clamps low");
+assert_eq(approx(rd_lo, calm, TOL_1EM6), 1, "rd clamps low");
 var rd_hi = svara_bridge_rd_from_arousal(F64_TWO);
-assert_eq(br_approx(rd_hi, excited, TOL_1EM6), 1, "rd clamps high");
+assert_eq(approx(rd_hi, excited, TOL_1EM6), 1, "rd clamps high");
 # breathiness
 var br_calm = svara_bridge_breathiness_from_arousal(0);
 var br_exc = svara_bridge_breathiness_from_arousal(F64_ONE);
@@ -57,10 +55,10 @@ assert_eq(f64_lt(jmid, jhigh), 1, "jitter mid < high");
 
 # ================================================================
 test_group("vansh: duration scale + stress");
-assert_eq(br_approx(svara_bridge_duration_scale_from_speech_rate(F64_ONE), F64_ONE, TOL_1EM6), 1, "rate 1 -> 1");
+assert_eq(approx(svara_bridge_duration_scale_from_speech_rate(F64_ONE), F64_ONE, TOL_1EM6), 1, "rate 1 -> 1");
 assert_eq(f64_lt(svara_bridge_duration_scale_from_speech_rate(F64_TWO), F64_ONE), 1, "rate 2 -> <1");
 assert_eq(f64_gt(svara_bridge_duration_scale_from_speech_rate(F64_HALF), F64_ONE), 1, "rate 0.5 -> >1");
-assert_eq(br_approx(svara_bridge_duration_scale_from_speech_rate(0), F64_ONE, TOL_1EM6), 1, "rate 0 -> 1 (safe)");
+assert_eq(approx(svara_bridge_duration_scale_from_speech_rate(0), F64_ONE, TOL_1EM6), 1, "rate 0 -> 1 (safe)");
 assert_eq(svara_bridge_stress_from_tobi_accent(0), SVARA_STRESS_UNSTRESSED, "tobi 0 unstressed");
 assert_eq(svara_bridge_stress_from_tobi_accent(1), SVARA_STRESS_SECONDARY, "tobi 1 secondary");
 assert_eq(svara_bridge_stress_from_tobi_accent(2), SVARA_STRESS_PRIMARY, "tobi 2 primary");
@@ -88,18 +86,18 @@ assert_eq(f64_lt(load64(gm + 8), F64_ONE), 1, "high effort Rd < 1 (pressed)");
 
 # ================================================================
 test_group("goonj + badal");
-assert_eq(br_approx(svara_bridge_gain_from_distance(F64_ONE, F64_ONE), F64_ONE, TOL_1EM6), 1, "gain at ref = 1");
-assert_eq(br_approx(svara_bridge_gain_from_distance(F64_ONE, F64_TWO), F64_HALF, TOL_1EM6), 1, "gain at 2x = 0.5");
-assert_eq(br_approx(svara_bridge_gain_from_distance(F64_ONE, F64_HALF), F64_ONE, TOL_1EM6), 1, "gain closer = 1");
-assert_eq(br_approx(svara_bridge_lombard_effort_from_noise(f64_from(30)), F64_ONE, TOL_1EM6), 1, "quiet -> effort 1");
+assert_eq(approx(svara_bridge_gain_from_distance(F64_ONE, F64_ONE), F64_ONE, TOL_1EM6), 1, "gain at ref = 1");
+assert_eq(approx(svara_bridge_gain_from_distance(F64_ONE, F64_TWO), F64_HALF, TOL_1EM6), 1, "gain at 2x = 0.5");
+assert_eq(approx(svara_bridge_gain_from_distance(F64_ONE, F64_HALF), F64_ONE, TOL_1EM6), 1, "gain closer = 1");
+assert_eq(approx(svara_bridge_lombard_effort_from_noise(f64_from(30)), F64_ONE, TOL_1EM6), 1, "quiet -> effort 1");
 assert_eq(f64_gt(svara_bridge_lombard_effort_from_noise(f64_from(65)), F64_ONE), 1, "noisy -> effort > 1");
-assert_eq(br_approx(svara_bridge_lombard_effort_from_noise(f64_from(90)), 1.8, TOL_1EM6), 1, "loud -> effort 1.8");
+assert_eq(approx(svara_bridge_lombard_effort_from_noise(f64_from(90)), 1.8, TOL_1EM6), 1, "loud -> effort 1.8");
 var dry = svara_bridge_bandwidth_scale_from_reverb(0);
 var wet = svara_bridge_bandwidth_scale_from_reverb(F64_TWO);
-assert_eq(br_approx(dry, F64_ONE, TOL_1EM6), 1, "anechoic bw 1.0");
+assert_eq(approx(dry, F64_ONE, TOL_1EM6), 1, "anechoic bw 1.0");
 assert_eq(f64_gt(wet, dry), 1, "reverb widens bw");
 assert_eq(f64_le(wet, F64_TWO), 1, "bw capped at 2.0");
-assert_eq(br_approx(svara_bridge_breathiness_reduction_from_wind(0), F64_ONE, TOL_1EM6), 1, "no wind -> 1");
+assert_eq(approx(svara_bridge_breathiness_reduction_from_wind(0), F64_ONE, TOL_1EM6), 1, "no wind -> 1");
 assert_eq(f64_lt(svara_bridge_breathiness_reduction_from_wind(f64_from(10)), F64_ONE), 1, "wind reduces");
 assert_eq(f64_ge(svara_bridge_breathiness_reduction_from_wind(f64_from(20)), 0.2), 1, "wind reduction floored at 0.2");
 

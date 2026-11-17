@@ -48,7 +48,7 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**26 suites, 1,370 assertions** at 3.8.5. One `.tcyr` per module, plus ten that
+**26 suites, 1,370 assertions** at 3.8.6. One `.tcyr` per module, plus ten that
 are not module ports:
 
 | Suite | What it is |
@@ -67,6 +67,10 @@ are not module ports:
 
 ⚠ Counts drift. `cyrius audit` prints the live figure; treat the numbers here as
 a shape, not a gate.
+
+**Shared helpers live in `tests/*.cyr`**, included after a suite's `src/` includes.
+Since 3.8.6 there is one, `tests/approx.cyr`: `approx(a, b, eps)`, 1 when `|a - b| < eps`.
+Use it rather than writing another copy.
 
 ## How to write a test here
 

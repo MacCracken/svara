@@ -5,6 +5,20 @@
 
 ## Version
 
+**3.8.6** (2026-11-16) — **two roadmap items closed by measurement, and one `approx`.**
+`src/` is unchanged from 3.8.5.
+- **naad's block forms don't fit the tract.** Its feedback ties every stage to the last
+  output, and noise drawn ahead would break the glottal save / restore. The cost a block
+  form would save sits in naad's per-sample biquad and noise, and lean versions of those
+  two took svara's chain to 0.947x its instructions, bit-identical. That is now a naad
+  issue, and the item is blocked on it.
+- **Per-phoneme glottal source and tract stay.** They measured 0.43% of a phoneme's
+  instructions and under a byte a sample, so they are not worth a second constructor.
+- **One `approx`.** The thirteen suites that each defined it share
+  `tests/approx.cyr`.
+
+**1,370 assertions / 26 suites**, `cyrius audit` exit 0.
+
 **3.8.5** (2026-11-16) — **the per-sample path without derived accessors.** The 84
 accessor uses left on the per-sample path, glottal source to DC blocker, read and write
 at `const` offsets declared beside each struct, which keeps its derived accessors for

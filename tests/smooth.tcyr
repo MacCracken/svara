@@ -7,16 +7,11 @@ include "lib/hashmap.cyr"
 include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/smooth.cyr"
+include "tests/approx.cyr"
 
 alloc_init();
 
 var TOL_001 = 0x3F50624DD2F1A9FC;   # 0.001 (test_smooth_approach tolerance)
-
-# helper: |a-b| < eps
-#must_use
-fn approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
 
 # ================================================================
 test_group("immediate convergence");

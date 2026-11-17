@@ -12,14 +12,10 @@ include "src/rng.cyr"
 include "src/formant.cyr"
 include "src/glottal.cyr"
 include "src/voice.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
-# 1 if |a - b| < eps.
-#must_use
-fn v_approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
 # Energy (sum of squares) of the next n samples from glottal source gs.
 #must_use
 fn v_energy(gs, n) {
@@ -76,8 +72,8 @@ assert_eq(SvVoiceProfile_bandwidth_widening(bww), F64_TWO, "bandwidth_widening c
 # ================================================================
 test_group("apply_formant_scale (female, VowelA)");
 var scaled = svara_voice_apply_formant_scale(svara_voice_new_female(), svara_vowel_target_from_vowel(SVARA_VOWEL_A));
-assert_eq(v_approx(SvVowelTarget_f1(scaled), 0x408C147AE147AE14, TOL_1EM6), 1, "f1 = 768*1.17 = 898.56");
-assert_eq(v_approx(SvVowelTarget_b1(scaled), 0x405E7713ADA69916, TOL_1EM6), 1, "b1 = 90*sqrt(220/120)");
+assert_eq(approx(SvVowelTarget_f1(scaled), 0x408C147AE147AE14, TOL_1EM6), 1, "f1 = 768*1.17 = 898.56");
+assert_eq(approx(SvVowelTarget_b1(scaled), 0x405E7713ADA69916, TOL_1EM6), 1, "b1 = 90*sqrt(220/120)");
 
 # ================================================================
 test_group("bandwidth widening (>300 Hz only)");

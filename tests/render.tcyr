@@ -19,6 +19,7 @@ include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
 include "src/render.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;
 
@@ -30,9 +31,6 @@ fn rn_finite(v) {
     while (i < vec_len(v)) { if (svara_is_finite(vec_get(v, i)) == 0) { f = 0; } i = i + 1; }
     return f;
 }
-# 1 if |a - b| < eps.
-#must_use
-fn rn_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 
 # progress callback: increments the counter cell at `user`, and counts in the cell
 # at `user + 8` every call whose fraction is above 1 or whose samples_rendered is
@@ -97,9 +95,9 @@ assert_eq(f64_gt(f64_from(vec_len(SvRenderOutput_samples(po))), 0), 1, "progress
 # ================================================================
 test_group("progress fraction + clear");
 var frac_p = svara_render_progress_new(5, 10, 22050);
-assert_eq(rn_approx(svara_render_progress_fraction(frac_p), F64_HALF, TOL_1EM6), 1, "5/10 = 0.5");
+assert_eq(approx(svara_render_progress_fraction(frac_p), F64_HALF, TOL_1EM6), 1, "5/10 = 0.5");
 var frac_empty = svara_render_progress_new(0, 0, 0);
-assert_eq(rn_approx(svara_render_progress_fraction(frac_empty), F64_ONE, TOL_1EM6), 1, "0/0 -> 1.0");
+assert_eq(approx(svara_render_progress_fraction(frac_empty), F64_ONE, TOL_1EM6), 1, "0/0 -> 1.0");
 var rcl = svara_batch_new(male, SR);
 svara_batch_push(rcl, SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
 assert_eq(svara_batch_len(rcl), 1, "len 1 after push");

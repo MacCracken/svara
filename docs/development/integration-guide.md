@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.5"
+tag = "3.8.6"
 modules = ["dist/svara.cyr"]
 ```
 

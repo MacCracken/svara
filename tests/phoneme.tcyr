@@ -17,15 +17,11 @@ include "src/glottal.cyr"
 include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM9 = 0x3E112E0BE826D695;   # 1e-9
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 
-# 1 if |a - b| < eps.
-#must_use
-fn ph_approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
 # out[0] = any |s| > 1e-6, out[1] = all finite, over a sample vec.
 fn ph_vec_scan(v, out) {
     var any = 0;
@@ -327,8 +323,8 @@ assert_eq(svara_phoneme_duration(SVARA_PH_SILENCE), SV_PH_005, "silence 0.05");
 
 # ================================================================
 test_group("phoneme_spectral_tilt");
-assert_eq(ph_approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_A), 0x3FFDF3B645A1CAC1, TOL_1EM9), 1, "tilt A=1.872");
-assert_eq(ph_approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_I), 0x3FC5810624DD2F1B, TOL_1EM9), 1, "tilt I=0.168");
+assert_eq(approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_A), 0x3FFDF3B645A1CAC1, TOL_1EM9), 1, "tilt A=1.872");
+assert_eq(approx(svara_phoneme_spectral_tilt(SVARA_PH_VOWEL_I), 0x3FC5810624DD2F1B, TOL_1EM9), 1, "tilt I=0.168");
 assert_eq(svara_phoneme_spectral_tilt(SVARA_PH_PLOSIVE_P), 0, "consonant tilt=0");
 
 # ================================================================
@@ -336,9 +332,9 @@ test_group("height_adjusted_amplitudes");
 var amp = alloc(40);
 svara_phoneme_height_adjusted_amplitudes(SVARA_PH_VOWEL_A, amp);
 assert_eq(load64(amp), 0x3FF0000000000000, "VowelA a0=1.0");
-assert_eq(ph_approx(load64(amp + 8), 0x3FE866E43AA79BBC, TOL_1EM9), 1, "VowelA a1");
-assert_eq(ph_approx(load64(amp + 16), 0x3FDD013A92A30553, TOL_1EM9), 1, "VowelA a2");
-assert_eq(ph_approx(load64(amp + 32), 0x3FC601797CC39FFE, TOL_1EM9), 1, "VowelA a4");
+assert_eq(approx(load64(amp + 8), 0x3FE866E43AA79BBC, TOL_1EM9), 1, "VowelA a1");
+assert_eq(approx(load64(amp + 16), 0x3FDD013A92A30553, TOL_1EM9), 1, "VowelA a2");
+assert_eq(approx(load64(amp + 32), 0x3FC601797CC39FFE, TOL_1EM9), 1, "VowelA a4");
 svara_phoneme_height_adjusted_amplitudes(SVARA_PH_PLOSIVE_P, amp);
 assert_eq(load64(amp + 8), SVARA_AMP_1, "consonant a1 = base 0.8");
 assert_eq(load64(amp + 32), SVARA_AMP_4, "consonant a4 = base 0.2");

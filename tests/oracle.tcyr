@@ -48,14 +48,11 @@ include "src/trajectory.cyr"
 include "src/sequence.cyr"
 include "src/pool.cyr"
 include "src/bridge.cyr"
+include "tests/approx.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
 var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3
-
-# 1 if |a - b| < eps.
-#must_use
-fn or_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 
 # Goertzel magnitude at `target_freq`, ported from the Rust test helper
 # (rust-old/tests/integration.rs:655-677) so the acoustic check below uses the
@@ -253,7 +250,7 @@ fn or_sweep_365(voice) {
     assert_eq(vec_len(out_cl), 5765 + 2, "V-CC-V is the oracle's 5765 plus one sample per vowel");
 
     # voice.rs:479-482 -- a new male voice has no bandwidth widening.
-    assert_eq(or_approx(SvVoiceProfile_bandwidth_widening(svara_voice_new_male()), 0, SV_EPSILON), 1,
+    assert_eq(approx(SvVoiceProfile_bandwidth_widening(svara_voice_new_male()), 0, SV_EPSILON), 1,
       "male bandwidth_widening defaults to 0");
 
     # voice.rs:524-544 -- widening grows with f0. Rust asserts B1(800) > B1(400),
@@ -272,8 +269,8 @@ fn or_sweep_365(voice) {
     var b_n400 = SvVowelTarget_b1(svara_voice_apply_formant_scale(n400, tgt));
     var b_n800 = SvVowelTarget_b1(svara_voice_apply_formant_scale(n800, tgt));
     assert_eq(f64_gt(b_w800, b_w400), 1, "widened B1 at 800 Hz exceeds widened B1 at 400 Hz");
-    assert_eq(or_approx(f64_div(b_w400, b_n400), 1.06, TOL_1EM6), 1, "widening factor at 400 Hz is 1.06");
-    assert_eq(or_approx(f64_div(b_w800, b_n800), 1.3, TOL_1EM6), 1, "widening factor at 800 Hz is 1.30");
+    assert_eq(approx(f64_div(b_w400, b_n400), 1.06, TOL_1EM6), 1, "widening factor at 400 Hz is 1.06");
+    assert_eq(approx(f64_div(b_w800, b_n800), 1.3, TOL_1EM6), 1, "widening factor at 800 Hz is 1.30");
 
     # phoneme.rs:2285-2300 -- a nasalized diphthong renders. phoneme.rs:1510-1517
     # nasalizes diphthongs as well as vowels, and the oracle's nasalized /ai/
@@ -371,7 +368,7 @@ fn or_sweep_365(voice) {
     assert_eq(cbad, 0, "a second of creaky voice at 80 Hz stays finite");
     # voice.rs:447-453 -- F2 is scaled by 1.17 too, not only F1.
     var fsc = svara_voice_apply_formant_scale(svara_voice_new_female(), tgt);
-    assert_eq(or_approx(SvVowelTarget_f2(fsc), f64_mul(SvVowelTarget_f2(tgt), 1.17), 0.01), 1, "female F2 = F2 x 1.17");
+    assert_eq(approx(SvVowelTarget_f2(fsc), f64_mul(SvVowelTarget_f2(tgt), 1.17), 0.01), 1, "female F2 = F2 x 1.17");
     # voice.rs:608-626 -- every effort gives 1024 finite samples.
     var ebad = 0;
     var ef = SVARA_EFFORT_WHISPER;
@@ -549,7 +546,7 @@ fn main() {
     # all finite. svara_glottal_set_breathiness was referenced in no suite.
     var gb = svara_glottal_new(f64_from(120), SR);
     svara_glottal_set_breathiness(gb, F64_ONE);
-    assert_eq(or_approx(SvGlottalSource_breathiness(gb), F64_ONE, TOL_1EM6), 1,
+    assert_eq(approx(SvGlottalSource_breathiness(gb), F64_ONE, TOL_1EM6), 1,
       "control: breathiness really is 1.0");
     var bfin = 1;
     var bloud = 0;
@@ -592,15 +589,15 @@ fn main() {
 
     # vibrato_depth_from_valence (rust-old/src/bridge.rs:44-48)
     #   clamp(0.03 + 0.03*clamp(v,-1,1), 0, 0.06)
-    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(0), 0.03, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_vibrato_depth_from_valence(0), 0.03, TOL_1EM6), 1,
       "valence 0 -> 0.03");
-    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(F64_ONE), 0.06, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_vibrato_depth_from_valence(F64_ONE), 0.06, TOL_1EM6), 1,
       "valence +1 -> 0.06");
-    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_neg(F64_ONE)), 0, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_vibrato_depth_from_valence(f64_neg(F64_ONE)), 0, TOL_1EM6), 1,
       "valence -1 -> 0.0");
-    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_from(5)), 0.06, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_vibrato_depth_from_valence(f64_from(5)), 0.06, TOL_1EM6), 1,
       "valence clamps high");
-    assert_eq(or_approx(svara_bridge_vibrato_depth_from_valence(f64_from(0 - 5)), 0, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_vibrato_depth_from_valence(f64_from(0 - 5)), 0, TOL_1EM6), 1,
       "valence clamps low");
 
     # intonation_from_emotion (rust-old/src/bridge.rs:86-95); None -> -1 here
@@ -615,48 +612,48 @@ fn main() {
     assert_eq(svara_bridge_intonation_from_emotion(255), 0 - 1, "cat 255 -> none");
 
     # f0_range_scale_from_arousal (rust-old/src/bridge.rs:103-107): 0.6 + 1.2*a
-    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(0), 0.6, TOL_1EM6), 1, "arousal 0 -> 0.6");
-    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(F64_ONE), 1.8, TOL_1EM6), 1, "arousal 1 -> 1.8");
-    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(F64_HALF), 1.2, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_f0_range_scale_from_arousal(0), 0.6, TOL_1EM6), 1, "arousal 0 -> 0.6");
+    assert_eq(approx(svara_bridge_f0_range_scale_from_arousal(F64_ONE), 1.8, TOL_1EM6), 1, "arousal 1 -> 1.8");
+    assert_eq(approx(svara_bridge_f0_range_scale_from_arousal(F64_HALF), 1.2, TOL_1EM6), 1,
       "arousal 0.5 -> 1.2");
-    assert_eq(or_approx(svara_bridge_f0_range_scale_from_arousal(f64_neg(F64_ONE)), 0.6, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_f0_range_scale_from_arousal(f64_neg(F64_ONE)), 0.6, TOL_1EM6), 1,
       "arousal clamps low");
 
     # f0_peak_from_prominence (rust-old/src/bridge.rs:147-150): 1.0 + 0.3*p
-    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(0), F64_ONE, TOL_1EM6), 1, "prominence 0 -> 1.0");
-    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(F64_ONE), 1.3, TOL_1EM6), 1, "prominence 1 -> 1.3");
-    assert_eq(or_approx(svara_bridge_f0_peak_from_prominence(F64_HALF), 1.15, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_f0_peak_from_prominence(0), F64_ONE, TOL_1EM6), 1, "prominence 0 -> 1.0");
+    assert_eq(approx(svara_bridge_f0_peak_from_prominence(F64_ONE), 1.3, TOL_1EM6), 1, "prominence 1 -> 1.3");
+    assert_eq(approx(svara_bridge_f0_peak_from_prominence(F64_HALF), 1.15, TOL_1EM6), 1,
       "prominence 0.5 -> 1.15");
 
     # jitter_from_age (rust-old/src/bridge.rs:185-190): 0.005 + 0.035*|a-0.4|/0.6
     # U-shaped with its minimum at 0.4, so both ends must exceed the middle.
-    assert_eq(or_approx(svara_bridge_jitter_from_age(0.4), 0.005, TOL_1EM6), 1, "age 0.4 -> 0.005 (the minimum)");
-    assert_eq(or_approx(svara_bridge_jitter_from_age(0), 0.0283333333, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_jitter_from_age(0.4), 0.005, TOL_1EM6), 1, "age 0.4 -> 0.005 (the minimum)");
+    assert_eq(approx(svara_bridge_jitter_from_age(0), 0.0283333333, TOL_1EM6), 1,
       "age 0 -> 0.005+0.035*0.4/0.6");
-    assert_eq(or_approx(svara_bridge_jitter_from_age(F64_ONE), 0.04, TOL_1EM6), 1, "age 1 -> 0.04");
-    assert_eq(or_approx(svara_bridge_jitter_from_age(0.7), 0.0225, TOL_1EM6), 1, "age 0.7 -> 0.0225");
+    assert_eq(approx(svara_bridge_jitter_from_age(F64_ONE), 0.04, TOL_1EM6), 1, "age 1 -> 0.04");
+    assert_eq(approx(svara_bridge_jitter_from_age(0.7), 0.0225, TOL_1EM6), 1, "age 0.7 -> 0.0225");
     assert_eq(f64_gt(svara_bridge_jitter_from_age(0), svara_bridge_jitter_from_age(0.4)), 1,
       "control: the curve really is U-shaped (young > prime)");
     assert_eq(f64_gt(svara_bridge_jitter_from_age(F64_ONE), svara_bridge_jitter_from_age(0.4)), 1,
       "control: and old > prime");
 
     # spectral_tilt_from_distance (rust-old/src/bridge.rs:249-253): min(d*0.005, 6)
-    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(0), 0, TOL_1EM6), 1, "0 m -> 0");
-    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(100)), F64_HALF, TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_spectral_tilt_from_distance(0), 0, TOL_1EM6), 1, "0 m -> 0");
+    assert_eq(approx(svara_bridge_spectral_tilt_from_distance(f64_from(100)), F64_HALF, TOL_1EM6), 1,
       "100 m -> 0.5");
-    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(1200)), f64_from(6), TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_spectral_tilt_from_distance(f64_from(1200)), f64_from(6), TOL_1EM6), 1,
       "1200 m -> 6.0 (exactly at the cap)");
-    assert_eq(or_approx(svara_bridge_spectral_tilt_from_distance(f64_from(50000)), f64_from(6), TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_spectral_tilt_from_distance(f64_from(50000)), f64_from(6), TOL_1EM6), 1,
       "50 km -> capped at 6.0");
 
     # lombard_f0_shift (rust-old/src/bridge.rs:285-290): min(max(db-50,0)*0.75, 30)
-    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(50)), 0, TOL_1EM6), 1, "50 dB -> 0 (threshold)");
-    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(40)), 0, TOL_1EM6), 1, "40 dB -> 0 (below threshold)");
-    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(70)), f64_from(15), TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_lombard_f0_shift(f64_from(50)), 0, TOL_1EM6), 1, "50 dB -> 0 (threshold)");
+    assert_eq(approx(svara_bridge_lombard_f0_shift(f64_from(40)), 0, TOL_1EM6), 1, "40 dB -> 0 (below threshold)");
+    assert_eq(approx(svara_bridge_lombard_f0_shift(f64_from(70)), f64_from(15), TOL_1EM6), 1,
       "70 dB -> 15 Hz");
-    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(90)), f64_from(30), TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_lombard_f0_shift(f64_from(90)), f64_from(30), TOL_1EM6), 1,
       "90 dB -> 30 Hz (exactly at the cap)");
-    assert_eq(or_approx(svara_bridge_lombard_f0_shift(f64_from(1000)), f64_from(30), TOL_1EM6), 1,
+    assert_eq(approx(svara_bridge_lombard_f0_shift(f64_from(1000)), f64_from(30), TOL_1EM6), 1,
       "1000 dB -> capped");
     or_sweep_365(voice);
     return assert_summary();

@@ -16,12 +16,7 @@ include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
 include "src/trajectory.cyr"
-
-# 1 if |a - b| < eps.
-#must_use
-fn tr_approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
+include "tests/approx.cyr"
 
 alloc_init();
 var SR = f64_from(44100);
@@ -66,9 +61,9 @@ vec_push(ai_du, 0.1);
 var pai = svara_trajectory_plan(ai_ph, ai_du, male, SR);
 # male fscale=1.0 -> /a/ f1=768, /i/ f1=342
 var at0 = svara_trajectory_formants_at(pai, 0);
-assert_eq(tr_approx(SvVowelTarget_f1(at0), f64_from(768), F64_ONE), 1, "start f1 ~ /a/ 768");
+assert_eq(approx(SvVowelTarget_f1(at0), f64_from(768), F64_ONE), 1, "start f1 ~ /a/ 768");
 var atend = svara_trajectory_formants_at(pai, svara_trajectory_total_samples(pai));
-assert_eq(tr_approx(SvVowelTarget_f1(atend), f64_from(342), F64_ONE), 1, "end f1 ~ /i/ 342");
+assert_eq(approx(SvVowelTarget_f1(atend), f64_from(342), F64_ONE), 1, "end f1 ~ /i/ 342");
 # boundary f1 between 342 and 768
 var atmid = svara_trajectory_formants_at(pai, svara_trajectory_total_samples(pai) / 2);
 var f1mid = SvVowelTarget_f1(atmid);
@@ -104,7 +99,7 @@ test_group("apply_speaking_rate (Lindblom undershoot)");
 var rp = svara_trajectory_plan(one_ph, one_du, male, SR);
 svara_trajectory_apply_speaking_rate(rp, F64_TWO);
 var kp0 = vec_get(svara_trajectory_keypoints(rp), 0);
-assert_eq(tr_approx(SvFormantKeypoint_resistance(kp0), 0.35, 0.001), 1, "rate 2 halves resistance 0.7->0.35");
+assert_eq(approx(SvFormantKeypoint_resistance(kp0), 0.35, 0.001), 1, "rate 2 halves resistance 0.7->0.35");
 
 var rc = assert_summary();
 syscall(60, rc);

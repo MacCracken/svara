@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors, 3.8.6 closed two items by measurement |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -51,17 +51,17 @@ in the cyrius repo; its fix would make the offsets unnecessary, not wrong.
 
 ⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
 predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
-measured effect does not earn a place in the source.
-
-- [ ] **Call naad's block forms** where the tract's feedback allows it.
-      `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
-      2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
-      form owes the path it stands for.
-- [ ] **A glottal source and tract per phoneme.** `svara_sequence_render` builds both
-      for every phoneme, about 2.4 KB, because the Rust starts each phoneme from fresh
-      state. `svara_sequence_render_into` avoids them. Reusing them needs a reset that
-      gives a fresh object's bits, checked by the sweep. 3.8.3 took the samples down to
-      about one copy and left these.
+measured effect does not earn a place in the source. 3.8.6 closed two items this way:
+- **naad's block forms do not fit the tract.** Its interaction feedback ties every
+  stage to the last output, so the subglottal resonator and the nasal notch run inside
+  the loop. Noise filled ahead would put the generator past the samples consumed, which
+  the glottal save / restore reads. What a block form would save is in naad's
+  per-sample functions, so the item is blocked upstream, below.
+- **The glottal source and tract `svara_sequence_render` builds per phoneme** cost
+  41,310 instructions and 2,272 bytes: 0.43% of a 0.08 s /a/, and under a byte a sample
+  against the render's 24. A reset that gives a fresh object's bits would be a second
+  constructor to keep in step for that. Not taken; `svara_sequence_render_into` already
+  avoids them.
 
 ### Refactors the 3.6.3 sweep left
 
@@ -69,7 +69,6 @@ Each changes the shape of a hot path, so each needs the measurement above.
 
 - [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
       repeat each other. Share what is the same, and leave what differs to 3.9.x.
-- [ ] **13 test files define their own `approx`.** Move it to one include.
 - [ ] **The crossfade's reference.** Since 3.8.3 both sequence renders crossfade through
       `svara_seq_xf_segment`. `svara_seq_crossfade` is the Rust's shape, with its
       fade-out loop written twice, and only the tests call it: `tests/stream.tcyr` and
@@ -133,6 +132,16 @@ bank going from 10.5 to 3.2 ns per filter with `f64v256_*` in structure-of-array
 `benches/history.csv` records before and after, and non-AVX2 hosts do not regress.
 
 ### ⛔ Blocked upstream
+
+- [ ] ⛔ **naad's per-sample biquad and noise.** `filter_biquad_process_sample` retires
+      about 335 instructions a sample and its block form's loop 195; white
+      `noise_next_sample` 240 against 130. svara calls both per sample, inside the
+      tract's feedback loop. Rebuilt in a scratch probe the way their block loops are
+      written, they left svara's output byte-identical and took the chain to 0.947x its
+      instructions, the glottal source to 0.911x. **Blocked on naad
+      `docs/development/issues/2026-11-16-per-sample-biquad-and-noise-cost-more-than-their-block-loops.md`.**
+      When it ships, bump naad and sweep. Do not carry svara's own copies of naad's
+      functions.
 
 - [ ] ⛔ **A vec sized up front.** Since 3.8.3 a sample vec adopts the buffer it was
       rendered into, through an Allocator of svara's own (`svara_vec_adopt`). Two costs

@@ -38,12 +38,10 @@ include "src/trajectory.cyr"
 include "src/sequence.cyr"
 include "src/pool.cyr"
 include "src/render.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM3 = 0x3F50624DD2F1A9FC;   # 1e-3 (6-decimal text round-trip tolerance)
 
-# 1 if |a - b| < eps.
-#must_use
-fn se_approx(a, b, eps) { return f64_lt(f64_abs(f64_sub(a, b)), eps); }
 # Number of the first n samples of two raw buffers that differ in any bit.
 #must_use
 fn se_buf_diff(a, b, n) {
@@ -76,25 +74,25 @@ alloc_init();
 test_group("Formant round-trip");
 var f = svara_formant_new(f64_from(700), f64_from(90), F64_HALF);
 var f2 = SvFormant_from_json_str(se_json(&SvFormant_to_json, f));
-assert_eq(se_approx(SvFormant_frequency(f2), f64_from(700), TOL_1EM3), 1, "freq 700");
-assert_eq(se_approx(SvFormant_bandwidth(f2), f64_from(90), TOL_1EM3), 1, "bw 90");
-assert_eq(se_approx(SvFormant_amplitude(f2), F64_HALF, TOL_1EM3), 1, "amp 0.5");
+assert_eq(approx(SvFormant_frequency(f2), f64_from(700), TOL_1EM3), 1, "freq 700");
+assert_eq(approx(SvFormant_bandwidth(f2), f64_from(90), TOL_1EM3), 1, "bw 90");
+assert_eq(approx(SvFormant_amplitude(f2), F64_HALF, TOL_1EM3), 1, "amp 0.5");
 
 # ================================================================
 test_group("VowelTarget round-trip");
 var vt = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
 var vt2 = SvVowelTarget_from_json_str(se_json(&SvVowelTarget_to_json, vt));
-assert_eq(se_approx(SvVowelTarget_f1(vt2), f64_from(768), TOL_1EM3), 1, "f1 768");
-assert_eq(se_approx(SvVowelTarget_f2(vt2), f64_from(1333), TOL_1EM3), 1, "f2 1333");
-assert_eq(se_approx(SvVowelTarget_b1(vt2), f64_from(90), TOL_1EM3), 1, "b1 90");
+assert_eq(approx(SvVowelTarget_f1(vt2), f64_from(768), TOL_1EM3), 1, "f1 768");
+assert_eq(approx(SvVowelTarget_f2(vt2), f64_from(1333), TOL_1EM3), 1, "f2 1333");
+assert_eq(approx(SvVowelTarget_b1(vt2), f64_from(90), TOL_1EM3), 1, "b1 90");
 
 # ================================================================
 test_group("VoiceProfile round-trip");
 var vp = svara_voice_new_female();
 var vp2 = SvVoiceProfile_from_json_str(se_json(&SvVoiceProfile_to_json, vp));
-assert_eq(se_approx(SvVoiceProfile_base_f0(vp2), f64_from(220), TOL_1EM3), 1, "base_f0 220");
-assert_eq(se_approx(SvVoiceProfile_formant_scale(vp2), SV_V_117, TOL_1EM3), 1, "formant_scale 1.17");
-assert_eq(se_approx(SvVoiceProfile_jitter(vp2), SV_V_0008, TOL_1EM3), 1, "jitter 0.008");
+assert_eq(approx(SvVoiceProfile_base_f0(vp2), f64_from(220), TOL_1EM3), 1, "base_f0 220");
+assert_eq(approx(SvVoiceProfile_formant_scale(vp2), SV_V_117, TOL_1EM3), 1, "formant_scale 1.17");
+assert_eq(approx(SvVoiceProfile_jitter(vp2), SV_V_0008, TOL_1EM3), 1, "jitter 0.008");
 # Rust round-trips a non-default f0, breathiness and bandwidth_widening, to
 # f32::EPSILON (`git show 3.6.4:rust-old/tests/integration.rs`,
 # test_serde_roundtrip_voice_profile; rust-old/src/voice.rs,
@@ -103,17 +101,17 @@ assert_eq(se_approx(SvVoiceProfile_jitter(vp2), SV_V_0008, TOL_1EM3), 1, "jitter
 var vpw = svara_voice_with_breathiness(svara_voice_with_f0(svara_voice_new_female(), f64_from(200)), 0.3);
 vpw = svara_voice_with_bandwidth_widening(vpw, 0.8);
 var vpw2 = SvVoiceProfile_from_json_str(se_json(&SvVoiceProfile_to_json, vpw));
-assert_eq(se_approx(SvVoiceProfile_base_f0(vpw2), f64_from(200), SV_EPSILON), 1, "base_f0 200");
-assert_eq(se_approx(SvVoiceProfile_breathiness(vpw2), 0.3, SV_EPSILON), 1, "breathiness 0.3");
-assert_eq(se_approx(SvVoiceProfile_bandwidth_widening(vpw2), 0.8, SV_EPSILON), 1, "bandwidth_widening 0.8");
+assert_eq(approx(SvVoiceProfile_base_f0(vpw2), f64_from(200), SV_EPSILON), 1, "base_f0 200");
+assert_eq(approx(SvVoiceProfile_breathiness(vpw2), 0.3, SV_EPSILON), 1, "breathiness 0.3");
+assert_eq(approx(SvVoiceProfile_bandwidth_widening(vpw2), 0.8, SV_EPSILON), 1, "bandwidth_widening 0.8");
 
 # ================================================================
 test_group("EffortParams round-trip");
 var ep = svara_effort_params(SVARA_EFFORT_WHISPER);
 var ep2 = SvEffortParams_from_json_str(se_json(&SvEffortParams_to_json, ep));
 assert_eq(SvEffortParams_model(ep2), SVARA_GLOTTAL_WHISPER, "model (i64) exact");
-assert_eq(se_approx(SvEffortParams_rd(ep2), SV_V_27, TOL_1EM3), 1, "rd 2.7");
-assert_eq(se_approx(SvEffortParams_breathiness(ep2), F64_ONE, TOL_1EM3), 1, "breathiness 1.0");
+assert_eq(approx(SvEffortParams_rd(ep2), SV_V_27, TOL_1EM3), 1, "rd 2.7");
+assert_eq(approx(SvEffortParams_breathiness(ep2), F64_ONE, TOL_1EM3), 1, "breathiness 1.0");
 
 # ================================================================
 test_group("PhonemeEvent round-trip");
@@ -122,17 +120,17 @@ var pe2 = SvPhonemeEvent_from_json_str(se_json(&SvPhonemeEvent_to_json, pe));
 assert_eq(SvPhonemeEvent_phoneme(pe2), SVARA_PH_VOWEL_A, "phoneme (i64) exact");
 assert_eq(SvPhonemeEvent_stress(pe2), SVARA_STRESS_PRIMARY, "stress (i64) exact");
 assert_eq(SvPhonemeEvent_tone(pe2), SVARA_TONE_RISING, "tone (i64) exact");
-assert_eq(se_approx(SvPhonemeEvent_duration(pe2), 0.15, TOL_1EM3), 1, "duration 0.15");
+assert_eq(approx(SvPhonemeEvent_duration(pe2), 0.15, TOL_1EM3), 1, "duration 0.15");
 
 # ================================================================
 test_group("Nasalization + VoiceOnsetTime round-trip");
 var na = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
 var na2 = SvNasalization_from_json_str(se_json(&SvNasalization_to_json, na));
 assert_eq(SvNasalization_place(na2), SVARA_NASAL_BILABIAL, "place (i64) exact");
-assert_eq(se_approx(SvNasalization_onset(na2), SV_PH_R065, TOL_1EM3), 1, "onset 0.65");
+assert_eq(approx(SvNasalization_onset(na2), SV_PH_R065, TOL_1EM3), 1, "onset 0.65");
 var vo = svara_vot_for_plosive(SVARA_PH_PLOSIVE_P);
 var vo2 = SvVOT_from_json_str(se_json(&SvVOT_to_json, vo));
-assert_eq(se_approx(SvVOT_closure_fraction(vo2), SV_PH_035, TOL_1EM3), 1, "closure 0.35");
+assert_eq(approx(SvVOT_closure_fraction(vo2), SV_PH_035, TOL_1EM3), 1, "closure 0.35");
 
 # ================================================================
 test_group("RenderProgress round-trip");
@@ -146,9 +144,9 @@ assert_eq(SvRenderProgress_samples_rendered(rp2), 44100, "samples 44100");
 test_group("SmoothedParam round-trip");
 var sp = svara_smooth_with_time(F64_HALF, f64_div(F64_ONE, f64_from(100)), f64_from(44100));
 var sp2 = SvSmoothedParam_from_json_str(se_json(&SvSmoothedParam_to_json, sp));
-assert_eq(se_approx(SvSmoothedParam_current(sp2), F64_HALF, TOL_1EM3), 1, "current 0.5");
-assert_eq(se_approx(SvSmoothedParam_target(sp2), F64_HALF, TOL_1EM3), 1, "target 0.5");
-assert_eq(se_approx(SvSmoothedParam_alpha(sp2), SvSmoothedParam_alpha(sp), TOL_1EM3), 1, "alpha preserved");
+assert_eq(approx(SvSmoothedParam_current(sp2), F64_HALF, TOL_1EM3), 1, "current 0.5");
+assert_eq(approx(SvSmoothedParam_target(sp2), F64_HALF, TOL_1EM3), 1, "target 0.5");
+assert_eq(approx(SvSmoothedParam_alpha(sp2), SvSmoothedParam_alpha(sp), TOL_1EM3), 1, "alpha preserved");
 # BEHAVIOUR: the restored smoother must converge identically.
 svara_smooth_set_target(sp, F64_ONE);
 svara_smooth_set_target(sp2, F64_ONE);
@@ -157,7 +155,7 @@ var sm_diff = 0;
 while (sm_i < 64) {
     var a1 = svara_smooth_next(sp);
     var a2 = svara_smooth_next(sp2);
-    if (se_approx(a1, a2, TOL_1EM3) == 0) { sm_diff = sm_diff + 1; }
+    if (approx(a1, a2, TOL_1EM3) == 0) { sm_diff = sm_diff + 1; }
     sm_i = sm_i + 1;
 }
 assert_eq(sm_diff, 0, "restored smoother tracks the original over 64 steps");
@@ -190,15 +188,15 @@ assert_eq(rg_seen > 0, 1, "control: the draws are not all zero");
 test_group("F0Point + ProsodyContour round-trip");
 var fp = svara_pt_new(0.25, 1.5);
 var fp2 = SvF0Point_from_json_str(se_json(&SvF0Point_to_json, fp));
-assert_eq(se_approx(SvF0Point_time(fp2), 0.25, TOL_1EM3), 1, "point time 0.25");
-assert_eq(se_approx(SvF0Point_value(fp2), 1.5, TOL_1EM3), 1, "point value 1.5");
+assert_eq(approx(SvF0Point_time(fp2), 0.25, TOL_1EM3), 1, "point time 0.25");
+assert_eq(approx(SvF0Point_value(fp2), 1.5, TOL_1EM3), 1, "point value 1.5");
 
 var pc = svara_tone_to_contour(SVARA_TONE_DIPPING);
 var pc_n = vec_len(SvProsodyContour_f0_points(pc));
 assert_eq(pc_n > 2, 1, "control: the dipping contour has several points");
 var pc2 = SvProsodyContour_from_json_str(se_json(&SvProsodyContour_to_json, pc));
 assert_eq(vec_len(SvProsodyContour_f0_points(pc2)), pc_n, "point count survives");
-assert_eq(se_approx(SvProsodyContour_duration_scale(pc2),
+assert_eq(approx(SvProsodyContour_duration_scale(pc2),
     SvProsodyContour_duration_scale(pc), TOL_1EM3), 1, "duration_scale survives");
 # BEHAVIOUR: the restored contour must trace the same curve.
 var pc_diff = 0;
@@ -209,8 +207,8 @@ while (pc_k <= 20) {
     var tt = f64_div(f64_from(pc_k), f64_from(20));
     var v1 = svara_prosody_f0_at(pc, tt);
     var v2 = svara_prosody_f0_at(pc2, tt);
-    if (se_approx(v1, v2, TOL_1EM3) == 0) { pc_diff = pc_diff + 1; }
-    if (se_approx(v1, pc_first, TOL_1EM3) == 0) { pc_span = pc_span + 1; }
+    if (approx(v1, v2, TOL_1EM3) == 0) { pc_diff = pc_diff + 1; }
+    if (approx(v1, pc_first, TOL_1EM3) == 0) { pc_span = pc_span + 1; }
     pc_k = pc_k + 1;
 }
 assert_eq(pc_diff, 0, "restored contour matches at 21 sample points");
@@ -232,7 +230,7 @@ assert_eq(SvPhonemeEvent_phoneme(ev0), SVARA_PH_VOWEL_A, "event 0 phoneme");
 assert_eq(SvPhonemeEvent_tone(ev0), SVARA_TONE_RISING, "event 0 tone");
 assert_eq(SvPhonemeEvent_phoneme(ev2), SVARA_PH_VOWEL_I, "event 2 phoneme (order preserved)");
 assert_eq(SvPhonemeEvent_stress(ev2), SVARA_STRESS_SECONDARY, "event 2 stress");
-assert_eq(se_approx(SvPhonemeSequence_speaking_rate(sq2), 1.25, TOL_1EM3), 1, "speaking_rate 1.25");
+assert_eq(approx(SvPhonemeSequence_speaking_rate(sq2), 1.25, TOL_1EM3), 1, "speaking_rate 1.25");
 # BEHAVIOUR: the restored sequence must render byte-identical audio.
 var sv = svara_voice_new_male();
 var sr_hz = f64_from(44100);
@@ -258,7 +256,7 @@ test_group("the un-derivable types are un-derivable for a measured reason");
 # release that fixes it shows up here as a FAILING test rather than going unnoticed.
 var kp = svara_keypoint_new(100, svara_vowel_target_from_vowel(SVARA_VOWEL_A), F64_HALF);
 assert_eq(SvFormantKeypoint_target(kp) != 0, 1, "control: a keypoint holds a target pointer");
-assert_eq(se_approx(SvVowelTarget_f1(SvFormantKeypoint_target(kp)), f64_from(768), TOL_1EM3), 1,
+assert_eq(approx(SvVowelTarget_f1(SvFormantKeypoint_target(kp)), f64_from(768), TOL_1EM3), 1,
   "control: and the target is the /a/ one");
 # GlottalSource carries three dependency handles that have no JSON form at all.
 var gsrc = svara_glottal_new(f64_from(120), sr_hz);
@@ -281,7 +279,7 @@ var spec_n = vec_len(SvSpectrum_magnitudes(spec));
 assert_eq(spec_n > 0, 1, "control: the spectrum has bins");
 var spec2 = SvSpectrum_from_json_str(se_json(&SvSpectrum_to_json, spec));
 assert_eq(vec_len(SvSpectrum_magnitudes(spec2)), spec_n, "bin count survives");
-assert_eq(se_approx(SvSpectrum_freq_resolution(spec2),
+assert_eq(approx(SvSpectrum_freq_resolution(spec2),
     SvSpectrum_freq_resolution(spec), TOL_1EM3), 1, "freq_resolution survives");
 # BEHAVIOUR: the restored spectrum answers queries the same way.
 var spec_peak = alloc(16);
@@ -290,7 +288,7 @@ assert_eq(svara_spectrum_peak_in_range(spec, f64_from(1000), f64_from(2000), spe
   "control: the original finds a peak");
 assert_eq(svara_spectrum_peak_in_range(spec2, f64_from(1000), f64_from(2000), spec_peak2), 1,
   "restored spectrum finds a peak too");
-assert_eq(se_approx(load64(spec_peak2), load64(spec_peak), TOL_1EM3), 1, "at the same frequency");
+assert_eq(approx(load64(spec_peak2), load64(spec_peak), TOL_1EM3), 1, "at the same frequency");
 
 # ================================================================
 test_group("RenderOutput state companion");
@@ -301,14 +299,14 @@ var ro_st = svara_render_output_save(ro);
 var ro_st2 = SvRenderOutputState_from_json_str(se_json(&SvRenderOutputState_to_json, ro_st));
 var ro2 = svara_render_output_restore(ro_st2);
 assert_eq(vec_len(SvRenderOutput_samples(ro2)), 3, "sample count survives");
-assert_eq(se_approx(vec_get(SvRenderOutput_samples(ro2), 0), F64_HALF, TOL_1EM3), 1, "sample 0");
-assert_eq(se_approx(vec_get(SvRenderOutput_samples(ro2), 1), f64_neg(F64_HALF), TOL_1EM3), 1, "sample 1 negative");
+assert_eq(approx(vec_get(SvRenderOutput_samples(ro2), 0), F64_HALF, TOL_1EM3), 1, "sample 0");
+assert_eq(approx(vec_get(SvRenderOutput_samples(ro2), 1), f64_neg(F64_HALF), TOL_1EM3), 1, "sample 1 negative");
 var ro_p = SvRenderOutput_progress(ro2);
 assert_eq(ro_p != 0, 1, "the restored progress is a real object, not a null");
 assert_eq(SvRenderProgress_phoneme_index(ro_p), 4, "progress index survives the flattening");
 assert_eq(SvRenderProgress_total_phonemes(ro_p), 9, "progress total survives");
 assert_eq(SvRenderProgress_samples_rendered(ro_p), 1234, "progress samples survive");
-assert_eq(se_approx(svara_render_progress_fraction(ro_p),
+assert_eq(approx(svara_render_progress_fraction(ro_p),
     svara_render_progress_fraction(SvRenderOutput_progress(ro)), TOL_1EM3), 1, "fraction matches");
 
 # ================================================================
@@ -339,7 +337,7 @@ var g_j = 0;
 while (g_j < 1024) {
     var s1 = svara_glottal_next_sample(g1);
     var s2 = svara_glottal_next_sample(g2);
-    if (se_approx(s1, s2, TOL_1EM3) == 0) { g_diff = g_diff + 1; }
+    if (approx(s1, s2, TOL_1EM3) == 0) { g_diff = g_diff + 1; }
     if (f64_gt(f64_abs(s1), TOL_1EM3) == 1) { g_loud = g_loud + 1; }
     g_j = g_j + 1;
 }
@@ -369,13 +367,13 @@ var h_j = 0;
 while (h_j < 512) {
     var t1 = svara_glottal_next_sample(h1);
     var t2 = svara_glottal_next_sample(h2);
-    if (se_approx(t1, t2, TOL_1EM3) == 0) { h_diff = h_diff + 1; }
+    if (approx(t1, t2, TOL_1EM3) == 0) { h_diff = h_diff + 1; }
     if (f64_gt(f64_abs(t1), TOL_1EM3) == 1) { h_loud = h_loud + 1; }
     h_j = h_j + 1;
 }
 assert_eq(h_diff, 0, "restored source matches EXACTLY with breathiness + vibrato on");
 assert_eq(h_loud > 0, 1, "control: the compared signal is not silence");
-assert_eq(se_approx(SvGlottalSource_breathiness(h2), F64_HALF, TOL_1EM3), 1,
+assert_eq(approx(SvGlottalSource_breathiness(h2), F64_HALF, TOL_1EM3), 1,
   "control: the breathiness field survived too");
 # CONTROL: the comparison discriminates -- a source that did NOT resume the naad
 # streams must differ, which is what proves the capture is doing the work.
@@ -387,7 +385,7 @@ var h_k = 0;
 while (h_k < 512) {
     var u1 = svara_glottal_next_sample(h1);
     var u3 = svara_glottal_next_sample(h3);
-    if (se_approx(u1, u3, TOL_1EM3) == 0) { h3_diff = h3_diff + 1; }
+    if (approx(u1, u3, TOL_1EM3) == 0) { h3_diff = h3_diff + 1; }
     h_k = h_k + 1;
 }
 assert_eq(h3_diff > 0, 1, "control: a fresh source does NOT match -- the streams really were resumed");
@@ -409,7 +407,7 @@ var gcr2 = svara_glottal_restore(SvGlottalState_from_json_str(se_json(&SvGlottal
       svara_glottal_save(gcr))));
 assert_eq(svara_is_err(gcr2), 0, "a creaky source restores");
 assert_eq(svara_glottal_model(gcr2), SVARA_GLOTTAL_CREAKY, "restored model is creaky");
-assert_eq(se_approx(svara_glottal_rd(gcr2), F64_HALF, SV_EPSILON), 1, "restored creaky rd is 0.5");
+assert_eq(approx(svara_glottal_rd(gcr2), F64_HALF, SV_EPSILON), 1, "restored creaky rd is 0.5");
 
 # ================================================================
 test_group("restore validates a decoded state rather than trusting it");
@@ -451,10 +449,10 @@ assert_eq(svara_is_err(t2), 0, "restore succeeds");
 # configuration fidelity
 assert_eq(svara_tract_nasal_place(t2), SVARA_NASAL_VELAR, "nasal place survives");
 assert_eq(SvVocalTract_quality(t2), SVARA_QUALITY_REDUCED, "quality survives");
-assert_eq(se_approx(SvVocalTract_lip_radiation(t2), 0.9, TOL_1EM3), 1, "lip_radiation survives");
-assert_eq(se_approx(SvVocalTract_interaction_strength(t2), 0.2, TOL_1EM3), 1, "interaction_strength survives");
-assert_eq(se_approx(SvVocalTract_subglottal_coupling(t2), 0.08, TOL_1EM3), 1, "subglottal_coupling survives");
-assert_eq(se_approx(SvVocalTract_lip_prev(t2), SvVocalTract_lip_prev(t1), TOL_1EM3), 1,
+assert_eq(approx(SvVocalTract_lip_radiation(t2), 0.9, TOL_1EM3), 1, "lip_radiation survives");
+assert_eq(approx(SvVocalTract_interaction_strength(t2), 0.2, TOL_1EM3), 1, "interaction_strength survives");
+assert_eq(approx(SvVocalTract_subglottal_coupling(t2), 0.08, TOL_1EM3), 1, "subglottal_coupling survives");
+assert_eq(approx(SvVocalTract_lip_prev(t2), SvVocalTract_lip_prev(t1), TOL_1EM3), 1,
   "lip_prev is carried (it is a one-sample memory svara owns)");
 assert_eq(svara_formant_filter_num_formants(SvVocalTract_filter(t2)), 5, "the bank was rebuilt at width 5");
 
@@ -469,7 +467,7 @@ var t_j = 0;
 while (t_j < 512) {
     var u1 = svara_tract_process_sample(t1, svara_glottal_next_sample(ta));
     var u2 = svara_tract_process_sample(t2, svara_glottal_next_sample(tb));
-    if (se_approx(u1, u2, TOL_1EM3) == 0) { t_diff = t_diff + 1; }
+    if (approx(u1, u2, TOL_1EM3) == 0) { t_diff = t_diff + 1; }
     if (f64_gt(f64_abs(u1), TOL_1EM3) == 1) { t_loud = t_loud + 1; }
     t_j = t_j + 1;
 }
@@ -488,7 +486,7 @@ var td = svara_glottal_new(f64_from(110), sr_hz);
 while (t_k < 512) {
     var v1 = svara_tract_process_sample(t1, svara_glottal_next_sample(td));
     var v3 = svara_tract_process_sample(t3, svara_glottal_next_sample(tc));
-    if (se_approx(v1, v3, TOL_1EM3) == 0) { t3_diff = t3_diff + 1; }
+    if (approx(v1, v3, TOL_1EM3) == 0) { t3_diff = t3_diff + 1; }
     t_k = t_k + 1;
 }
 assert_eq(t3_diff > 0, 1, "control: a different vowel really does produce different output");
@@ -521,7 +519,7 @@ var w_j = 0;
 while (w_j < 128) {
     var x1 = svara_tract_process_sample(w1, svara_glottal_next_sample(wa));
     var x2 = svara_tract_process_sample(w2, svara_glottal_next_sample(wb));
-    if (se_approx(x1, x2, TOL_1EM3) == 0) { w_diff = w_diff + 1; }
+    if (approx(x1, x2, TOL_1EM3) == 0) { w_diff = w_diff + 1; }
     w_j = w_j + 1;
 }
 assert_eq(w_diff > 0, 1, "a warm tract and its restore DO differ -- delay lines are not state");
@@ -553,9 +551,9 @@ var pl_i = 0;
 while (pl_i < svara_trajectory_total_samples(plan1)) {
     var q1 = svara_trajectory_formants_at(plan1, pl_i);
     var q2 = svara_trajectory_formants_at(plan2, pl_i);
-    if (se_approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
-    if (se_approx(SvVowelTarget_f2(q1), SvVowelTarget_f2(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
-    if (se_approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(pl_first), TOL_1EM3) == 0) { pl_moved = pl_moved + 1; }
+    if (approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
+    if (approx(SvVowelTarget_f2(q1), SvVowelTarget_f2(q2), TOL_1EM3) == 0) { pl_diff = pl_diff + 1; }
+    if (approx(SvVowelTarget_f1(q1), SvVowelTarget_f1(pl_first), TOL_1EM3) == 0) { pl_moved = pl_moved + 1; }
     pl_i = pl_i + 331;
 }
 assert_eq(pl_diff, 0, "restored plan interpolates identically across its span");
@@ -586,7 +584,7 @@ var cx_diff = 0;
 var cx_loud = 0;
 var cx_i = 0;
 while (cx_i < cx_a) {
-    if (se_approx(load64(cx_buf1 + cx_i * 8), load64(cx_buf2 + cx_i * 8), TOL_1EM3) == 0) {
+    if (approx(load64(cx_buf1 + cx_i * 8), load64(cx_buf2 + cx_i * 8), TOL_1EM3) == 0) {
         cx_diff = cx_diff + 1;
     }
     if (f64_gt(f64_abs(load64(cx_buf1 + cx_i * 8)), TOL_1EM3) == 1) { cx_loud = cx_loud + 1; }
@@ -601,7 +599,7 @@ var cx_buf3 = svara_synthctx_buffer(cx3);
 var cx3_diff = 0;
 var cx_j = 0;
 while (cx_j < cx_c) {
-    if (se_approx(load64(cx_buf1 + cx_j * 8), load64(cx_buf3 + cx_j * 8), TOL_1EM3) == 0) {
+    if (approx(load64(cx_buf1 + cx_j * 8), load64(cx_buf3 + cx_j * 8), TOL_1EM3) == 0) {
         cx3_diff = cx3_diff + 1;
     }
     cx_j = cx_j + 1;

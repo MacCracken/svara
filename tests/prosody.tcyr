@@ -7,23 +7,18 @@ include "lib/hashmap.cyr"
 include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/prosody.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
-
-# 1 if |a - b| < eps.
-#must_use
-fn pr_approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
 
 alloc_init();
 
 # ================================================================
 test_group("flat contour");
 var flat = svara_prosody_flat();
-assert_eq(pr_approx(svara_prosody_f0_at(flat, 0), F64_ONE, TOL_1EM6), 1, "flat @0 = 1.0");
-assert_eq(pr_approx(svara_prosody_f0_at(flat, F64_HALF), F64_ONE, TOL_1EM6), 1, "flat @0.5 = 1.0");
-assert_eq(pr_approx(svara_prosody_f0_at(flat, F64_ONE), F64_ONE, TOL_1EM6), 1, "flat @1.0 = 1.0");
+assert_eq(approx(svara_prosody_f0_at(flat, 0), F64_ONE, TOL_1EM6), 1, "flat @0 = 1.0");
+assert_eq(approx(svara_prosody_f0_at(flat, F64_HALF), F64_ONE, TOL_1EM6), 1, "flat @0.5 = 1.0");
+assert_eq(approx(svara_prosody_f0_at(flat, F64_ONE), F64_ONE, TOL_1EM6), 1, "flat @1.0 = 1.0");
 
 # ================================================================
 test_group("intonation direction");
@@ -132,8 +127,8 @@ vec_push(span_p, svara_pt_new(0.8, f64_from(3)));
 var span_c = svara_prosody_make(span_p, F64_ONE, F64_ONE);
 assert_eq(svara_prosody_f0_at(span_c, 0.1), F64_ONE, "before the first point");
 assert_eq(svara_prosody_f0_at(span_c, 0.9), F64_ONE, "after the last point");
-assert_eq(pr_approx(svara_prosody_f0_at(span_c, 0.2), f64_from(2), TOL_1EM6), 1, "control: on the first point");
-assert_eq(pr_approx(svara_prosody_f0_at(span_c, 0.8), f64_from(3), TOL_1EM6), 1, "control: on the last point");
+assert_eq(approx(svara_prosody_f0_at(span_c, 0.2), f64_from(2), TOL_1EM6), 1, "control: on the first point");
+assert_eq(approx(svara_prosody_f0_at(span_c, 0.8), f64_from(3), TOL_1EM6), 1, "control: on the last point");
 
 var rep_p = vec_new();
 vec_push(rep_p, svara_pt_new(F64_HALF, f64_from(2)));

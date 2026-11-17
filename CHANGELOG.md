@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.6] - 2026-11-16 — two roadmap items closed by measurement, and one `approx`
+
+No library code changes: `src/` is byte-identical to 3.8.5, and so is every output. The bundle
+differs only in its version line. Two of the roadmap's 3.8.x items were measured and closed,
+and the tests share one tolerance helper. **1,370 assertions / 26 suites.**
+
+### Measured, and not taken
+
+- **naad's block forms do not fit svara's tract.** The roadmap asked to call
+  `filter_biquad_process_buffer` and `noise_fill_buffer` where the tract's feedback allows it,
+  and it allows almost nowhere:
+  - **The biquads run inside the feedback loop.** The tract's source-filter interaction feeds
+    each output sample into the next excitation, and the subglottal resonator and the nasal
+    notch sit inside that loop. The notch also advances only while its coupling is above zero.
+  - **Noise can't be drawn ahead.** The glottal source draws one aspiration-noise sample per
+    sample. Filling a block ahead would put the noise generator past the samples consumed,
+    and the glottal save / restore reads that generator's state.
+
+  The cost a block form would save is in naad's per-sample functions:
+
+  | naad call | per-sample call | block form, per sample |
+  |---|---:|---:|
+  | `filter_biquad_process_sample` | 335 instructions | 195 |
+  | `noise_next_sample`, white | 240 | 130 |
+
+  The two were rebuilt in a scratch probe the way their block loops are written, nothing else
+  changed. svara's output stayed byte-identical in all 14 sweep sections, and the instructions
+  fell:
+  - the full chain to 0.947x;
+  - a phoneme to 0.951x;
+  - the glottal source to 0.911x.
+
+  So the item is now blocked upstream, on a naad issue.
+- **The per-phoneme glottal source and tract stay.** `svara_sequence_render` builds both for
+  every phoneme, as the Rust does. Together they cost 41,310 instructions and 2,272 bytes:
+  - 0.43% of synthesizing a 0.08 s /a/;
+  - under a byte a sample, against the render's 24.
+
+  Reusing them would need a reset that gives a fresh object's bits, a second constructor to
+  keep in step, for no measurable effect. `svara_sequence_render_into` already avoids them.
+
+### Changed
+
+- **The tests share one `approx`** (`tests/approx.cyr`). Thirteen suites each defined the same
+  one-line tolerance test under eight names: `approx`, `br_`, `v_`, `pr_`, `ph_`, `se_`, `tr_`,
+  `or_` and `rn_approx`. Each now includes the one file. The assertion count is unchanged.
+  - Two mutants of the shared helper each fail serde's controls: one that always answers yes,
+    and one that ignores `eps`. Those controls assert that two values are *not* within tolerance.
+
+### Added
+
+- **Upstream: naad
+  `docs/development/issues/2026-11-16-per-sample-biquad-and-noise-cost-more-than-their-block-loops.md`**,
+  with a repro that counts each function's instructions against its block form's. It asks that
+  the per-sample paths be written like their block loops, or for a raw-pointer noise fill.
+- **The cyrius accessor issue** (`2026-11-16-derived-accessor-costs-more-than-load-store.md`)
+  gained svara 3.8.5's approach for a struct that keeps its accessors: offsets beside the
+  struct, pinned by a test.
+
 ## [3.8.5] - 2026-11-16 — the per-sample path without derived accessors
 
 Performance release. 3.8.4 measured that a `#derive(accessors)` accessor costs more than the

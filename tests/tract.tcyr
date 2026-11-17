@@ -14,14 +14,9 @@ include "src/lod.cyr"
 include "src/formant.cyr"
 include "src/glottal.cyr"
 include "src/tract.cyr"
+include "tests/approx.cyr"
 
 var TOL_1EM6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
-
-# 1 if |a - b| < eps.
-#must_use
-fn approx(a, b, eps) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
-}
 
 # out[0] = any |s| > thresh, out[1] = all finite, over an n-slot f64 buffer
 fn buf_scan(buf, n, thresh, out) {
