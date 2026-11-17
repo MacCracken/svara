@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.0] - 2026-11-16 — one plosive and one trill, and the quirks lane closed
+
+Minor release: the context path's plosives and trills change, by decision
+([ADR-0017](docs/adr/0017-one-plosive-and-one-trill-for-both-paths.md)). This was the last 3.9.x
+item, so the lane of preserved Rust quirks is closed.
+
+**The quirk.** svara synthesizes a phoneme two ways, as the Rust does:
+- **the free path**, behind `svara_phoneme_synthesize` and `svara_sequence_render`;
+- **the context path**, behind `svara_synthctx_synthesize`, the stream, the pool, the batch render
+  and hoosh.
+
+For plosives and trills the Rust's two paths differ, and svara kept both:
+- **Plosives.** The free path uses each plosive's voice-onset timing (`svara_vot_for_plosive`),
+  aspirates /p t k/, and gives a voiced tail breathiness 0.30 and a voiceless tail noise × 0.15. The
+  context used fixed thirds and no aspiration, with breathiness 0.40 and noise × 0.30.
+- **Trills.** The free path amplitude-modulates a trill at 25 Hz alveolar, 20 uvular and 15
+  bilabial. The context rendered it as a plain approximant.
+
+**The fix.** The maintainer chose the free path's versions for both: the phonetically detailed ones.
+
+**What moved.** Against 3.13.0, 63,710 sweep values moved, all on the context path: ctx 29,818 and
+pool 33,892. The free path's phonemes are the same bits. Every other section, the JSON and all 638
+hostile cases are unchanged, and retired instructions are unchanged on every probe.
+**1,445 assertions / 27 suites.**
+
+### Changed
+
+- **`svara_ph_plosive_run`** is the free path's plosive once its objects exist: the buffer zeroed,
+  then the VOT closure, a burst of at least one sample, the aspiration and the tail. It reads the
+  timing through the new `svara_vot_for_plosive_into`, on the stack, so a warmed context still
+  allocates nothing per phoneme. `svara_vot_for_plosive` is now a wrapper over it.
+- **`svara_ph_trill_run` and `svara_ph_trill_rate`** are the free path's amplitude-modulated trill.
+- **The free path** builds its plosive and trill over the two runs, and its output is the same bits.
+- **The context.** `svara_synthctx_plosive` builds over the plosive run; its voiced tail uses
+  breathiness 0.30 and puts the voice's back. The new `svara_synthctx_trill` builds over the trill
+  run, and `svara_synthctx_synthesize` sends trills to it, not to the approximant.
+- **The roadmap's 3.9.x section is gone**, with a list of the six releases that closed it, 3.9.0 to
+  3.14.0, and their ADRs. What is left is SIMD and the work blocked upstream.
+
+### Added
+
+- **ADR-0017**, accepted.
+- **`tests/synthpaths.tcyr`** (4 more assertions):
+  - the context's plosive is held to the free path's 3.8.6 plosive run on the context's objects, in
+    place of 3.8.6's fixed-thirds reference;
+  - a new group holds the context's trill to the free path's loop, for every trill at six lengths
+    and two voices;
+  - `svara_synthctx_synthesize` routes a trill to it;
+  - a voiced plosive puts the voice's breathiness back on the context's source.
+- **`docs/development/integration-guide.md`: "One plosive and one trill (3.14.0)".**
+- **7 mutants, each failing an assertion:**
+  - no aspiration;
+  - the old 0.30 voiceless tail;
+  - the old 0.40 breathiness;
+  - trills dispatched to the approximant again;
+  - the alveolar trill at 20 Hz;
+  - a burst allowed to be empty;
+  - the breathiness never restored.
+
+  The last passed every suite until the breathiness check was added.
+
 ## [3.13.0] - 2026-11-16 — tone in every render
 
 Minor release: toned output changes, by decision

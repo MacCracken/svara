@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.13.0"
+tag = "3.14.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -292,6 +292,18 @@ with or without a tone. Untoned input is unchanged, bit for bit.
 To voice a tone on a single phoneme through a context of your own, call
 `svara_synthctx_synthesize_toned`. A glottal source of your own takes one through
 `svara_glottal_set_tone`. See [ADR-0016](../adr/0016-honour-tone-in-every-sequence-render.md).
+
+## One plosive and one trill (3.14.0)
+
+Through 3.13.0, as in the Rust, the context path, behind `svara_synthctx_synthesize`, the stream,
+the pool and the batch render, synthesized plosives and trills its own way:
+- **plosives** with fixed thirds and no aspiration;
+- **trills** as plain approximants.
+
+Since 3.14.0 it uses the free path's plosive and trill: per-plosive voice-onset timing with
+aspiration on /p t k/, and a trill amplitude-modulated at 15 to 25 Hz. If you render through a
+context, its plosives and trills change; nothing else does. See
+[ADR-0017](../adr/0017-one-plosive-and-one-trill-for-both-paths.md).
 
 ## Quality scaling
 

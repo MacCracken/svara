@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.14.0** (2026-11-16) — **one plosive and one trill, and the quirks lane closed.** The last
+3.9.x item, decided by the maintainer in ADR-0017. The context path (the stream, pool, batch
+render and `svara_synthctx_synthesize`) used fixed thirds and no aspiration for plosives, and an
+approximant for trills, as the Rust's context path does. Both paths now use the free path's:
+per-plosive voice-onset timing with aspiration on /p t k/ (`svara_ph_plosive_run`, reading
+`svara_vot_for_plosive_into` from the stack), and a trill modulated at 15 to 25 Hz
+(`svara_ph_trill_run`). Only the context path moved; the free path is the same bits. With it the
+3.9.x lane closed, from 3.9.0 to 3.14.0, ADR-0012 to ADR-0017. **1,445 assertions / 27
+suites**, `cyrius audit` exit 0.
+
 **3.13.0** (2026-11-16) — **tone in every render.** The fifth 3.9.x quirk, decided by the
 maintainer in ADR-0016. An event's tone was voiced only by `render_planned`, as in the Rust;
 `sequence_render`, the stream and the batch render gave the same samples with or without it.
@@ -422,8 +432,8 @@ parity oracle until 3.7.0 retired them; tag `3.6.5` still carries them
   filed in the cyrius repo: `docs/development/proposals/2026-07-03-derive-json-codec.md`.
 - **Parity bar**: tolerance parity — port the 213 Rust tests as `.tcyr` with f64
   within-epsilon assertions + benchmark parity. Transcendentals aren't bit-identical across arches.
-- **v2.0.1 quirks**: preserve all three for parity (unapplied per-vowel spectral
-  tilt; `set_speed_quotient` ignored by Rosenberg pulse; `Tone` only in `render_planned`).
+- **v2.0.1 quirks**: preserved for parity at the port, all three; decided since, with the
+  rest of the 3.9.x lane, in ADR-0012 to ADR-0017 (3.9.0 to 3.14.0).
 - **Naming**: every svara symbol is `svara_`/`SVARA_`/`SV_`/`Sv`-prefixed so the
   svara distlib coexists with naad's bundle in one flat namespace.
 
@@ -458,7 +468,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,441 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
+1,445 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -541,8 +551,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (386 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,441 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (391 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,445 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |
@@ -715,10 +725,10 @@ returns an empty vec. Silently. Use `_from_json_str`.
 ## Next
 
 **Sequencing lives in [`roadmap.md`](roadmap.md)**, by release. Do not duplicate that
-list here. **3.8.x continues**: the bit-identical performance items, each measured
-on its own. 3.8.0 shipped the streaming sequence render, and no filed issue is open. 3.7.0 retired `rust-old/`, so a parity question is now
-asked of tag `3.6.5` ([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md) has the
-recipe). The 3.9.x items, the preserved Rust quirks, are such questions.
+list here. The 3.8.x performance lane closed at 3.8.8 and the 3.9.x quirks lane at
+3.14.0; what is left is SIMD and the work blocked upstream. 3.7.0 retired `rust-old/`,
+so a parity question is asked of tag `3.6.5`
+([ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md) has the recipe).
 
 Two things about the current state that the roadmap depends on and that are
 easy to get wrong:

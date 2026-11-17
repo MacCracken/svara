@@ -16,7 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.13.0** | ✅ Yes | current; needs cyrius 6.7.2 or later. Changes toned events in `sequence_render`, the stream and the batch render, which now voice their tone; untoned output is unchanged ([ADR-0016](docs/adr/0016-honour-tone-in-every-sequence-render.md)) |
+| **3.14.0** | ✅ Yes | current; needs cyrius 6.7.2 or later. Changes plosives and trills rendered through the context (the stream, pool, batch render and `svara_synthctx_synthesize`), which now match the free path's ([ADR-0017](docs/adr/0017-one-plosive-and-one-trill-for-both-paths.md)) |
+| 3.13.0 | ✅ Yes | changes toned events in `sequence_render`, the stream and the batch render, which now voice their tone; untoned output is unchanged ([ADR-0016](docs/adr/0016-honour-tone-in-every-sequence-render.md)) |
 | 3.12.0 | ✅ Yes | changes every `render_planned` output and every diphthong, which keep their formants as they move ([ADR-0015](docs/adr/0015-retarget-the-formant-bank-without-resetting-it.md)) |
 | 3.11.0 | ✅ Yes | changes every voice on the default Rosenberg pulse, which gains its closing phase ([ADR-0014](docs/adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md)) |
 | 3.10.0 | ✅ Yes | changes every vowel and diphthong, which now carry their spectral tilt ([ADR-0013](docs/adr/0013-apply-the-per-vowel-spectral-tilt.md)) |

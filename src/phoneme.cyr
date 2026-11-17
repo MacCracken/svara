@@ -517,7 +517,13 @@ struct SvVOT { closure_fraction: f64; burst_fraction: f64; aspiration_fraction: 
 # vot_for_plosive -- closure, burst and aspiration fractions of a plosive's duration.
 #must_use
 fn svara_vot_for_plosive(p) {
-    var self = alloc(sizeof(SvVOT));
+    return svara_vot_for_plosive_into(p, alloc(sizeof(SvVOT)));
+}
+
+# vot_for_plosive_into -- as svara_vot_for_plosive, written into `self`, which it
+# returns. Allocates nothing, which the context's plosive needs since 3.14.0.
+#must_use
+fn svara_vot_for_plosive_into(p, self) {
     if ((p == SVARA_PH_PLOSIVE_P) | (p == SVARA_PH_PLOSIVE_UVULAR_Q)) {
         SvVOT_set_closure_fraction(self, SV_PH_035); SvVOT_set_burst_fraction(self, SV_PH_R01);
         SvVOT_set_aspiration_fraction(self, SV_PH_025); return self;
@@ -770,9 +776,10 @@ fn svara_ph_tone(glottal, voice, tone, n) {
 # Each class is synthesized twice: by the free svara_ph_synth_* functions, which
 # build fresh objects per call, and by the svara_synthctx_* methods, which reuse
 # the context's. Where the Rust's two paths write the same samples, the samples are
-# written here once, and each path only gathers its objects. Where the Rust's paths
-# differ (the plosive's timing, the trill, the vowel and diphthong), each keeps its
-# own code: those are 3.9.x's to decide.
+# written here once, and each path only gathers its objects. Since 3.14.0 the
+# plosive and the trill are shared too, the free path's (ADR-0017); the vowel and
+# diphthong paths still build their objects differently, and share their glide
+# through svara_tract_retarget (ADR-0015).
 
 # noise_run -- buf[i] = filter(noise * gain) for i in [from, to).
 fn svara_ph_noise_run(buf, from, to, filter, noise, gain) {
@@ -931,6 +938,71 @@ fn svara_ph_approx_gain(buf, n) {
     return 0;
 }
 
+# plosive_run -- n plosive samples, by the plosive's voice-onset timing
+# (svara_vot_for_plosive): silence through the closure, a noise burst through `filter`
+# of at least one sample, a decaying aspiration for /p t k/, then the voicing of
+# `tract` and `glottal` at half amplitude when `voiced` is 1, or a faint noise tail.
+# Both paths since 3.14.0 (ADR-0017); through 3.13.0 the context used fixed thirds
+# and no aspiration, as the Rust's synthesize_plosive_ctx does.
+fn svara_ph_plosive_run(buf, n, phoneme, filter, noise, voiced, tract, glottal) {
+    svara_formant_zero_buf(buf, n);
+    var vot[24];   # one SvVOT
+    var vp = svara_vot_for_plosive_into(phoneme, &vot);
+    var nf = f64_from(n);
+    # Raw f64_to is safe here and only here: the fractions are in-tree constants in
+    # [0, 1], and `n` is already bounded by svara_count_from_f64 at the public entry.
+    # Nothing caller-supplied reaches this cast.
+    var closure_end = f64_to(f64_mul(SvVOT_closure_fraction(vp), nf));
+    var burst_end = closure_end + f64_to(f64_max(f64_mul(SvVOT_burst_fraction(vp), nf), F64_ONE));
+    var aspiration_end = burst_end + f64_to(f64_mul(SvVOT_aspiration_fraction(vp), nf));
+    var be = burst_end;
+    if (be > n) { be = n; }
+    svara_ph_noise_run(buf, closure_end, be, filter, noise, SV_PH_08);
+    if (aspiration_end > burst_end) {
+        var asp_len = aspiration_end - burst_end;
+        if (asp_len < 1) { asp_len = 1; }
+        var ae = aspiration_end;
+        if (ae > n) { ae = n; }
+        var jj = 0;
+        var k = burst_end;
+        while (k < ae) {
+            var decay = f64_sub(F64_ONE, f64_div(f64_from(jj), f64_from(asp_len)));
+            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R04), decay);
+            store64(buf + k * 8, svara_formant_filter_process_sample(filter, amp));
+            jj = jj + 1;
+            k = k + 1;
+        }
+    }
+    var voice_start = aspiration_end;
+    if (voice_start > n) { voice_start = n; }
+    if (voiced == 1) { return svara_ph_voiced_run(buf, voice_start, n, tract, glottal, F64_HALF); }
+    return svara_ph_noise_run(buf, voice_start, n, filter, noise, SV_PH_R015);
+}
+
+# trill_rate -- the trill's flutter in Hz: 25 alveolar, 20 uvular, 15 bilabial.
+#must_use
+fn svara_ph_trill_rate(phoneme) {
+    if (phoneme == SVARA_PH_TRILL_UVULAR) { return f64_from(20); }
+    if (phoneme == SVARA_PH_TRILL_BILABIAL) { return f64_from(15); }
+    return f64_from(25);
+}
+
+# trill_run -- n trill samples: the voicing of `tract` and `glottal`, amplitude-
+# modulated at the trill's rate, at 0.7. Both paths since 3.14.0 (ADR-0017); through
+# 3.13.0 the context rendered a trill as an approximant, as the Rust's does.
+fn svara_ph_trill_run(buf, n, phoneme, tract, glottal, sample_rate) {
+    var trill_rate = svara_ph_trill_rate(phoneme);
+    var i = 0;
+    while (i < n) {
+        var s = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
+        var phase = f64_div(f64_mul(f64_mul(F64_TAU, trill_rate), f64_from(i)), sample_rate);
+        var env = f64_add(F64_HALF, f64_mul(F64_HALF, f64_cos(phase)));
+        store64(buf + i * 8, f64_mul(f64_mul(s, env), SV_PH_R07));
+        i = i + 1;
+    }
+    return 0;
+}
+
 # vowel: the voice's glottal source through a tract with height-adjusted formant amplitudes.
 #must_use
 fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room, tone) {
@@ -1008,56 +1080,25 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room, tone) {
 fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room, tone) {
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
-    svara_formant_zero_buf(buf, n);
     var noise = svara_rng_new(17);
-    var vot = svara_vot_for_plosive(phoneme);
-    var nf = f64_from(n);
-    # Raw f64_to is safe here and only here: `vot` comes from svara_vot_for_plosive,
-    # whose fractions are in-tree constants in [0, 1], and `n` is already bounded by
-    # svara_count_from_f64 at the public entry. Nothing caller-supplied reaches this cast.
-    var closure_end = f64_to(f64_mul(SvVOT_closure_fraction(vot), nf));
-    var burst_end = closure_end + f64_to(f64_max(f64_mul(SvVOT_burst_fraction(vot), nf), F64_ONE));
-    var aspiration_end = burst_end + f64_to(f64_mul(SvVOT_aspiration_fraction(vot), nf));
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
-
-    var be = burst_end;
-    if (be > n) { be = n; }
-    svara_ph_noise_run(buf, closure_end, be, filter, noise, SV_PH_08);
-    if (aspiration_end > burst_end) {
-        var asp_len = aspiration_end - burst_end;
-        if (asp_len < 1) { asp_len = 1; }
-        var ae = aspiration_end;
-        if (ae > n) { ae = n; }
-        var jj = 0;
-        var k = burst_end;
-        while (k < ae) {
-            var decay = f64_sub(F64_ONE, f64_div(f64_from(jj), f64_from(asp_len)));
-            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R04), decay);
-            store64(buf + k * 8, svara_formant_filter_process_sample(filter, amp));
-            jj = jj + 1;
-            k = k + 1;
-        }
+    var voiced = svara_phoneme_is_voiced(phoneme);
+    var glottal = 0;
+    var tract = 0;
+    if (voiced == 1) {
+        glottal = svara_voice_create_glottal_source(voice, sample_rate);
+        if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+        var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+        if (svara_is_err(tg) == 1) { return tg; }
+        svara_glottal_set_breathiness(glottal, SV_PH_030);
+        tract = svara_tract_new(sample_rate);
+        if (svara_is_err(tract) == 1) { return tract; }
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
     }
-    var voice_start = aspiration_end;
-    if (voice_start > n) { voice_start = n; }
-    if ((svara_phoneme_is_voiced(phoneme) == 1) | (voice_start < n)) {
-        if (svara_phoneme_is_voiced(phoneme) == 1) {
-            var glottal = svara_voice_create_glottal_source(voice, sample_rate);
-            if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
-            var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
-            if (svara_is_err(tg) == 1) { return tg; }
-            svara_glottal_set_breathiness(glottal, SV_PH_030);
-            var tract = svara_tract_new(sample_rate);
-            if (svara_is_err(tract) == 1) { return tract; }
-            var e = svara_tract_set_formants_from_target(tract, target);
-            if (svara_is_err(e) == 1) { return e; }
-            svara_ph_voiced_run(buf, voice_start, n, tract, glottal, F64_HALF);
-        } else {
-            svara_ph_noise_run(buf, voice_start, n, filter, noise, SV_PH_R015);
-        }
-    }
+    svara_ph_plosive_run(buf, n, phoneme, filter, noise, voiced, tract, glottal);
     svara_ph_apply_envelope(buf, n);
     return buf;
 }
@@ -1170,19 +1211,9 @@ fn svara_ph_synth_trill(phoneme, voice, sample_rate, n, room, tone) {
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
     var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
     if (svara_is_err(tg) == 1) { return tg; }
-    var trill_rate = f64_from(25);
-    if (phoneme == SVARA_PH_TRILL_UVULAR) { trill_rate = f64_from(20); }
-    elif (phoneme == SVARA_PH_TRILL_BILABIAL) { trill_rate = f64_from(15); }
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
-    var i = 0;
-    while (i < n) {
-        var s = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
-        var phase = f64_div(f64_mul(f64_mul(F64_TAU, trill_rate), f64_from(i)), sample_rate);
-        var env = f64_add(F64_HALF, f64_mul(F64_HALF, f64_cos(phase)));
-        store64(buf + i * 8, f64_mul(f64_mul(s, env), SV_PH_R07));
-        i = i + 1;
-    }
+    svara_ph_trill_run(buf, n, phoneme, tract, glottal, sample_rate);
     svara_ph_apply_envelope(buf, n);
     return buf;
 }
@@ -1705,36 +1736,42 @@ fn svara_synthctx_fricative(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
-# plosive into the context's buffer: silent closure (n/3), noise burst (n/6), then breathy
-# voicing if voiced, else filtered noise. Fixed fractions, not svara_vot_for_plosive's:
-# a v2.0.1 quirk, as in Rust's synthesize_plosive_ctx (roadmap 3.9.x).
+# plosive into the context's buffer, by svara_ph_plosive_run: the free path's voice-onset
+# timing and aspiration on the context's objects (ADR-0017, 3.14.0). Through 3.13.0 it
+# used fixed thirds and no aspiration, as the Rust's synthesize_plosive_ctx does.
 #must_use
 fn svara_synthctx_plosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
     var noise = SvSynthCtx_noise(self);
-    var closure_end = n / 3;
-    var burst_extra = n / 6;
-    if (burst_extra < 1) { burst_extra = 1; }
-    var burst_end = closure_end + burst_extra;
     var target = svara_synthctx_target(self, phoneme, voice);
     var filter = svara_synthctx_burst_filter(self, target);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
-    svara_ph_zero_run(buf, closure_end);
-    var be = burst_end;
-    if (be > n) { be = n; }
-    svara_ph_noise_run(buf, closure_end, be, filter, noise, SV_PH_08);
-    if (svara_phoneme_is_voiced(phoneme) == 1) {
-        var tract = SvSynthCtx_tract(self);
-        var g = SvSynthCtx_glottal(self);
+    var voiced = svara_phoneme_is_voiced(phoneme);
+    var tract = SvSynthCtx_tract(self);
+    var g = SvSynthCtx_glottal(self);
+    if (voiced == 1) {
         var e = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(e) == 1) { return e; }
         svara_tract_set_nasal_coupling(tract, 0);
-        svara_glottal_set_breathiness(g, SV_PH_R04);
-        svara_ph_voiced_run(buf, burst_end, n, tract, g, F64_HALF);
-        svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
-    } else {
-        svara_ph_noise_run(buf, burst_end, n, filter, noise, SV_PH_030);
+        svara_glottal_set_breathiness(g, SV_PH_030);
     }
+    svara_ph_plosive_run(buf, n, phoneme, filter, noise, voiced, tract, g);
+    if (voiced == 1) { svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice)); }
+    return SVARA_ERR_NONE;
+}
+
+# synthctx_trill -- a trill on the context's tract and source, modulated as the free
+# path's is (ADR-0017, 3.14.0). Through 3.13.0 the context rendered a trill as an
+# approximant, as the Rust's does.
+#must_use
+fn svara_synthctx_trill(self, phoneme, voice, n) {
+    var tract = SvSynthCtx_tract(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, 0);
+    svara_ph_trill_run(SvSynthCtx_buffer(self), n, phoneme, tract, SvSynthCtx_glottal(self),
+      SvSynthCtx_sample_rate(self));
     return SVARA_ERR_NONE;
 }
 
@@ -1926,7 +1963,9 @@ fn svara_synthctx_synthesize_toned(self, phoneme, voice, duration, nasal, tone) 
             e = svara_synthctx_plosive(self, phoneme, voice, n);
         } elif (c == SVARA_CLASS_AFFRICATE) {
             e = svara_synthctx_affricate(self, phoneme, voice, n);
-        } elif ((c == SVARA_CLASS_APPROXIMANT) | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_TRILL)) {
+        } elif (c == SVARA_CLASS_TRILL) {
+            e = svara_synthctx_trill(self, phoneme, voice, n);   # ADR-0017
+        } elif ((c == SVARA_CLASS_APPROXIMANT) | (c == SVARA_CLASS_LATERAL)) {
             e = svara_synthctx_approx(self, phoneme, voice, n);
         } elif (c == SVARA_CLASS_CLICK) {
             e = svara_synthctx_click(self, phoneme, voice, n);

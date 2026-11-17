@@ -37,6 +37,7 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 | [0014](0014-the-rosenberg-pulse-and-its-speed-quotient.md) | The Rosenberg pulse and its speed quotient | Accepted |
 | [0015](0015-retarget-the-formant-bank-without-resetting-it.md) | Retarget the formant bank without resetting it | Accepted |
 | [0016](0016-honour-tone-in-every-sequence-render.md) | Honour tone in every sequence render | Accepted |
+| [0017](0017-one-plosive-and-one-trill-for-both-paths.md) | One plosive and one trill for both synthesis paths | Accepted |
 
 0003–0006 predate the Cyrius port (Rust v1.0.0) and were re-homed here from
 `docs/architecture/` on 2026-08-26; they are domain decisions and survive the port.

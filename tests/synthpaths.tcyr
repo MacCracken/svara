@@ -535,20 +535,23 @@ fn ref_ctx_approx(self, phoneme, voice, n) {
     return SVARA_ERR_NONE;
 }
 
-# 3.8.6's svara_synthctx_plosive, verbatim but for its name.
+# The context's plosive since 3.14.0 (ADR-0017): 3.8.6's svara_ph_synth_plosive, the
+# free path's, on the context's buffer, noise, burst filter, tract and source. Through
+# 3.13.0 the context used fixed thirds and no aspiration.
 #must_use
 fn ref_ctx_plosive(self, phoneme, voice, n) {
     var buf = SvSynthCtx_buffer(self);
+    var w = 0;
+    while (w < n) { store64(buf + w * 8, 0); w = w + 1; }
     var noise = SvSynthCtx_noise(self);
-    var closure_end = n / 3;
-    var burst_extra = n / 6;
-    if (burst_extra < 1) { burst_extra = 1; }
-    var burst_end = closure_end + burst_extra;
+    var vot = svara_vot_for_plosive(phoneme);
+    var nf = f64_from(n);
+    var closure_end = f64_to(f64_mul(SvVOT_closure_fraction(vot), nf));
+    var burst_end = closure_end + f64_to(f64_max(f64_mul(SvVOT_burst_fraction(vot), nf), F64_ONE));
+    var aspiration_end = burst_end + f64_to(f64_mul(SvVOT_aspiration_fraction(vot), nf));
     var target = svara_synthctx_target(self, phoneme, voice);
     var filter = svara_synthctx_burst_filter(self, target);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
-    var z = 0;
-    while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
     var be = burst_end;
     if (be > n) { be = n; }
     var i = closure_end;
@@ -556,26 +559,70 @@ fn ref_ctx_plosive(self, phoneme, voice, n) {
         store64(buf + i * 8, svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), SV_PH_08)));
         i = i + 1;
     }
+    if (aspiration_end > burst_end) {
+        var asp_len = aspiration_end - burst_end;
+        if (asp_len < 1) { asp_len = 1; }
+        var ae = aspiration_end;
+        if (ae > n) { ae = n; }
+        var jj = 0;
+        var k = burst_end;
+        while (k < ae) {
+            var decay = f64_sub(F64_ONE, f64_div(f64_from(jj), f64_from(asp_len)));
+            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R04), decay);
+            store64(buf + k * 8, svara_formant_filter_process_sample(filter, amp));
+            jj = jj + 1;
+            k = k + 1;
+        }
+    }
+    var voice_start = aspiration_end;
+    if (voice_start > n) { voice_start = n; }
     if (svara_phoneme_is_voiced(phoneme) == 1) {
         var tract = SvSynthCtx_tract(self);
         var g = SvSynthCtx_glottal(self);
         var e = svara_tract_set_formants_from_target(tract, target);
         if (svara_is_err(e) == 1) { return e; }
         svara_tract_set_nasal_coupling(tract, 0);
-        svara_glottal_set_breathiness(g, SV_PH_R04);
-        var m = burst_end;
+        svara_glottal_set_breathiness(g, SV_PH_030);
+        var m = voice_start;
         while (m < n) {
             store64(buf + m * 8, f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(g)), F64_HALF));
             m = m + 1;
         }
         svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
     } else {
-        var m2 = burst_end;
+        var m2 = voice_start;
         while (m2 < n) {
-            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_030);
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R015);
             store64(buf + m2 * 8, svara_formant_filter_process_sample(filter, ns));
             m2 = m2 + 1;
         }
+    }
+    return SVARA_ERR_NONE;
+}
+
+# The context's trill since 3.14.0 (ADR-0017): 3.8.6's svara_ph_synth_trill's loop, the
+# free path's, on the context's buffer, tract and source. Through 3.13.0 the context
+# rendered a trill as an approximant.
+#must_use
+fn ref_ctx_trill(self, phoneme, voice, n) {
+    var tract = SvSynthCtx_tract(self);
+    var g = SvSynthCtx_glottal(self);
+    var buf = SvSynthCtx_buffer(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, 0);
+    var trill_rate = f64_from(25);
+    if (phoneme == SVARA_PH_TRILL_UVULAR) { trill_rate = f64_from(20); }
+    elif (phoneme == SVARA_PH_TRILL_BILABIAL) { trill_rate = f64_from(15); }
+    var sr = SvSynthCtx_sample_rate(self);
+    var i = 0;
+    while (i < n) {
+        var s = svara_tract_process_sample(tract, svara_glottal_next_sample(g));
+        var phase = f64_div(f64_mul(f64_mul(F64_TAU, trill_rate), f64_from(i)), sr);
+        var env = f64_add(F64_HALF, f64_mul(F64_HALF, f64_cos(phase)));
+        store64(buf + i * 8, f64_mul(f64_mul(s, env), SV_PH_R07));
+        i = i + 1;
     }
     return SVARA_ERR_NONE;
 }
@@ -750,7 +797,7 @@ assert_eq(sp_renders > 600, 1, "control: over 600 renders were compared");
 assert_eq(sp_loud > 500, 1, "control: most of them are not silence");
 
 # ================================================================
-test_group("3.8.7: the context path gives 3.8.6's samples, one phoneme after another");
+test_group("3.8.7: the context path gives its references' samples, one phoneme after another");
 # ================================================================
 # Two fresh contexts, one through svara's methods and one through 3.8.6's, take the
 # same phonemes in the same order, so state one phoneme leaves is compared too.
@@ -787,7 +834,8 @@ while (vi < vec_len(sp_voices)) {
     }
     vi = vi + 1;
 }
-assert_eq(ctx_bad, 0, "every context render matches 3.8.6's bit for bit");
+assert_eq(ctx_bad, 0,
+  "every context render matches its reference bit for bit (3.8.6's; since 3.14.0 the plosive is the free path's)");
 assert_eq(ctx_renders > 600, 1, "control: over 600 renders were compared");
 assert_eq(ctx_loud > 500, 1, "control: most of them are not silence");
 
@@ -1379,6 +1427,58 @@ while (tn_t < 9) {
 }
 assert_eq(tn_moved, 8, "each of the eight tones that move f0 moves the render");
 assert_eq(sp_vdiff(sp_toned(SVARA_TONE_MID), tn_flat), 0, "Mid, flat at 1.0, leaves it bit for bit");
+
+# ================================================================
+test_group("3.14.0: the context trills, as the free path does (ADR-0017)");
+# ================================================================
+var ct_bad = 0;
+var ct_n = 0;
+vi = 0;
+while (vi < vec_len(sp_voices)) {
+    var ctv = vec_get(sp_voices, vi);
+    var cta = svara_synthctx_new(ctv, sp_sr);
+    var ctb = svara_synthctx_new(ctv, sp_sr);
+    var ctl = 0;
+    while (ctl < vec_len(sp_lens)) {
+        var ctn = vec_get(sp_lens, ctl);
+        var ctp = 0;
+        while (ctp < 101) {
+            if (svara_phoneme_class(ctp) == SVARA_CLASS_TRILL) {
+                var cba2 = sp_prep(cta, ctv, ctn, ctp);
+                var cbb2 = sp_prep(ctb, ctv, ctn, ctp);
+                if (svara_synthctx_trill(cta, ctp, ctv, ctn) != ref_ctx_trill(ctb, ctp, ctv, ctn)) {
+                    ct_bad = ct_bad + 1;
+                }
+                ct_bad = ct_bad + sp_diff(cba2, cbb2, ctn);
+                ct_n = ct_n + 1;
+            }
+            ctp = ctp + 1;
+        }
+        ctl = ctl + 1;
+    }
+    vi = vi + 1;
+}
+assert_eq(ct_bad, 0, "every trill, at six lengths and two voices, matches the free path's loop bit for bit");
+assert_eq(ct_n, 36, "control: three trills, six lengths, two voices");
+# svara_synthctx_synthesize must route a trill there, not to the approximant.
+var ctr_v = svara_voice_new_male();
+var ctr_a = svara_synthctx_new(ctr_v, sp_sr);
+var ctr_b = svara_synthctx_new(ctr_v, sp_sr);
+var ctr_n = svara_synthctx_synthesize(ctr_a, SVARA_PH_TRILL_ALVEOLAR, ctr_v, 0x3FB47AE147AE147B, 0);
+var ctr_bb = sp_prep(ctr_b, ctr_v, ctr_n, SVARA_PH_TRILL_ALVEOLAR);
+var ctr_e = ref_ctx_trill(ctr_b, SVARA_PH_TRILL_ALVEOLAR, ctr_v, ctr_n);
+svara_ph_apply_envelope(ctr_bb, ctr_n);
+assert_eq(sp_diff(svara_synthctx_buffer(ctr_a), ctr_bb, ctr_n), 0,
+  "svara_synthctx_synthesize renders a trill as a trill");
+# A voiced plosive sets the source's breathiness to 0.30 for its tail and puts the voice's
+# back. Through svara_synthctx_synthesize the next preamble resets it anyway; a caller of
+# svara_synthctx_plosive itself relies on the restore.
+var cpl_v = svara_voice_new_female();
+var cpl = svara_synthctx_new(cpl_v, sp_sr);
+var cpl_b = sp_prep(cpl, cpl_v, 2205, SVARA_PH_PLOSIVE_B);
+var cpl_e = svara_synthctx_plosive(cpl, SVARA_PH_PLOSIVE_B, cpl_v, 2205);
+assert_eq(SvGlottalSource_breathiness(SvSynthCtx_glottal(cpl)), SvVoiceProfile_breathiness(cpl_v),
+  "after a voiced plosive the context's source has the voice's breathiness again");
 
 var rc = assert_summary();
 syscall(60, rc);

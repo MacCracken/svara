@@ -48,7 +48,7 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**27 suites, 1,441 assertions** at 3.13.0. One `.tcyr` per module, plus eleven that
+**27 suites, 1,445 assertions** at 3.14.0. One `.tcyr` per module, plus eleven that
 are not module ports:
 
 | Suite | What it is |

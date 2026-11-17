@@ -8,34 +8,17 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | in progress; one item left, needing a decision. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014), 3.12.0 kept the formant bank's state across retargets (ADR-0015), 3.13.0 voiced tone in every render (ADR-0016). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
-| **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
+| **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | next; unscheduled |
 
----
-
-## 3.9.x — the preserved Rust quirks
-
-Behaviours svara keeps because the oracle has them. Each needs a decision, recorded in
-an ADR. A fix changes output, so each one gets a minor of its own and its own test. The
-maintainer decides; the work before that is to measure the oracle's behaviour and lay
-out the options, as [ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md)
-did for 3.9.0.
-
-The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run it with
-[ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
-the Rust's output rather than its source.
-
-- [ ] **Plosives and trills depend on the render path.** Since 3.8.7 the two paths share
-      every run they write the same way (`svara_ph_*_run`), so what is left apart is
-      what the Rust itself does differently:
-      - `svara_ph_synth_plosive` uses the VOT fractions, an aspiration segment, a 0.30
-        breathiness and a 0.15 voiceless tail, while `svara_synthctx_plosive` uses a
-        fixed n/3 and n/6, no aspiration, 0.40 and 0.30. Both match the oracle:
-        `git show 3.5.2:rust-old/src/phoneme.rs`, `synthesize_plosive` and
-        `synthesize_plosive_ctx`.
-      - `svara_ph_synth_trill` modulates its amplitude at 15 to 25 Hz, while the
-        context renders a trill as an approximant. Both match the oracle too: at tag
-        `3.6.5`, `rust-old/src/phoneme.rs:1033` and `:1468`.
+The 3.8.x performance lane closed at 3.8.8; its method is in
+[`benchmarks.md`](../benchmarks.md#changing-a-hot-path). The 3.9.x lane, the Rust quirks svara had
+preserved, closed at 3.14.0, each decided by the maintainer in an ADR:
+- 3.9.0 read the glottal tilt as Klatt's TL ([ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md));
+- 3.10.0 applied the per-vowel tilt ([ADR-0013](../adr/0013-apply-the-per-vowel-spectral-tilt.md));
+- 3.11.0 gave the Rosenberg pulse its closing phase ([ADR-0014](../adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md));
+- 3.12.0 kept the formant bank's state across retargets ([ADR-0015](../adr/0015-retarget-the-formant-bank-without-resetting-it.md));
+- 3.13.0 voiced tone in every render ([ADR-0016](../adr/0016-honour-tone-in-every-sequence-render.md));
+- 3.14.0 gave both synthesis paths one plosive and one trill ([ADR-0017](../adr/0017-one-plosive-and-one-trill-for-both-paths.md)).
 
 ---
 
