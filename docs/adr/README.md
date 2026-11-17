@@ -32,6 +32,7 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 | [0009](0009-what-the-3-6-3-audit-leaves-open.md) | What the 3.6.3 audit leaves open | Accepted |
 | [0010](0010-refuse-a-bandwidth-whose-coefficients-overflow.md) | Refuse a bandwidth whose coefficients overflow | Accepted |
 | [0011](0011-retire-rust-old-keep-its-bar.md) | Retire `rust-old/`, and keep its bar | Accepted |
+| [0012](0012-the-glottal-spectral-tilt-reads-its-units.md) | What the glottal spectral tilt's value means | Accepted |
 
 0003–0006 predate the Cyrius port (Rust v1.0.0) and were re-homed here from
 `docs/architecture/` on 2026-08-26; they are domain decisions and survive the port.

@@ -229,8 +229,14 @@ SvGlottalSource_set_current_amplitude(pin_gs, 1020);
 SvGlottalSource_set_rng(pin_gs, 1021);
 SvGlottalSource_set_aspiration_noise(pin_gs, 1022);
 SvGlottalSource_set_vibrato_lfo(pin_gs, 1023);
+SvGlottalSource_set_tilt_alpha(pin_gs, 1024);
+SvGlottalSource_set_tilt_alpha_tilt(pin_gs, 1025);
+SvGlottalSource_set_tilt_alpha_rate(pin_gs, 1026);
 var pin_gs_bad = 0;
 if (load64(pin_gs + SV_GS_MODEL) != 1000) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TILT_ALPHA) != 1024) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TILT_ALPHA_TILT) != 1025) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TILT_ALPHA_RATE) != 1026) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_LF_TA) != 1002) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_LF_TE) != 1003) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_LF_EE) != 1004) { pin_gs_bad = pin_gs_bad + 1; }
@@ -252,8 +258,126 @@ if (load64(pin_gs + SV_GS_CURRENT_AMPLITUDE) != 1020) { pin_gs_bad = pin_gs_bad 
 if (load64(pin_gs + SV_GS_RNG) != 1021) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_ASPIRATION_NOISE) != 1022) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_VIBRATO_LFO) != 1023) { pin_gs_bad = pin_gs_bad + 1; }
-assert_eq(pin_gs_bad, 0, "the 22 offsets read the fields their accessors write");
+assert_eq(pin_gs_bad, 0, "the 25 offsets read the fields their accessors write");
 assert_eq(load64(pin_gs + SV_GS_MODEL + 8) != 1000, 1, "control: the next word holds another field");
+
+# 10*log10 of the power gain at 3 kHz of y = (1-a)x + a*y[n-1], from its transfer
+# function (1-a) / (1 - a z^-1): ADR-0012's definition of TL, computed here, not by svara.
+#must_use
+fn tl_gain_db(a, sr) {
+    var c = f64_cos(f64_div(f64_mul(F64_TAU, f64_from(3000)), sr));
+    var num = f64_mul(f64_sub(F64_ONE, a), f64_sub(F64_ONE, a));
+    var den = f64_add(f64_sub(F64_ONE, f64_mul(f64_mul(F64_TWO, a), c)), f64_mul(a, a));
+    return f64_div(f64_mul(f64_from(10), f64_log2(f64_div(num, den))), f64_log2(f64_from(10)));
+}
+
+# Samples of two glottal sources over n samples that differ in any bit.
+#must_use
+fn tl_pair(ga, gb, n) {
+    var bad = 0;
+    var i = 0;
+    while (i < n) {
+        if (svara_glottal_next_sample(ga) != svara_glottal_next_sample(gb)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# A Rosenberg source at 120 Hz with no jitter, shimmer or breathiness, at tilt t.
+#must_use
+fn tl_source(t, sr) {
+    var g = svara_glottal_new(f64_from(120), sr);
+    svara_glottal_set_jitter(g, 0);
+    svara_glottal_set_shimmer(g, 0);
+    svara_glottal_set_breathiness(g, 0);
+    svara_glottal_set_spectral_tilt(g, t);
+    return g;
+}
+
+# ================================================================
+test_group("3.9.0: the voiced tilt is Klatt's TL, dB down at 3 kHz (ADR-0012)");
+# ================================================================
+# Through 3.8.8 the coefficient was exp(-2*pi*tilt/sr), the Rust's: a one-pole low-pass
+# with its corner at `tilt` hertz, so a tilt of 2 was a 2 Hz low-pass in front of the voice.
+var tl_bad = 0;
+var tl_rates = vec_new();
+vec_push(tl_rates, f64_from(16000)); vec_push(tl_rates, SR); vec_push(tl_rates, f64_from(96000));
+var tl_vals = vec_new();
+vec_push(tl_vals, 0x3FB999999999999A); vec_push(tl_vals, F64_ONE); vec_push(tl_vals, F64_TWO);
+vec_push(tl_vals, f64_from(6)); vec_push(tl_vals, f64_from(12)); vec_push(tl_vals, f64_from(40));
+var tri = 0;
+while (tri < vec_len(tl_rates)) {
+    var tvi = 0;
+    while (tvi < vec_len(tl_vals)) {
+        var tlv = vec_get(tl_vals, tvi);
+        var ta = svara_glottal_tilt_alpha(tlv, vec_get(tl_rates, tri));
+        if (approx(tl_gain_db(ta, vec_get(tl_rates, tri)), f64_neg(tlv), TOL_1EM9) == 0) { tl_bad = tl_bad + 1; }
+        tvi = tvi + 1;
+    }
+    tri = tri + 1;
+}
+assert_eq(tl_bad, 0, "each coefficient's gain at 3 kHz is TL dB down, TL 0.1 to 40, at 16, 44.1 and 96 kHz");
+assert_eq(svara_glottal_tilt_alpha(0, SR), 0, "TL 0 is no filter: alpha exactly 0");
+assert_eq(svara_glottal_tilt_alpha(0x7FF0000000000000, SR), F64_ONE, "TL +inf is alpha exactly 1");
+
+var tl_flat = tl_source(0, SR);
+var tl_neg = tl_source(f64_neg(F64_TWO), SR);
+var tl_nan = tl_source(f64_div(0, 0), SR);
+var tl_flat2 = tl_source(0, SR);
+assert_eq(tl_pair(tl_flat, tl_neg, 2000), 0, "a negative tilt leaves the pulse unfiltered, bit for bit");
+assert_eq(tl_pair(tl_flat2, tl_nan, 2000), 0, "so does a NaN tilt");
+
+# The coefficient is memoized on the tilt's bits: a tilt written through the derived
+# accessor, which skips the setter, must still be solved, and a change re-solves it.
+var tl_set = tl_source(f64_from(6), SR);
+var tl_acc = tl_source(0, SR);
+SvGlottalSource_set_spectral_tilt(tl_acc, f64_from(6));
+var tl_memo = tl_pair(tl_set, tl_acc, 1000);
+svara_glottal_set_spectral_tilt(tl_set, F64_TWO);
+SvGlottalSource_set_spectral_tilt(tl_acc, F64_TWO);
+tl_memo = tl_memo + tl_pair(tl_set, tl_acc, 1000);
+assert_eq(tl_memo, 0, "a tilt set through the accessor, and changed mid-stream, gives the setter's bits");
+# Both sources above run the same memo, so they agree even if it never re-solved. Hold
+# the memo's coefficient to a fresh solve after each change.
+assert_eq(load64(tl_set + SV_GS_TILT_ALPHA), svara_glottal_tilt_alpha(F64_TWO, SR),
+  "after a change through the setter the memo holds tilt 2's coefficient");
+assert_eq(load64(tl_acc + SV_GS_TILT_ALPHA), svara_glottal_tilt_alpha(F64_TWO, SR),
+  "after a change through the accessor it does too");
+var tl_small = tl_source(F64_HALF, SR);
+var tl_none = tl_source(0, SR);
+assert_eq(tl_pair(tl_small, tl_none, 1000) > 0, 1, "a tilt of 0.5, below 1, still filters the pulse");
+var tl_two = tl_source(F64_TWO, SR);
+var tl_six = tl_source(f64_from(6), SR);
+assert_eq(tl_pair(tl_two, tl_six, 1000) > 0, 1, "control: tilts 2 and 6 give different pulses");
+
+# ================================================================
+test_group("3.9.0: whisper keeps the Rust's noise integrator (ADR-0012)");
+# ================================================================
+# rust-old/src/glottal.rs:440-443 at tag 3.6.5: a one-pole whose corner is the tilt
+# in hertz, at least 12, on the aspiration noise scaled by 0.15. Rebuilt here from a
+# second white-noise generator on the source's seed, 42, and held to the source bit
+# for bit, at tilt 0 (the 12 Hz floor) and at tilt 30.
+#must_use
+fn wh_pair(tilt, sr, n) {
+    var g = svara_glottal_new(f64_from(120), sr);
+    svara_glottal_set_whisper(g);
+    svara_glottal_set_spectral_tilt(g, tilt);
+    var nz = noise_new(NOISE_WHITE, 42);
+    var corner = f64_max(tilt, f64_from(12));
+    var a = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, corner)), sr));
+    var st = 0;
+    var bad = 0;
+    var i = 0;
+    while (i < n) {
+        st = f64_add(f64_mul(f64_mul(f64_sub(F64_ONE, a), noise_next_sample(nz)), 0x3FC3333333333333),
+          f64_mul(a, st));
+        if (svara_glottal_next_sample(g) != st) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+assert_eq(wh_pair(0, SR, 2000), 0, "whisper at tilt 0 is the 12 Hz integrator, bit for bit");
+assert_eq(wh_pair(f64_from(30), SR, 2000), 0, "whisper at tilt 30 is a 30 Hz integrator, bit for bit");
 
 var rc = assert_summary();
 syscall(60, rc);

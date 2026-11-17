@@ -926,9 +926,11 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room) {
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
-    # NOTE (v2.0.1 quirk, preserved): phoneme_spectral_tilt is metadata only,
-    # not applied to the glottal source here (the one-pole tilt filter would
-    # sap signal energy). Consumers apply it in post if desired.
+    # NOTE (v2.0.1 quirk, preserved): phoneme_spectral_tilt is metadata only, not
+    # applied to the glottal source here. The Rust left it off because its tilt
+    # filter, reading dB as hertz, muted the voice: /a/'s 1.87 cost 33.6 dB. Since
+    # 3.9.0 the filter reads Klatt's TL (ADR-0012) and /a/'s tilt would cost 1.5 dB;
+    # applying it is a decision of its own, on the roadmap's 3.9.x list.
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_tract_synthesize_into(tract, glottal, buf, n);

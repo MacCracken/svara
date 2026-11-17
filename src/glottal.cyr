@@ -39,6 +39,8 @@ var SV_G_0_8   = 0x3FE999999999999A;   # 0.8
 var SV_G_2_4   = 0x4003333333333333;   # 2.4
 var SV_G_2_7   = 0x400599999999999A;   # 2.7
 var SV_G_5_0   = 0x4014000000000000;   # 5.0
+var SV_G_LN10_OVER_10 = 0x3FCD791C5F888823;   # ln(10) / 10 = 0.2302585092994046
+var SV_G_TL_HZ = 0x40A7700000000000;          # 3000.0, where Klatt's TL is read
 
 # GlottalSource -- selectable-model excitation generator (naad-backend layout).
 #derive(accessors)
@@ -49,6 +51,7 @@ struct SvGlottalSource {
     vibrato_rate; vibrato_depth; tilt_state;
     phase; current_period; current_amplitude;
     rng; aspiration_noise; vibrato_lfo;
+    tilt_alpha; tilt_alpha_tilt; tilt_alpha_rate;
 }
 
 # The offsets of the SvGlottalSource fields the per-sample code reads and writes (3.8.5).
@@ -77,6 +80,9 @@ const SV_GS_CURRENT_AMPLITUDE = 160;
 const SV_GS_RNG = 168;
 const SV_GS_ASPIRATION_NOISE = 176;
 const SV_GS_VIBRATO_LFO = 184;
+const SV_GS_TILT_ALPHA = 192;
+const SV_GS_TILT_ALPHA_TILT = 200;
+const SV_GS_TILT_ALPHA_RATE = 208;
 
 # lf_params_from_rd -- derive LF (ta, te, ee) from Rd; writes 3 f64 slots.
 # rd clamped to [0.3, 2.7]. Fant (1995) simplified mapping.
@@ -144,6 +150,9 @@ fn svara_glottal_new(f0, sample_rate) {
     SvGlottalSource_set_vibrato_rate(self, 0);
     SvGlottalSource_set_vibrato_depth(self, 0);
     SvGlottalSource_set_tilt_state(self, 0);
+    SvGlottalSource_set_tilt_alpha(self, 0);
+    SvGlottalSource_set_tilt_alpha_tilt(self, 0);
+    SvGlottalSource_set_tilt_alpha_rate(self, 0);
     SvGlottalSource_set_phase(self, 0);
     SvGlottalSource_set_current_period(self, f64_div(sample_rate, f0));
     SvGlottalSource_set_current_amplitude(self, F64_ONE);
@@ -327,7 +336,10 @@ fn svara_glottal_set_shimmer(self, s) {
     SvGlottalSource_set_shimmer(self, f64_clamp(s, 0, SV_G_0_1));
 }
 
-# set_spectral_tilt -- source high-frequency roll-off in dB/octave (signed).
+# set_spectral_tilt -- the voiced pulse's high-frequency roll-off, as Klatt's TL:
+# dB of attenuation at 3 kHz against 0 Hz (ADR-0012, 3.9.0). 0 or below, or NaN,
+# leaves the pulse unfiltered; +inf mutes it. The whisper model reads the value
+# differently, as the corner of its noise integrator (svara_glottal_whisper_sample).
 fn svara_glottal_set_spectral_tilt(self, tilt) {
     SvGlottalSource_set_spectral_tilt(self, tilt);
 }
@@ -436,7 +448,9 @@ fn svara_glottal_lf_pulse(self, t) {
     return 0;
 }
 
-# whisper_sample -- noise-only with a steep (>=12 dB/oct) spectral tilt.
+# whisper_sample -- noise-only, through the Rust's one-pole noise integrator. Its
+# corner is the tilt read as hertz, at least 12 Hz, and the 0.15 input scale is
+# tuned to it. ADR-0012 keeps it as it is: whisper does not read the tilt as TL.
 fn svara_glottal_whisper_sample(self) {
     var noise = noise_next_sample(load64(self + SV_GS_ASPIRATION_NOISE));
     var tilt = f64_max(load64(self + SV_GS_SPECTRAL_TILT), f64_from(12));
@@ -491,6 +505,35 @@ fn svara_glottal_new_period(self) {
     store64(self + SV_GS_CURRENT_AMPLITUDE, amp);
 }
 
+# tilt_alpha -- the one-pole coefficient alpha for y = (1-alpha)x + alpha*y[n-1]
+# whose gain at 3 kHz is `tl` dB below its gain at 0 Hz: Klatt's TL (ADR-0012).
+# With g = 10^(-tl/10), the power gain wanted, and c = cos(2*pi*3000/sr), the
+# quadratic (1-g)a^2 - 2(1-gc)a + (1-g) = 0 has the root below 1
+#   a = (1-g) / ((1-gc) + sqrt(g(1-c)(2-g(1+c))))
+# written in that form so a small tl does not cancel. 0 for tl 0, 1 for +inf.
+#must_use
+fn svara_glottal_tilt_alpha(tl, sample_rate) {
+    var g = f64_exp(f64_neg(f64_mul(tl, SV_G_LN10_OVER_10)));
+    var c = f64_cos(f64_div(f64_mul(F64_TAU, SV_G_TL_HZ), sample_rate));
+    var d = f64_sqrt(f64_mul(f64_mul(g, f64_sub(F64_ONE, c)), f64_sub(F64_TWO, f64_mul(g, f64_add(F64_ONE, c)))));
+    return f64_div(f64_sub(F64_ONE, g), f64_add(f64_sub(F64_ONE, f64_mul(g, c)), d));
+}
+
+# tilt_alpha_for -- svara_glottal_tilt_alpha(tilt, the source's sample rate),
+# memoized on both values' exact bits, so it is solved once per change of either
+# rather than once per sample. The memo is also right after a derived-accessor
+# write or a restore, which set the fields without a setter.
+#must_use
+fn svara_glottal_tilt_alpha_for(self, tilt) {
+    var sr = load64(self + SV_GS_SAMPLE_RATE);
+    if ((tilt != load64(self + SV_GS_TILT_ALPHA_TILT)) | (sr != load64(self + SV_GS_TILT_ALPHA_RATE))) {
+        store64(self + SV_GS_TILT_ALPHA, svara_glottal_tilt_alpha(tilt, sr));
+        store64(self + SV_GS_TILT_ALPHA_TILT, tilt);
+        store64(self + SV_GS_TILT_ALPHA_RATE, sr);
+    }
+    return load64(self + SV_GS_TILT_ALPHA);
+}
+
 # next_sample -- one glottal-source sample. Whisper is pure noise; otherwise a
 # model pulse with spectral tilt, shimmer, and gated aspiration-noise mix.
 fn svara_glottal_next_sample(self) {
@@ -507,10 +550,10 @@ fn svara_glottal_next_sample(self) {
         pulse = svara_glottal_lf_pulse(self, t);
     }
 
-    # spectral tilt one-pole low-pass
-    if (f64_gt(load64(self + SV_GS_SPECTRAL_TILT), 0) == 1) {
-        var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, load64(self + SV_GS_SPECTRAL_TILT))),
-            load64(self + SV_GS_SAMPLE_RATE)));
+    # spectral tilt: a one-pole low-pass whose coefficient gives the tilt's TL at 3 kHz
+    var tilt = load64(self + SV_GS_SPECTRAL_TILT);
+    if (f64_gt(tilt, 0) == 1) {
+        var alpha = svara_glottal_tilt_alpha_for(self, tilt);
         var filtered = f64_add(f64_mul(f64_sub(F64_ONE, alpha), pulse),
           f64_mul(alpha, load64(self + SV_GS_TILT_STATE)));
         store64(self + SV_GS_TILT_STATE, filtered);

@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-11-16 — the glottal tilt reads its units
+
+Minor release: output changes, by decision ([ADR-0012](docs/adr/0012-the-glottal-spectral-tilt-reads-its-units.md)),
+the first of the 3.9.x quirks.
+
+**The bug.** `svara_glottal_set_spectral_tilt` was documented as dB/octave, but the voiced
+pulse's filter read the value as the corner of a one-pole low-pass in hertz:
+`exp(-2π·tilt/sr)`, the Rust's own formula. So any tilt above 0 put a low-pass of a few hertz in
+front of the voice and muted it by about 33 dB. That is why the Rust never applies the per-vowel
+tilt.
+
+The same filter takes the effort presets' tilts, so `svara_voice_create_glottal_source_with_effort`
+gave an /a/ through the tract at these levels:
+
+| Effort | tilt | 3.8.8 | 3.9.0 |
+|---|---:|---:|---:|
+| whisper | 12 | −101.3 dB | −101.3 dB |
+| soft | 6 | −68.4 dB | −61.0 dB |
+| **normal** | 2 | **−85.9 dB** | −60.4 dB |
+| loud | 0 | −60.0 dB | −60.0 dB |
+| shout | 0 | −63.5 dB | −63.5 dB |
+
+"Normal" was 26 dB below "loud" and 17 dB below "soft". Now soft, normal and loud are in order.
+
+**What moved.** Against 3.8.8, none of the 558,721 sweep values moved and the JSON is
+byte-identical: no sweep case builds an effort voice, and none sets a tilt outside the hostile
+cases. Of the 638 hostile cases, the exit codes are all unchanged. The 378 raw values that moved
+are all entry 50, `svara_glottal_set_spectral_tilt` with a hostile value:
+- **+Inf, MAX, 2^63, 1e19 and 3e9** read as near-infinite attenuation now, so they mute the voiced
+  pulse to 0.0. They used to read as a corner above Nyquist and leave it unfiltered.
+- **A subnormal tilt** used to give a coefficient of exactly 1, which froze the pulse at 0. It
+  now gives exactly the tilt-0 output, as a TL that small should.
+
+Retired instructions are unchanged on every probe, since none of them sets a tilt.
+**1,391 assertions / 27 suites.**
+
+### Changed
+
+- **The voiced pulse's tilt is Klatt's TL**: the filter's attenuation at 3 kHz, in dB below its
+  gain at 0 Hz.
+  - `svara_glottal_tilt_alpha(tl, sample_rate)` solves the one-pole coefficient. The root is
+    written so that a small TL does not cancel.
+  - `svara_glottal_tilt_alpha_for` memoizes the coefficient on the exact bits of the tilt and the
+    sample rate, so it is solved once per change instead of with an `exp` every sample. A tilt
+    written through the derived accessor, or by `svara_glottal_restore`, is solved too.
+  - The memo lives in three fields appended to `SvGlottalSource` (`SV_GS_TILT_ALPHA*`), so no
+    existing offset moves.
+- **The effort presets keep their numbers.** Read as TL, 2, 6 and 12 dB at 3 kHz are the mild to
+  steep range Klatt's synthesizers use.
+- **Whisper keeps the Rust's noise integrator**: a one-pole at the tilt in hertz, at least 12, with
+  its 0.15 input scale tuned to it. Its comment now says so.
+- **A tilt of 0 or below, or NaN, leaves the pulse unfiltered, as before.**
+- Comments on `svara_glottal_set_spectral_tilt`, the effort constructor,
+  `svara_bridge_spectral_tilt_from_distance` and the vowel synth say what the value means now.
+  The vowel synth still leaves its own tilt unapplied: that is a separate decision on the 3.9.x
+  list, and with the fixed filter /a/'s tilt would cost 1.5 dB, not 33.6.
+
+### Added
+
+- **ADR-0012**, accepted. It records the measurements, the maintainer's choice of TL over keeping
+  the Rust's filter or designing a true dB/octave cascade, and the decision to leave the
+  per-vowel tilt for later.
+- **`tests/glottal.tcyr`: the tilt is TL** (10 assertions):
+  - each coefficient's gain at 3 kHz, from the filter's transfer function, is TL dB down, for TL
+    0.1 to 40 at 16, 44.1 and 96 kHz;
+  - TL 0 gives exactly 0, and +inf exactly 1;
+  - negative and NaN tilts give the unfiltered pulse, bit for bit, and a tilt of 0.5 filters it;
+  - a tilt written through the accessor, and changed mid-stream, gives the setter's bits, and
+    after the change the memo holds a fresh solve's coefficient.
+
+  The offset pin now covers the three new fields.
+- **`tests/glottal.tcyr`: whisper keeps the Rust's integrator** (2 assertions). The test rebuilds
+  `glottal.rs:440-443` at tag 3.6.5 from a second noise generator on the source's seed. It holds
+  whisper to that bit for bit at tilt 0, the 12 Hz floor, and at tilt 30.
+- **`tests/voice.tcyr`: the effort order** (3 assertions). An /a/ at normal effort is within a dB
+  of loud, below it, and above soft. Through 3.8.8 it was 26 dB below loud.
+- **`docs/development/integration-guide.md`: "Spectral tilt (3.9.0)"**, for consumers who balanced
+  levels against the old behaviour.
+- **7 mutants, each failing an assertion:**
+  - the Rust's formula put back;
+  - the TL read at 2 kHz, or as an amplitude rather than a power;
+  - normal effort's tilt set to 0;
+  - a memo that ignores the tilt;
+  - a filter engaged only above 1;
+  - whisper switched to the TL coefficient.
+
+  The last three passed the first version of these tests. The memo test then compared two
+  sources running the same memo, so it could not see one that never re-solved; nothing rendered
+  a tilt below 1; and nothing pinned whisper. The memo, small-tilt and whisper assertions above
+  are what catch them.
+
 ## [3.8.8] - 2026-11-16 — the performance lane closed
 
 The last 3.8.x item is decided, and the lane is measured end to end. `src/` differs from 3.8.7

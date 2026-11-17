@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.9.0** (2026-11-16) — **the glottal tilt reads its units.** The first 3.9.x quirk,
+decided by the maintainer and recorded in ADR-0012. `svara_glottal_set_spectral_tilt` was
+documented as dB/octave but read the value as a low-pass corner in hertz, the Rust's formula,
+so any tilt above 0 muted the voice by about 33 dB. Normal effort came out 26 dB below
+loud. The tilt is now Klatt's TL (dB down at 3 kHz), with the coefficient memoized per
+change. Soft, normal and loud come out at −61.0, −60.4 and −60.0 dB. Whisper keeps the
+Rust's integrator, and the per-vowel tilt stays unapplied, for a decision of its own. In the
+sweep, only hostile entry 50 moved. **1,391 assertions / 27 suites**, `cyrius audit` exit 0.
+
 **3.8.8** (2026-11-16) — **the performance lane closed.** `svara_seq_crossfade` stays
 public in `src/`: hoosh's suite calls it as the reference for its own streamed crossfade.
 `docs/benchmarks.md`'s table is now measured across the lane, 3.8.2's benches run in turn
@@ -393,11 +402,11 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L0 | math.rs | — | ✅ n/a | — | libm/std shim → maps to ganita/f64 builtins; no module needed |
 | L1 | formant.rs | src/formant.cyr | ✅ ported | 41 | svara's own 8× bandpass bank, one record per slot since 3.8.4 (NOT naad); golden coeffs+output verified |
 | L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
-| L2 | glottal.rs | src/glottal.cyr | ✅ ported | 41 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
+| L2 | glottal.rs | src/glottal.cyr | ✅ ported | 53 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified; tilt read as Klatt's TL since 3.9.0 (ADR-0012) |
 | L2 | tract.rs | src/tract.cyr | ✅ ported | 16 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
 | L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
-| L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
+| L3 | voice.rs | src/voice.cyr | ✅ ported | 36 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
 | L3 | prosody.rs | src/prosody.cyr | ✅ ported | 17 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
 | L3 | trajectory.rs | src/trajectory.cyr | ✅ ported | 12 | TrajectoryPlanner + FormantKeypoint; Catmull-Rom + resistance blend; speaking-rate |
 | L3 | sequence.rs | src/sequence.cyr | ✅ ported | 29 | PhonemeEvent/Sequence; coarticulation crossfade render + trajectory-planned render_planned; cluster compression |
@@ -412,7 +421,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,376 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
+1,391 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -495,8 +504,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (375 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,376 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (377 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,391 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

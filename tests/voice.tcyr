@@ -9,8 +9,11 @@ include "lib/hashmap.cyr"
 include "lib/bayan.cyr"
 include "src/error.cyr"
 include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
 include "src/formant.cyr"
 include "src/glottal.cyr"
+include "src/tract.cyr"
 include "src/voice.cyr"
 include "tests/approx.cyr"
 
@@ -135,6 +138,41 @@ var soft_gs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male
 assert_eq(v_all_finite(soft_gs, 1024), 1, "soft all finite");
 var loud_gs = svara_voice_create_glottal_source_with_effort(svara_voice_new_male(), SVARA_EFFORT_LOUD, SR);
 assert_eq(v_all_finite(loud_gs, 1024), 1, "loud all finite");
+
+# Energy of an /a/ through a tract, from the voice's glottal source at `effort`:
+# 1 s at sr, the first 0.1 s skipped while the tract settles.
+#must_use
+fn v_effort_energy(effort, sr) {
+    var voice = svara_voice_new_male();
+    var tract = svara_tract_new(sr);
+    var e = svara_tract_set_formants(tract,
+      svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)));
+    var gs = svara_voice_create_glottal_source_with_effort(voice, effort, sr);
+    var acc = 0;
+    var i = 0;
+    var n = f64_to(sr);
+    var skip = n / 10;
+    while (i < n) {
+        var s = svara_tract_process_sample(tract, svara_glottal_next_sample(gs));
+        if (i >= skip) { acc = f64_add(acc, f64_mul(s, s)); }
+        i = i + 1;
+    }
+    return acc;
+}
+
+# ================================================================
+test_group("3.9.0: soft, normal and loud effort come out in order (ADR-0012)");
+# ================================================================
+# Through 3.8.8 the tilt filter read normal's 2 as a 2 Hz corner, and an /a/ at normal
+# effort came out 26 dB below loud and 17 dB below soft. Read as Klatt's TL, normal sits
+# within a dB of loud and above soft.
+var eo_soft = v_effort_energy(SVARA_EFFORT_SOFT, SR);
+var eo_norm = v_effort_energy(SVARA_EFFORT_NORMAL, SR);
+var eo_loud = v_effort_energy(SVARA_EFFORT_LOUD, SR);
+var eo_db = 0x3FE96B230BCDC434;   # 10^(-1/10) = 0.7943, a dB down in power
+assert_eq(f64_gt(eo_norm, f64_mul(eo_loud, eo_db)), 1, "normal effort is within a dB of loud");
+assert_eq(f64_lt(eo_norm, eo_loud), 1, "normal effort is below loud");
+assert_eq(f64_gt(eo_norm, eo_soft), 1, "normal effort is above soft");
 
 var rc = assert_summary();
 syscall(60, rc);

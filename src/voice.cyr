@@ -251,7 +251,9 @@ fn svara_voice_create_glottal_source(self, sample_rate) {
     return gs;
 }
 
-# create_glottal_source_with_effort -- as above + effort model/tilt/scaling.
+# create_glottal_source_with_effort -- as above + effort model/tilt/scaling. The
+# effort's tilt goes to svara_glottal_set_spectral_tilt, which reads it as Klatt's TL,
+# dB down at 3 kHz (ADR-0012, 3.9.0); whisper's 12 is its noise integrator's corner.
 #must_use
 fn svara_voice_create_glottal_source_with_effort(self, effort, sample_rate) {
     var p = svara_effort_params(effort);

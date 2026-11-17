@@ -119,7 +119,9 @@ fn svara_bridge_bandwidth_scale_from_reverb(rt60) {
     var r = f64_max(rt60, 0);
     return f64_min(f64_add(F64_ONE, f64_mul(0.4, r)), F64_TWO);
 }
-# spectral_tilt_from_distance -- air absorption, capped at 6 dB/oct.
+# spectral_tilt_from_distance -- air absorption as a tilt for
+# svara_glottal_set_spectral_tilt, 0.005 per metre, capped at 6. The Rust called it
+# dB/octave; since 3.9.0 the setter reads it as dB down at 3 kHz (ADR-0012).
 #must_use
 fn svara_bridge_spectral_tilt_from_distance(distance_m) {
     return f64_min(f64_mul(distance_m, 0.005), f64_from(6));

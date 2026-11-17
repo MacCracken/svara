@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.8"
+tag = "3.9.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -230,6 +230,17 @@ var gain = svara_bridge_gain_from_distance(F64_ONE, f64_from(5));   # 5 m away
 # from badal (weather)
 var effort = svara_bridge_lombard_effort_from_noise(f64_from(70));  # 70 dB SPL
 ```
+
+## Spectral tilt (3.9.0)
+
+`svara_glottal_set_spectral_tilt` reads its value as Klatt's TL: the voiced pulse's
+attenuation at 3 kHz, in dB below its gain at 0 Hz. Through 3.8.8 it read the value as
+the corner of a low-pass in hertz, as the Rust does, so any tilt above 0 muted the
+voice by about 33 dB. A voice built at soft or normal effort
+(`svara_voice_create_glottal_source_with_effort`) is therefore louder and brighter
+since 3.9.0: normal now sits within a dB of loud instead of 26 dB below it. Whisper is
+unchanged. Retune anything balanced against the old levels. The reasons are in
+[ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md).
 
 ## Quality scaling
 
