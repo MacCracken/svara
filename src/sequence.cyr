@@ -22,10 +22,10 @@ var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 # (rust-old/src/sequence.rs); it is preserved for parity until it is decided in
 # docs/development/roadmap.md 3.9.x, and any fix gets a minor and its own test.
 #
-# The other two quirks are annotated at src/glottal.cyr (set_speed_quotient is
-# ignored by the Rosenberg pulse) and src/phoneme.cyr (per-vowel spectral tilt
-# is computed but not applied). This one had been described only in state.md
-# and annotated nowhere in code.
+# The other two are decided: the per-vowel spectral tilt is applied since 3.10.0
+# (ADR-0013), and the Rosenberg pulse honours set_speed_quotient since 3.11.0
+# (ADR-0014). This one had been described only in state.md and annotated nowhere
+# in code.
 
 # PhonemeEvent -- a timed phoneme. tone = SVARA_TONE_NONE or a SVARA_TONE_* value.
 #derive(accessors)

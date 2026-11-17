@@ -16,7 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.10.0** | ✅ Yes | current; needs cyrius 6.7.2 or later. Changes every vowel and diphthong, which now carry their spectral tilt ([ADR-0013](docs/adr/0013-apply-the-per-vowel-spectral-tilt.md)) |
+| **3.11.0** | ✅ Yes | current; needs cyrius 6.7.2 or later. Changes every voice on the default Rosenberg pulse, which gains its closing phase ([ADR-0014](docs/adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md)) |
+| 3.10.0 | ✅ Yes | changes every vowel and diphthong, which now carry their spectral tilt ([ADR-0013](docs/adr/0013-apply-the-per-vowel-spectral-tilt.md)) |
 | 3.9.0 | ✅ Yes | changes output for voices at soft or normal effort, and for any spectral tilt above 0 ([ADR-0012](docs/adr/0012-the-glottal-spectral-tilt-reads-its-units.md)) |
 | 3.6.5 – 3.8.8 | ✅ Yes | later releases add the streaming render, speed and smaller renders, and change no output |
 | 3.6.4 | ⚠ Upgrade | concurrent renders and a huge finite bandwidth can give silent wrong answers, below |

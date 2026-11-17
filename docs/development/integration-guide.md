@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.10.0"
+tag = "3.11.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -247,6 +247,21 @@ unchanged. Retune anything balanced against the old levels. The reasons are in
 `svara_phoneme_tilt_tl(p)`, which is `svara_phoneme_spectral_tilt(p)`'s dB/octave held from
 300 Hz to 3 kHz. Open vowels come out darker and softer than in 3.9.0: /a/ loses 4.6 dB
 overall and 5.7 dB above 2 kHz. Close vowels barely move: /i/ loses 0.4 dB.
+
+## The Rosenberg pulse (3.11.0)
+
+The default glottal model's pulse is Rosenberg's B in full since 3.11.0: an opening phase, then a
+closing phase, with `svara_glottal_set_speed_quotient` setting their ratio. Through 3.10.0 it was
+the Rust's opening phase alone, closed at once, and the speed quotient did nothing. Every voice on
+the default model sounds darker.
+
+A gain keeps a default male /a/ at 3.10.0's loudness, but other phonemes move against 3.10.0:
+- /i/ gains 7.5 dB, /m/ and /r/ about 5, and /o/ 2;
+- /u/ and /ə/ lose about 1;
+- the diphthong /aɪ/ gains 17.9 dB.
+
+Voices built at an effort level use the LF model and do not change. The details are in
+[ADR-0014](../adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md).
 
 ## Quality scaling
 

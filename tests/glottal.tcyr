@@ -73,15 +73,21 @@ assert_eq(svara_is_err(svara_glottal_new(f64_from(3000), SR)), 1, "f0=3000 rejec
 
 # ================================================================
 test_group("Rosenberg first-period output (golden, breathiness=0)");
+# Since 3.11.0 (ADR-0014) the full Rosenberg B: opening 3x^2 - 2x^3 over Tp = OQ*SQ/(1+SQ),
+# closing 1 - y^2 over Tn = OQ - Tp, at a peak of 7.13033049099316. Values computed from
+# that definition in Python (OQ 0.6, SQ 2, period 44100/120), not from svara. Through
+# 3.10.0 the pulse was the Rust's: the opening polynomial over all of OQ, then 0.
 var gr = svara_glottal_new(f64_from(120), SR);
 var buf = alloc(251 * 8);
 var i = 0;
 while (i < 251) { store64(buf + i * 8, svara_glottal_next_sample(gr)); i = i + 1; }
 assert_eq(load64(buf), 0, "sample[0] = 0 (t=0)");
-assert_eq(approx(load64(buf + 1 * 8),   0x3F10204718AA29EE, TOL_1EM9), 1, "sample[1]");
-assert_eq(approx(load64(buf + 50 * 8),  0x3FC0C28F37645C94, TOL_1EM9), 1, "sample[50]");
-assert_eq(approx(load64(buf + 110 * 8), 0x3FDFE422D797AA1B, TOL_1EM9), 1, "sample[110] (near peak)");
-assert_eq(approx(load64(buf + 220 * 8), 0x3FEFFFDFB2ECD62C, TOL_1EM9), 1, "sample[220] (t<0.6)");
+assert_eq(approx(load64(buf + 1 * 8),   0x3F502528A02BA5CF, TOL_1EM9), 1, "sample[1], opening");
+assert_eq(approx(load64(buf + 50 * 8),  0x3FFE9E1F1AA0678D, TOL_1EM9), 1, "sample[50], opening");
+assert_eq(approx(load64(buf + 110 * 8), 0x4018029AB42DAF59, TOL_1EM9), 1, "sample[110], opening");
+assert_eq(approx(load64(buf + 147 * 8), 0x401C85755B31F2F0, TOL_1EM9), 1, "sample[147] (t = Tp), the peak");
+assert_eq(approx(load64(buf + 200 * 8), 0x400B61DC0FC8D096, TOL_1EM9), 1, "sample[200], closing");
+assert_eq(approx(load64(buf + 220 * 8), 0x3FB8C01B894B5DAD, TOL_1EM9), 1, "sample[220], closing, near 0");
 assert_eq(load64(buf + 250 * 8), 0, "sample[250] = 0 (closed phase, t>0.6)");
 
 # ================================================================
@@ -234,6 +240,7 @@ SvGlottalSource_set_tilt_alpha_tilt(pin_gs, 1025);
 SvGlottalSource_set_tilt_alpha_rate(pin_gs, 1026);
 var pin_gs_bad = 0;
 if (load64(pin_gs + SV_GS_MODEL) != 1000) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_SPEED_QUOTIENT) != 1008) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA) != 1024) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA_TILT) != 1025) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA_RATE) != 1026) { pin_gs_bad = pin_gs_bad + 1; }
@@ -258,7 +265,7 @@ if (load64(pin_gs + SV_GS_CURRENT_AMPLITUDE) != 1020) { pin_gs_bad = pin_gs_bad 
 if (load64(pin_gs + SV_GS_RNG) != 1021) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_ASPIRATION_NOISE) != 1022) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_VIBRATO_LFO) != 1023) { pin_gs_bad = pin_gs_bad + 1; }
-assert_eq(pin_gs_bad, 0, "the 25 offsets read the fields their accessors write");
+assert_eq(pin_gs_bad, 0, "the 26 offsets read the fields their accessors write");
 assert_eq(load64(pin_gs + SV_GS_MODEL + 8) != 1000, 1, "control: the next word holds another field");
 
 # 10*log10 of the power gain at 3 kHz of y = (1-a)x + a*y[n-1], from its transfer
@@ -378,6 +385,46 @@ fn wh_pair(tilt, sr, n) {
 }
 assert_eq(wh_pair(0, SR, 2000), 0, "whisper at tilt 0 is the 12 Hz integrator, bit for bit");
 assert_eq(wh_pair(f64_from(30), SR, 2000), 0, "whisper at tilt 30 is a 30 Hz integrator, bit for bit");
+
+# ================================================================
+test_group("3.11.0: the speed quotient shapes the Rosenberg pulse (ADR-0014)");
+# ================================================================
+# Sources at speed quotient 1 and 4: the peak sits at Tp = OQ*SQ/(1+SQ) of the period,
+# sample 110.25 and 176.4 of 367.5, and the two pulses differ.
+var sq1 = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_speed_quotient(sq1, F64_ONE);
+var sq4 = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_speed_quotient(sq4, f64_from(4));
+var sq_i = 0;
+var sq1_at = 0;
+var sq1_pk = 0;
+var sq4_at = 0;
+var sq4_pk = 0;
+var sq_diff = 0;
+while (sq_i < 360) {
+    var s1 = svara_glottal_next_sample(sq1);
+    var s4 = svara_glottal_next_sample(sq4);
+    if (f64_gt(s1, sq1_pk) == 1) { sq1_pk = s1; sq1_at = sq_i; }
+    if (f64_gt(s4, sq4_pk) == 1) { sq4_pk = s4; sq4_at = sq_i; }
+    if (s1 != s4) { sq_diff = sq_diff + 1; }
+    sq_i = sq_i + 1;
+}
+assert_eq((sq1_at >= 109) & (sq1_at <= 111), 1, "at SQ 1 the peak is at sample 110 of 367.5, Tp = OQ/2");
+assert_eq((sq4_at >= 175) & (sq4_at <= 177), 1, "at SQ 4 it is at sample 176, Tp = 0.8 OQ");
+assert_eq(sq_diff > 200, 1, "control: SQ 1 and SQ 4 give different pulses");
+
+var sqn = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_speed_quotient(sqn, f64_from(3));
+svara_glottal_set_speed_quotient(sqn, f64_div(0, 0));
+assert_eq(SvGlottalSource_speed_quotient(sqn), f64_from(3), "a NaN speed quotient leaves the current one");
+svara_glottal_set_speed_quotient(sqn, 0x7FF0000000000000);
+assert_eq(SvGlottalSource_speed_quotient(sqn), SV_G_5_0, "+inf clamps to 5");
+svara_glottal_set_speed_quotient(sqn, 0xFFF0000000000000);
+assert_eq(SvGlottalSource_speed_quotient(sqn), F64_HALF, "-inf clamps to 0.5");
+var sq_st = svara_glottal_save(svara_glottal_new(f64_from(120), SR));
+SvGlottalState_set_speed_quotient(sq_st, f64_div(0, 0));
+var sq_back = svara_glottal_restore(sq_st);
+assert_eq(SvGlottalSource_speed_quotient(sq_back), F64_TWO, "a restored NaN speed quotient becomes the default 2");
 
 var rc = assert_summary();
 syscall(60, rc);

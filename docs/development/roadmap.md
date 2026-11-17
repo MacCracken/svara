@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
 ---
@@ -25,7 +25,6 @@ The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run i
 [ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
 the Rust's output rather than its source.
 
-- [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**
 - [ ] **`tone` is honoured only by `render_planned`.**
 - [ ] **Plosives and trills depend on the render path.** Since 3.8.7 the two paths share
       every run they write the same way (`svara_ph_*_run`), so what is left apart is
@@ -44,6 +43,9 @@ the Rust's output rather than its source.
       perceptually identical without measuring the oracle. Matching Rust means a filter
       reset per sample. See
       [ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md), RN-DIV.
+      Since 3.11.0 the free path's /aɪ/ is also 17.9 dB louder than in 3.10.0: its level
+      is dominated by the transient each bank rebuild leaves, which scales with the
+      Rosenberg pulse's new gain (ADR-0014).
 
 ---
 

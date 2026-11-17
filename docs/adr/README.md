@@ -34,6 +34,7 @@ Decisions about svara — what we chose, the context, and the consequences we ac
 | [0011](0011-retire-rust-old-keep-its-bar.md) | Retire `rust-old/`, and keep its bar | Accepted |
 | [0012](0012-the-glottal-spectral-tilt-reads-its-units.md) | What the glottal spectral tilt's value means | Accepted |
 | [0013](0013-apply-the-per-vowel-spectral-tilt.md) | Whether, where and how to apply the per-vowel spectral tilt | Accepted |
+| [0014](0014-the-rosenberg-pulse-and-its-speed-quotient.md) | The Rosenberg pulse and its speed quotient | Accepted |
 
 0003–0006 predate the Cyrius port (Rust v1.0.0) and were re-homed here from
 `docs/architecture/` on 2026-08-26; they are domain decisions and survive the port.

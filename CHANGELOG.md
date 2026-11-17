@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-11-16 — the Rosenberg pulse closes
+
+Minor release: output changes, by decision
+([ADR-0014](docs/adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md)), the third 3.9.x quirk.
+
+**The quirk.** `svara_glottal_set_speed_quotient` did nothing, because the Rosenberg pulse had no
+closing phase for it to shape. Rosenberg's B pulse opens with `3x² − 2x³` and closes with
+`1 − y²`, and the speed quotient is the ratio of the two phases. The Rust spreads the opening phase
+over the whole open quotient and then drops from 1 to 0 at once. svara ported it line for line.
+
+**The fix.** The maintainer chose to make the default pulse the full Rosenberg B: the model nearly
+every voice uses. The full pulse is far less of a kick to the tract than an instant drop: a default
+/a/ came out 17 dB quieter by RMS and 19 dB lower at its peak, which put it under the Rust
+integration test's 0.001 audibility bar. Asked again with that number, the maintainer chose to keep
+3.10.0's loudness. So the pulse carries a gain, `SV_G_ROSENBERG_GAIN` = 7.13033049099316
+(+17.06 dB), solved so that a default male /a/ (0.5 s at 44.1 kHz) has 3.10.0's RMS to within
+1e-6 dB.
+
+**What it sounds like against 3.10.0.** Timbre is darker everywhere, and loudness by RMS (male,
+0.5 s):
+
+| /a/ | /e/ | /i/ | /o/ | /u/ | /ə/ | /aɪ/ | /m/ | /r/ | /z/ | /b/ |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.00 | +0.38 | +7.51 | +2.09 | −0.87 | −1.31 | +17.94 | +5.01 | +5.17 | 0.00 | +0.65 dB |
+
+/aɪ/'s +17.9 dB is nearly the gain itself. The free diphthong path rebuilds its formant bank every
+64 samples, discarding its state, so its level is dominated by the transient each rebuild leaves,
+and that transient scales with the pulse. That is the 3.9.x diphthong-glide item. Voices built at an
+effort level use LF and do not change, and neither do whisper or creaky.
+
+**What moved.** 318,085 sweep values moved, in every section that voices through Rosenberg:
+phonemes, ctx, pool, glottal (2,448), tract (15,345), seq and batch. Prosody, trajectory, bridge,
+misc and contours did not move. The spectrum section now prints two more lines than 3.10.0's, so it
+was not compared value by value; that is most likely the formant estimator finding a different
+number of peaks in the reshaped spectra. Eight JSON lines differ. In the hostile cases, values and
+stream hashes moved, with no exit code, length or non-finite count changed.
+
+The glottal source retires 1.073x 3.10.0's instructions, and the full chain 1.018x.
+**1,411 assertions / 27 suites.**
+
+### Changed
+
+- **`svara_glottal_rosenberg_pulse` is Rosenberg's B**: `3x² − 2x³` over Tp = OQ·SQ/(1+SQ), then
+  `1 − y²` over Tn = OQ − Tp, then 0, at a peak of `SV_G_ROSENBERG_GAIN`. SQ is Tp / Tn, the
+  literature's definition, so the default 2 closes twice as fast as it opens. The Rust's doc comment
+  describes it the other way round.
+- **`svara_glottal_set_speed_quotient` refuses a NaN**, leaving the current value; ±inf clamp to
+  [0.5, 5]. Through 3.10.0 a NaN was stored, harmless while SQ did nothing. `svara_glottal_restore`
+  goes through the setter, so a restored NaN becomes the default 2.
+- The per-sample path reads SQ at `SV_GS_SPEED_QUOTIENT`, pinned like the other offsets.
+
+### Added
+
+- **ADR-0014**, accepted. It records the measurements, the three options, the maintainer's choice
+  and the second question about level.
+- **`tests/glottal.tcyr`:**
+  - **The golden first period**, re-derived in Python from the full pulse's definition, not from
+    svara. It covers both phases and the peak at t = Tp.
+  - **The speed quotient** (6 assertions): the peak sits at Tp for SQ 1 and SQ 4. A NaN leaves the
+    value, ±inf clamp, and a restored NaN becomes 2.
+- **`docs/development/integration-guide.md`: "The Rosenberg pulse (3.11.0)"**, with the per-phoneme
+  level changes for consumers.
+- **6 mutants, each failing an assertion:**
+  - the closing phase removed;
+  - Tp and Tn swapped;
+  - the gain dropped, which also fails the Rust's audibility test and serde's not-silence
+    controls;
+  - a linear closing phase;
+  - a NaN stored by the setter;
+  - `restore` bypassing the setter.
+
 ## [3.10.0] - 2026-11-16 — every vowel carries its tilt
 
 Minor release: output changes, by decision
