@@ -13,19 +13,12 @@
 var SV_SEQ_MIN_CF   = 0.15;   # min crossfade fraction (high-resistance)
 var SV_SEQ_MAX_CF   = 0.45;   # max crossfade fraction (low-resistance)
 var SV_SEQ_CLUSTER  = 0.7;    # consonant-cluster duration compression
-var SVARA_TONE_NONE = (0 - 1); # PhonemeEvent.tone sentinel for "no tone"
 
-# ⚠ v2.0.1 QUIRK, PRESERVED (3 of 3) -- `tone` is honoured ONLY by
-# svara_sequence_render_planned. The crossfade path, svara_sequence_render,
-# reads stress but ignores tone entirely, so setting a tone and calling
-# `render` produces the same audio as setting none. The Rust did the same
-# (rust-old/src/sequence.rs); it is preserved for parity until it is decided in
-# docs/development/roadmap.md 3.9.x, and any fix gets a minor and its own test.
-#
-# The other two are decided: the per-vowel spectral tilt is applied since 3.10.0
-# (ADR-0013), and the Rosenberg pulse honours set_speed_quotient since 3.11.0
-# (ADR-0014). This one had been described only in state.md and annotated nowhere
-# in code.
+# The v2.0.1 quirks, all three decided. Through 3.12.0, as in the Rust, `tone` was
+# honoured only by svara_sequence_render_planned; since 3.13.0 every sequence
+# render voices it, through the glottal source (ADR-0016). The per-vowel spectral
+# tilt is applied since 3.10.0 (ADR-0013), and the Rosenberg pulse honours
+# set_speed_quotient since 3.11.0 (ADR-0014).
 
 # PhonemeEvent -- a timed phoneme. tone = SVARA_TONE_NONE or a SVARA_TONE_* value.
 #derive(accessors)
@@ -406,7 +399,7 @@ fn svara_sequence_render(seq, voice, sample_rate) {
         var evv = svara_voice_copy_into(voice, ev);
         SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(SvVoiceProfile_base_f0(voice), SvPhonemeEvent_stress(e)));
         var seg = svara_ph_synthesize_nasalized_raw(SvPhonemeEvent_phoneme(e), ev, sample_rate,
-          vec_get(durs, i), vec_get(nasals, i), 0, &cnt);
+          vec_get(durs, i), vec_get(nasals, i), 0, SvPhonemeEvent_tone(e), &cnt);
         if (svara_is_err(seg) == 1) {
             #ifdef LOGGING
             svara_span_leave(_sp);
@@ -577,8 +570,8 @@ fn svara_seq_stream(seq, voice, ctx, sink, user) {
         if (((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG)) & ((i + 1) < n)) {
             nas = svara_nasalization_for_nasal_into(SvPhonemeEvent_phoneme(vec_get(events, i + 1)), snas);
         }
-        var cnt = svara_synthctx_synthesize(ctx, ph, ev, svara_seq_event_duration(e2, svara_seq_in_cluster(events, i)),
-          nas);
+        var cnt = svara_synthctx_synthesize_toned(ctx, ph, ev,
+          svara_seq_event_duration(e2, svara_seq_in_cluster(events, i)), nas, SvPhonemeEvent_tone(e2));
         if (svara_is_err(cnt) == 1) { return cnt; }
         var cf_next = 0;
         if (i < n - 1) {

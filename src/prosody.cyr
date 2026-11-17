@@ -14,16 +14,8 @@ var SVARA_INTONATION_INTERROGATIVE = 1;
 var SVARA_INTONATION_CONTINUATION = 2;
 var SVARA_INTONATION_EXCLAMATORY  = 3;
 
-# Tone (enum -> ints). 9 lexical tones.
-var SVARA_TONE_HIGH        = 0;
-var SVARA_TONE_RISING      = 1;
-var SVARA_TONE_DIPPING     = 2;
-var SVARA_TONE_FALLING     = 3;
-var SVARA_TONE_NEUTRAL     = 4;
-var SVARA_TONE_LOW         = 5;
-var SVARA_TONE_MID         = 6;
-var SVARA_TONE_LOW_RISING  = 7;
-var SVARA_TONE_HIGH_FALLING = 8;
+# Tone: the SVARA_TONE_* ids, the points and the contour lookup moved to
+# src/glottal.cyr in 3.13.0, which needs them first (ADR-0016).
 
 # Stress (enum -> ints).
 var SVARA_STRESS_PRIMARY    = 0;
@@ -151,29 +143,7 @@ fn svara_prosody_fill(pts, n, xs, ys) {
     return 0;
 }
 
-# f0_at_filled -- svara_prosody_f0_at for a contour of n points already copied
-# into xs and ys by svara_prosody_fill, for a caller that reads one contour many
-# times, such as render_planned once per sample (3.8.1). Same answers, bit for bit.
-#must_use
-fn svara_prosody_f0_at_filled(xs, ys, n, t) {
-    if (n == 0) { return F64_ONE; }
-    if (n == 1) { return load64(ys); }
-    return svara_prosody_eval(xs, ys, n, f64_clamp(t, 0, F64_ONE));
-}
-
-# eval -- hisab's monotone cubic over n >= 2 filled points at tc in [0, 1]. A
-# refusal of the contour reads as 1.0; a refused allocation ends the process.
-#must_use
-fn svara_prosody_eval(xs, ys, n, tc) {
-    var r = 0;
-    var tag, err = calc_monotone_cubic_checked(xs, ys, n, tc, &r);
-    if (is_err_result(tag) == 1) {
-        # A refused allocation is not a refusal of the contour: Rust aborts there.
-        if (err == HSB_ERR_ALLOC) { svara_alloc_refused(); }
-        return F64_ONE;
-    }
-    return r;
-}
+# f0_at_filled and eval moved to src/glottal.cyr in 3.13.0, unchanged (ADR-0016).
 
 # f0_at -- f0 multiplier at normalized time `t`; see svara_prosody_f0_at_internal.
 #must_use
@@ -319,71 +289,21 @@ fn svara_prosody_from_pattern(pattern, base_f0) {
 # to_contour -- f0 contour for a lexical tone (values are f0 multipliers).
 #must_use
 fn svara_tone_to_contour(tone) {
-    if (tone == SVARA_TONE_HIGH) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 1.2));
-        vec_push(p, svara_pt_new(0.5, 1.2));
-        vec_push(p, svara_pt_new(1.0, 1.2));
-        return svara_prosody_make(p, 1.0, 1.0);
-    }
-    if (tone == SVARA_TONE_RISING) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 0.85));
-        vec_push(p, svara_pt_new(0.3, 0.85));
-        vec_push(p, svara_pt_new(0.7, 1.1));
-        vec_push(p, svara_pt_new(1.0, 1.25));
-        return svara_prosody_make(p, 1.0, 1.0);
-    }
-    if (tone == SVARA_TONE_DIPPING) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 1.0));
-        vec_push(p, svara_pt_new(0.2, 0.85));
-        vec_push(p, svara_pt_new(0.5, 0.75));
-        vec_push(p, svara_pt_new(0.8, 0.9));
-        vec_push(p, svara_pt_new(1.0, 1.05));
-        return svara_prosody_make(p, 1.15, 0.9);
-    }
-    if (tone == SVARA_TONE_FALLING) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 1.3));
-        vec_push(p, svara_pt_new(0.3, 1.15));
-        vec_push(p, svara_pt_new(0.7, 0.9));
-        vec_push(p, svara_pt_new(1.0, 0.75));
-        return svara_prosody_make(p, 0.9, 1.1);
-    }
-    if (tone == SVARA_TONE_NEUTRAL) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 1.0));
-        vec_push(p, svara_pt_new(1.0, 0.95));
-        return svara_prosody_make(p, 0.7, 0.85);
-    }
-    if (tone == SVARA_TONE_LOW) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 0.75));
-        vec_push(p, svara_pt_new(0.5, 0.75));
-        vec_push(p, svara_pt_new(1.0, 0.75));
-        return svara_prosody_make(p, 1.0, 0.95);
-    }
-    if (tone == SVARA_TONE_MID) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 1.0));
-        vec_push(p, svara_pt_new(0.5, 1.0));
-        vec_push(p, svara_pt_new(1.0, 1.0));
-        return svara_prosody_make(p, 1.0, 1.0);
-    }
-    if (tone == SVARA_TONE_LOW_RISING) {
-        var p = vec_new();
-        vec_push(p, svara_pt_new(0.0, 0.7));
-        vec_push(p, svara_pt_new(0.4, 0.75));
-        vec_push(p, svara_pt_new(0.7, 0.95));
-        vec_push(p, svara_pt_new(1.0, 1.1));
-        return svara_prosody_make(p, 1.0, 1.0);
-    }
-    # HIGH_FALLING
+    # Any value that is not a tone reads as high falling, as through 3.12.0.
+    var t = tone;
+    if ((t < SVARA_TONE_HIGH) | (t > SVARA_TONE_HIGH_FALLING)) { t = SVARA_TONE_HIGH_FALLING; }
+    var xs[40];
+    var ys[40];
+    var n = svara_tone_points_into(t, &xs, &ys);
     var p = vec_new();
-    vec_push(p, svara_pt_new(0.0, 1.35));
-    vec_push(p, svara_pt_new(0.2, 1.3));
-    vec_push(p, svara_pt_new(0.6, 1.0));
-    vec_push(p, svara_pt_new(1.0, 0.7));
-    return svara_prosody_make(p, 0.95, 1.05);
+    var i = 0;
+    while (i < n) { vec_push(p, svara_pt_new(load64(&xs + i * 8), load64(&ys + i * 8))); i = i + 1; }
+    var dur = 1.0;
+    var amp = 1.0;
+    if (t == SVARA_TONE_DIPPING) { dur = 1.15; amp = 0.9; }
+    elif (t == SVARA_TONE_FALLING) { dur = 0.9; amp = 1.1; }
+    elif (t == SVARA_TONE_NEUTRAL) { dur = 0.7; amp = 0.85; }
+    elif (t == SVARA_TONE_LOW) { amp = 0.95; }
+    elif (t == SVARA_TONE_HIGH_FALLING) { dur = 0.95; amp = 1.05; }
+    return svara_prosody_make(p, dur, amp);
 }

@@ -596,34 +596,34 @@ fn sp_free(use_ref, p, voice, sr, n) {
     var c = svara_phoneme_class(p);
     if (c == SVARA_CLASS_FRICATIVE) {
         if (use_ref == 1) { return ref_ph_fricative(p, voice, sr, n, 0); }
-        return svara_ph_synth_fricative(p, voice, sr, n, 0);
+        return svara_ph_synth_fricative(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_AFFRICATE) {
         if (use_ref == 1) { return ref_ph_affricate(p, voice, sr, n, 0); }
-        return svara_ph_synth_affricate(p, voice, sr, n, 0);
+        return svara_ph_synth_affricate(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_CLICK) {
         if (use_ref == 1) { return ref_ph_click(p, voice, sr, n, 0); }
-        return svara_ph_synth_click(p, voice, sr, n, 0);
+        return svara_ph_synth_click(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_EJECTIVE) {
         if (use_ref == 1) { return ref_ph_ejective(p, voice, sr, n, 0); }
-        return svara_ph_synth_ejective(p, voice, sr, n, 0);
+        return svara_ph_synth_ejective(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_IMPLOSIVE) {
         if (use_ref == 1) { return ref_ph_implosive(p, voice, sr, n, 0); }
-        return svara_ph_synth_implosive(p, voice, sr, n, 0);
+        return svara_ph_synth_implosive(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_NASAL) {
         if (use_ref == 1) { return ref_ph_nasal(p, voice, sr, n, 0); }
-        return svara_ph_synth_nasal(p, voice, sr, n, 0);
+        return svara_ph_synth_nasal(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (c == SVARA_CLASS_PLOSIVE) {
         if (use_ref == 1) { return ref_ph_plosive(p, voice, sr, n, 0); }
-        return svara_ph_synth_plosive(p, voice, sr, n, 0);
+        return svara_ph_synth_plosive(p, voice, sr, n, 0, SVARA_TONE_NONE);
     }
     if (use_ref == 1) { return ref_ph_approximant(p, voice, sr, n, 0); }
-    return svara_ph_synth_approximant(p, voice, sr, n, 0);
+    return svara_ph_synth_approximant(p, voice, sr, n, 0, SVARA_TONE_NONE);
 }
 
 # The context's class method for p, or 3.8.6's when use_ref is 1. Its samples are
@@ -1233,12 +1233,12 @@ while (vi < vec_len(sp_voices)) {
         while (fp < 101) {
             var fc = svara_phoneme_class(fp);
             if (fc == SVARA_CLASS_VOWEL) {
-                fv_bad = fv_bad + sp_diff(svara_ph_synth_vowel(fp, fvv, sp_sr, fn_, 0),
+                fv_bad = fv_bad + sp_diff(svara_ph_synth_vowel(fp, fvv, sp_sr, fn_, 0, SVARA_TONE_NONE),
                   ref_vowel_t(fp, fvv, sp_sr, fn_, 0), fn_);
                 fv_n = fv_n + 1;
             }
             if (fc == SVARA_CLASS_DIPHTHONG) {
-                fv_bad = fv_bad + sp_diff(svara_ph_synth_diphthong(fp, fvv, sp_sr, fn_, 0),
+                fv_bad = fv_bad + sp_diff(svara_ph_synth_diphthong(fp, fvv, sp_sr, fn_, 0, SVARA_TONE_NONE),
                   ref_diphthong_t(fp, fvv, sp_sr, fn_, 0), fn_);
                 fv_n = fv_n + 1;
             }
@@ -1251,13 +1251,15 @@ while (vi < vec_len(sp_voices)) {
 assert_eq(fv_bad, 0, "every vowel and diphthong matches 3.9.0's synth with the tilt, bit for bit");
 assert_eq(fv_n > 300, 1, "control: over 300 renders were compared");
 var fv_nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
-var fv_nbad = sp_diff(svara_ph_synth_vowel_nasalized(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0),
+var fv_nbad = sp_diff(svara_ph_synth_vowel_nasalized(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0,
+    SVARA_TONE_NONE),
   ref_vowel_nasalized_t(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0), 3528);
-var fv_nai = svara_ph_synth_vowel_nasalized(SVARA_PH_DIPH_AI, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0);
+var fv_nai = svara_ph_synth_vowel_nasalized(SVARA_PH_DIPH_AI, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0,
+  SVARA_TONE_NONE);
 var fv_rai = ref_vowel_nasalized_t(SVARA_PH_DIPH_AI, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0);
 fv_nbad = fv_nbad + sp_diff(fv_nai, fv_rai, 3528);
 assert_eq(fv_nbad, 0, "so do a nasalized /a/ and a nasalized /aɪ/, which glides");
-var fv_old = sp_diff(svara_ph_synth_vowel(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0),
+var fv_old = sp_diff(svara_ph_synth_vowel(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0, SVARA_TONE_NONE),
   ref_vowel_390(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0), 3528);
 assert_eq(fv_old > 3000, 1, "control: /a/ no longer gives 3.9.0's untilted samples");
 
@@ -1349,6 +1351,34 @@ while (cvl < 2) {
 }
 assert_eq(cv_bad, 0, "every vowel and diphthong, oral and nasalized, matches the reference bit for bit");
 assert_eq(cv_n > 100, 1, "control: over 100 context renders were compared");
+
+# ================================================================
+test_group("3.13.0: sequence_render voices a tone (ADR-0016)");
+# ================================================================
+# A primary-stressed /a/ of 0.3 s, untoned and with each tone. Through 3.12.0 all ten
+# renders were the same bits. Mid is flat at 1.0, so it still is.
+#must_use
+fn sp_toned(tone) {
+    var q = svara_sequence_new();
+    if (tone == SVARA_TONE_NONE) {
+        svara_sequence_push(q, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0x3FD3333333333333, SVARA_STRESS_PRIMARY));
+    } else {
+        svara_sequence_push(q, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0x3FD3333333333333,
+            SVARA_STRESS_PRIMARY, tone));
+    }
+    return svara_sequence_render(q, svara_voice_new_male(), sp_sr);
+}
+var tn_flat = sp_toned(SVARA_TONE_NONE);
+var tn_moved = 0;
+var tn_t = 0;
+while (tn_t < 9) {
+    if (tn_t != SVARA_TONE_MID) {
+        if (sp_vdiff(sp_toned(tn_t), tn_flat) > 1000) { tn_moved = tn_moved + 1; }
+    }
+    tn_t = tn_t + 1;
+}
+assert_eq(tn_moved, 8, "each of the eight tones that move f0 moves the render");
+assert_eq(sp_vdiff(sp_toned(SVARA_TONE_MID), tn_flat), 0, "Mid, flat at 1.0, leaves it bit for bit");
 
 var rc = assert_summary();
 syscall(60, rc);

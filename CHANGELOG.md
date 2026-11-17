@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] - 2026-11-16 — tone in every render
+
+Minor release: toned output changes, by decision
+([ADR-0016](docs/adr/0016-honour-tone-in-every-sequence-render.md)), the fifth 3.9.x quirk.
+
+**The quirk.** An event's lexical tone (`svara_phoneme_event_with_tone`, nine tones, f0 contours
+from 0.7 to 1.35×) was voiced only by `svara_sequence_render_planned`, as in the Rust. Three renders
+gave bit-identical samples with or without each tone:
+- `svara_sequence_render`;
+- the streaming `svara_sequence_render_into`;
+- the batch render.
+
+For a tonal language they lost the word.
+
+**The fix.** The maintainer chose to voice tone in every render. The glottal source reads its f0 only
+at a period start, so `render_planned`'s per-sample `set_f0` takes effect there. A source can now
+carry a tone and look its contour up at each period start, giving the same pitch track; the other
+renders give each toned event's tone to the source that voices it.
+
+**What moved.** Against 3.12.0, only toned input changes:
+- 10,719 sweep values moved, all in the sweep's toned sequence through `sequence_render`;
+- nothing else moved: every untoned render, the batch section, `render_planned`, the JSON and all
+  638 hostile cases are bit-identical.
+
+The glottal source retires 1.023× 3.12.0's instructions, for one check per sample, and the full
+chain 1.006×. **1,441 assertions / 27 suites.**
+
+### Changed
+
+- **The tone moved to `src/glottal.cyr`**, ahead of `prosody.cyr`, because the source needs it:
+  - the `SVARA_TONE_*` ids, including `SVARA_TONE_NONE`;
+  - a non-allocating table of each tone's points, `svara_tone_points_into`;
+  - the contour lookup, `svara_prosody_f0_at_filled` and `svara_prosody_eval`, unchanged.
+
+  `svara_tone_to_contour` builds its contours from the table, and its values are the same bits.
+- **`svara_glottal_set_tone(source, tone, base_f0, span)`** gives a source a tone over the next
+  `span` samples. At each period start it sets f0 to `base_f0 × contour(sample / span)`, refusing an
+  out-of-range f0 as `set_f0` does. Its points live in two buffers the source allocates on its first
+  tone and keeps, so a warmed context still streams without allocating. `SVARA_TONE_NONE` clears it.
+  An untoned source takes the old path after one check.
+- **The free path.** The class synths, `svara_ph_synth_dispatch` and
+  `svara_ph_synthesize_nasalized_raw` take a tone and give it to every source they build.
+  `svara_phoneme_synthesize` keeps its signature.
+- **The context.** `svara_synthctx_synthesize_toned` takes a tone, and the stream and the batch
+  render call it. `svara_synthctx_synthesize` is the untoned case; its preamble clears the last
+  phoneme's tone.
+- **`sequence_render`** passes each event's tone.
+
+One edge differs from `render_planned`: where base × contour leaves the f0 range, `render_planned`
+keeps the last f0 accepted at any sample, and a source the last accepted at a period start.
+
+### Added
+
+- **ADR-0016**, accepted.
+- **`tests/prosody.tcyr`** (2 groups):
+  - **The table** is held to the Rust's `Tone::to_contour`, at tag `3.6.5`
+    `rust-old/src/prosody.rs:231-285`, transcribed in the test. Since `svara_tone_to_contour` now
+    builds from the table, comparing the two would prove nothing.
+  - **The pitch track.** A source carrying each of the nine tones gives `render_planned`'s per-sample
+    `set_f0` track, bit for bit. `SVARA_TONE_NONE` clears.
+- **`tests/stream.tcyr`**: a toned sentence streams as its toned reference, bit for bit. The
+  reference now passes each event's tone.
+- **`tests/synthpaths.tcyr`**: `sequence_render` moves for the eight tones that move f0, and Mid,
+  flat at 1.0, leaves it bit for bit.
+- **`tests/render.tcyr`**: the batch render moves for falling and rising tones, Mid leaves it, and the
+  length is the same.
+- **`tests/allocbudget.tcyr`**: a warmed context streams a toned sequence keeping no bytes.
+- **`docs/development/integration-guide.md`: "Tone in every render (3.13.0)".**
+- **10 mutants, each failing an assertion:**
+  - no tone at the period start;
+  - a frozen sample count;
+  - an off-by-one span;
+  - no tone failing to clear;
+  - a changed table point;
+  - each of the five call sites dropping the tone: the context, the batch, the stream,
+    `sequence_render` and the free path's helper.
+
 ## [3.12.0] - 2026-11-16 — formants that move keep ringing
 
 Minor release: output changes, by decision

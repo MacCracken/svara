@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014), 3.12.0 kept the formant bank's state across retargets (ADR-0015). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | in progress; one item left, needing a decision. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014), 3.12.0 kept the formant bank's state across retargets (ADR-0015), 3.13.0 voiced tone in every render (ADR-0016). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
 ---
@@ -25,7 +25,6 @@ The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run i
 [ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
 the Rust's output rather than its source.
 
-- [ ] **`tone` is honoured only by `render_planned`.**
 - [ ] **Plosives and trills depend on the render path.** Since 3.8.7 the two paths share
       every run they write the same way (`svara_ph_*_run`), so what is left apart is
       what the Rust itself does differently:

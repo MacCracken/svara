@@ -58,6 +58,7 @@ struct SvGlottalSource {
     phase; current_period; current_amplitude;
     rng; aspiration_noise; vibrato_lfo;
     tilt_alpha; tilt_alpha_tilt; tilt_alpha_rate;
+    tone_n; tone_base; tone_span; tone_pos; tone_xs; tone_ys;
 }
 
 # The offsets of the SvGlottalSource fields the per-sample code reads and writes (3.8.5).
@@ -90,6 +91,12 @@ const SV_GS_VIBRATO_LFO = 184;
 const SV_GS_TILT_ALPHA = 192;
 const SV_GS_TILT_ALPHA_TILT = 200;
 const SV_GS_TILT_ALPHA_RATE = 208;
+const SV_GS_TONE_N = 216;
+const SV_GS_TONE_BASE = 224;
+const SV_GS_TONE_SPAN = 232;
+const SV_GS_TONE_POS = 240;
+const SV_GS_TONE_XS = 248;
+const SV_GS_TONE_YS = 256;
 
 # lf_params_from_rd -- derive LF (ta, te, ee) from Rd; writes 3 f64 slots.
 # rd clamped to [0.3, 2.7]. Fant (1995) simplified mapping.
@@ -160,6 +167,12 @@ fn svara_glottal_new(f0, sample_rate) {
     SvGlottalSource_set_tilt_alpha(self, 0);
     SvGlottalSource_set_tilt_alpha_tilt(self, 0);
     SvGlottalSource_set_tilt_alpha_rate(self, 0);
+    SvGlottalSource_set_tone_n(self, 0);
+    SvGlottalSource_set_tone_base(self, 0);
+    SvGlottalSource_set_tone_span(self, 0);
+    SvGlottalSource_set_tone_pos(self, 0);
+    SvGlottalSource_set_tone_xs(self, 0);
+    SvGlottalSource_set_tone_ys(self, 0);
     SvGlottalSource_set_phase(self, 0);
     SvGlottalSource_set_current_period(self, f64_div(sample_rate, f0));
     SvGlottalSource_set_current_amplitude(self, F64_ONE);
@@ -425,6 +438,167 @@ fn svara_glottal_sample_rate(self) { return SvGlottalSource_sample_rate(self); }
 #must_use
 fn svara_glottal_period_samples(self) { return SvGlottalSource_current_period(self); }
 
+# ---- lexical tone, voiced by the source (3.13.0) ----------------------------
+# A tone is an f0 contour over one event. Through 3.12.0 only render_planned voiced
+# it, by setting f0 every sample; the source reads f0 only when a period begins, so
+# that took effect at each period start. Since 3.13.0 (ADR-0016) a source can carry
+# the tone itself and look it up at each period start, which is what lets
+# sequence_render, the stream and the batch render voice tones with no per-sample
+# f0 of their own. The tone ids, the points and the contour lookup live here, ahead
+# of prosody.cyr, because the source needs them; prosody.cyr builds its contours
+# from the same table.
+
+# Tone (enum -> ints). 9 lexical tones, and the event's "no tone".
+var SVARA_TONE_NONE = (0 - 1);
+var SVARA_TONE_HIGH        = 0;
+var SVARA_TONE_RISING      = 1;
+var SVARA_TONE_DIPPING     = 2;
+var SVARA_TONE_FALLING     = 3;
+var SVARA_TONE_NEUTRAL     = 4;
+var SVARA_TONE_LOW         = 5;
+var SVARA_TONE_MID         = 6;
+var SVARA_TONE_LOW_RISING  = 7;
+var SVARA_TONE_HIGH_FALLING = 8;
+
+# tone_point -- write point i, (time t, f0 multiplier v), into xs and ys.
+fn svara_tone_point(xs, ys, i, t, v) {
+    store64(xs + i * 8, t);
+    store64(ys + i * 8, v);
+    return 0;
+}
+
+# tone_points_into -- the tone's f0 contour as times in xs and multipliers in ys, at
+# most 5 points each; returns the count, or 0 for SVARA_TONE_NONE or any value that
+# is not a tone. Allocates nothing. The one table svara_tone_to_contour builds from.
+#must_use
+fn svara_tone_points_into(tone, xs, ys) {
+    if (tone == SVARA_TONE_HIGH) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.2); svara_tone_point(xs, ys, 1, 0.5, 1.2);
+        svara_tone_point(xs, ys, 2, 1.0, 1.2);
+        return 3;
+    }
+    if (tone == SVARA_TONE_RISING) {
+        svara_tone_point(xs, ys, 0, 0.0, 0.85); svara_tone_point(xs, ys, 1, 0.3, 0.85);
+        svara_tone_point(xs, ys, 2, 0.7, 1.1); svara_tone_point(xs, ys, 3, 1.0, 1.25);
+        return 4;
+    }
+    if (tone == SVARA_TONE_DIPPING) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.0); svara_tone_point(xs, ys, 1, 0.2, 0.85);
+        svara_tone_point(xs, ys, 2, 0.5, 0.75); svara_tone_point(xs, ys, 3, 0.8, 0.9);
+        svara_tone_point(xs, ys, 4, 1.0, 1.05);
+        return 5;
+    }
+    if (tone == SVARA_TONE_FALLING) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.3); svara_tone_point(xs, ys, 1, 0.3, 1.15);
+        svara_tone_point(xs, ys, 2, 0.7, 0.9); svara_tone_point(xs, ys, 3, 1.0, 0.75);
+        return 4;
+    }
+    if (tone == SVARA_TONE_NEUTRAL) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.0); svara_tone_point(xs, ys, 1, 1.0, 0.95);
+        return 2;
+    }
+    if (tone == SVARA_TONE_LOW) {
+        svara_tone_point(xs, ys, 0, 0.0, 0.75); svara_tone_point(xs, ys, 1, 0.5, 0.75);
+        svara_tone_point(xs, ys, 2, 1.0, 0.75);
+        return 3;
+    }
+    if (tone == SVARA_TONE_MID) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.0); svara_tone_point(xs, ys, 1, 0.5, 1.0);
+        svara_tone_point(xs, ys, 2, 1.0, 1.0);
+        return 3;
+    }
+    if (tone == SVARA_TONE_LOW_RISING) {
+        svara_tone_point(xs, ys, 0, 0.0, 0.7); svara_tone_point(xs, ys, 1, 0.4, 0.75);
+        svara_tone_point(xs, ys, 2, 0.7, 0.95); svara_tone_point(xs, ys, 3, 1.0, 1.1);
+        return 4;
+    }
+    if (tone == SVARA_TONE_HIGH_FALLING) {
+        svara_tone_point(xs, ys, 0, 0.0, 1.35); svara_tone_point(xs, ys, 1, 0.2, 1.3);
+        svara_tone_point(xs, ys, 2, 0.6, 1.0); svara_tone_point(xs, ys, 3, 1.0, 0.7);
+        return 4;
+    }
+    return 0;
+}
+
+# f0_at_filled -- the f0 multiplier of a contour of n points already in xs and ys,
+# at normalized time t (clamped to [0, 1]); 1.0 for no points, the one value for one.
+# render_planned reads one contour this way once per sample (3.8.1), and a source
+# carrying a tone at each period start (3.13.0); svara_prosody_f0_at gives the same
+# answers, bit for bit. Moved here from prosody.cyr in 3.13.0, unchanged.
+#must_use
+fn svara_prosody_f0_at_filled(xs, ys, n, t) {
+    if (n == 0) { return F64_ONE; }
+    if (n == 1) { return load64(ys); }
+    return svara_prosody_eval(xs, ys, n, f64_clamp(t, 0, F64_ONE));
+}
+
+# eval -- hisab's monotone cubic over n >= 2 filled points at tc in [0, 1]. A
+# refusal of the contour reads as 1.0; a refused allocation ends the process.
+#must_use
+fn svara_prosody_eval(xs, ys, n, tc) {
+    var r = 0;
+    var tag, err = calc_monotone_cubic_checked(xs, ys, n, tc, &r);
+    if (is_err_result(tag) == 1) {
+        # A refused allocation is not a refusal of the contour: Rust aborts there.
+        if (err == HSB_ERR_ALLOC) { svara_alloc_refused(); }
+        return F64_ONE;
+    }
+    return r;
+}
+
+# set_tone -- voice a lexical tone over the next `span` samples (ADR-0016, 3.13.0).
+# At each period start in that span the source sets f0 to base_f0 times the tone's
+# contour at the fraction of the span elapsed, the f0 render_planned's per-sample
+# set_f0 would have in place there; an f0 out of range is refused, as set_f0 refuses
+# it. SVARA_TONE_NONE, or any value that is not a tone, clears the tone. The points
+# go into two buffers the source allocates on its first tone and keeps, so a reused
+# source allocates nothing per phoneme. Returns SVARA_ERR_NONE, or
+# SVARA_ERR_COMPUTATION, with the tone cleared, if those buffers are refused.
+fn svara_glottal_set_tone(self, tone, base_f0, span) {
+    store64(self + SV_GS_TONE_N, 0);
+    if ((tone < SVARA_TONE_HIGH) | (tone > SVARA_TONE_HIGH_FALLING)) { return SVARA_ERR_NONE; }
+    var xs = load64(self + SV_GS_TONE_XS);
+    if (xs == 0) {
+        xs = alloc(64);
+        var ys0 = alloc(64);
+        if ((xs == 0) | (ys0 == 0)) { return SVARA_ERR_COMPUTATION; }
+        store64(self + SV_GS_TONE_XS, xs);
+        store64(self + SV_GS_TONE_YS, ys0);
+    }
+    var n = svara_tone_points_into(tone, xs, load64(self + SV_GS_TONE_YS));
+    store64(self + SV_GS_TONE_BASE, base_f0);
+    store64(self + SV_GS_TONE_SPAN, span);
+    store64(self + SV_GS_TONE_POS, 0);
+    store64(self + SV_GS_TONE_N, n);
+    return SVARA_ERR_NONE;
+}
+
+# toned_tail -- the end of svara_glottal_next_sample for a source carrying a tone:
+# the same phase step, with the tone's f0 set before a new period begins, then the
+# tone's sample count advanced. Kept apart so an untoned source pays one check.
+#must_use
+fn svara_glottal_toned_tail(self, sample, phase) {
+    if (f64_ge(phase, load64(self + SV_GS_CURRENT_PERIOD)) == 1) {
+        store64(self + SV_GS_PHASE, f64_sub(phase, load64(self + SV_GS_CURRENT_PERIOD)));
+        svara_glottal_tone_step(self);
+        svara_glottal_new_period(self);
+    } else {
+        store64(self + SV_GS_PHASE, phase);
+    }
+    store64(self + SV_GS_TONE_POS, load64(self + SV_GS_TONE_POS) + 1);
+    return sample;
+}
+
+# tone_step -- at a period start, f0 from the tone at the sample the period starts
+# on: base * contour(pos / span), as render_planned computes it for that sample.
+fn svara_glottal_tone_step(self) {
+    var t = f64_div(f64_from(load64(self + SV_GS_TONE_POS)), f64_from(load64(self + SV_GS_TONE_SPAN)));
+    var m = svara_prosody_f0_at_filled(load64(self + SV_GS_TONE_XS), load64(self + SV_GS_TONE_YS),
+      load64(self + SV_GS_TONE_N), t);
+    var fe = svara_glottal_set_f0(self, f64_mul(load64(self + SV_GS_TONE_BASE), m));
+    return 0;
+}
+
 # ---- pulse models ---------------------------------------------------------
 # rosenberg_pulse -- Rosenberg's B pulse (Rosenberg 1971) over the open quotient OQ:
 # an opening phase 3x^2 - 2x^3 over Tp = OQ*SQ/(1+SQ), rising 0 to 1, then a closing
@@ -595,6 +769,7 @@ fn svara_glottal_next_sample(self) {
       f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
 
     var phase = f64_add(load64(self + SV_GS_PHASE), F64_ONE);
+    if (load64(self + SV_GS_TONE_N) != 0) { return svara_glottal_toned_tail(self, sample, phase); }   # ADR-0016
     if (f64_ge(phase, load64(self + SV_GS_CURRENT_PERIOD)) == 1) {
         phase = f64_sub(phase, load64(self + SV_GS_CURRENT_PERIOD));
         store64(self + SV_GS_PHASE, phase);

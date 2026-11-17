@@ -3,9 +3,13 @@
 # prosody.
 
 include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
 include "lib/hashmap.cyr"
 include "lib/bayan.cyr"
 include "src/error.cyr"
+include "src/rng.cyr"
+include "src/glottal.cyr"   # the tone ids, points and lookup, since 3.13.0
 include "src/prosody.cyr"
 include "tests/approx.cyr"
 
@@ -135,6 +139,162 @@ vec_push(rep_p, svara_pt_new(F64_HALF, f64_from(2)));
 vec_push(rep_p, svara_pt_new(F64_HALF, f64_from(3)));
 var rep_c = svara_prosody_make(rep_p, F64_ONE, F64_ONE);
 assert_eq(svara_prosody_f0_at(rep_c, F64_HALF), F64_ONE, "a repeated time is refused");
+
+# ================================================================
+test_group("3.13.0: the tone table is the Rust's (prosody.rs:231-285 at tag 3.6.5)");
+# ================================================================
+# Since 3.13.0 svara_tone_to_contour builds from svara_tone_points_into, so the two
+# cannot be checked against each other. Each tone's points and scales are transcribed
+# here from the Rust's Tone::to_contour, as decimals: svara reads them as f64 (ADR-0008).
+var tt_xs = alloc(64);
+var tt_ys = alloc(64);
+var tt_wx = alloc(64);
+var tt_wy = alloc(64);
+var tt_tone = 0;
+var tt_n = 0;
+var tt_dur = 0;
+var tt_amp = 0;
+var tt_bad = 0;
+# Start the expectation for tone t: n points, and the contour's two scales.
+fn tt_want(t, n, dur, amp) {
+    tt_tone = t;
+    tt_n = n;
+    tt_dur = dur;
+    tt_amp = amp;
+    return 0;
+}
+# Expected point k of the current tone.
+fn tt_pt(k, x, y) {
+    store64(tt_wx + k * 8, x);
+    store64(tt_wy + k * 8, y);
+    return 0;
+}
+# Compare the table and svara_tone_to_contour against the expectation.
+fn tt_check() {
+    var n = svara_tone_points_into(tt_tone, tt_xs, tt_ys);
+    if (n != tt_n) { tt_bad = tt_bad + 1; }
+    var c = svara_tone_to_contour(tt_tone);
+    var pts = SvProsodyContour_f0_points(c);
+    if (vec_len(pts) != tt_n) { tt_bad = tt_bad + 1; }
+    var k = 0;
+    while (k < tt_n) {
+        if (load64(tt_xs + k * 8) != load64(tt_wx + k * 8)) { tt_bad = tt_bad + 1; }
+        if (load64(tt_ys + k * 8) != load64(tt_wy + k * 8)) { tt_bad = tt_bad + 1; }
+        if (svara_pt_value(vec_get(pts, k)) != load64(tt_wy + k * 8)) { tt_bad = tt_bad + 1; }
+        k = k + 1;
+    }
+    if (SvProsodyContour_duration_scale(c) != tt_dur) { tt_bad = tt_bad + 1; }
+    if (SvProsodyContour_amplitude_scale(c) != tt_amp) { tt_bad = tt_bad + 1; }
+    return 0;
+}
+tt_want(0, 3, 1.0, 1.0);
+tt_pt(0, 0.0, 1.2);
+tt_pt(1, 0.5, 1.2);
+tt_pt(2, 1.0, 1.2);
+tt_check();
+tt_want(1, 4, 1.0, 1.0);
+tt_pt(0, 0.0, 0.85);
+tt_pt(1, 0.3, 0.85);
+tt_pt(2, 0.7, 1.1);
+tt_pt(3, 1.0, 1.25);
+tt_check();
+tt_want(2, 5, 1.15, 0.9);
+tt_pt(0, 0.0, 1.0);
+tt_pt(1, 0.2, 0.85);
+tt_pt(2, 0.5, 0.75);
+tt_pt(3, 0.8, 0.9);
+tt_pt(4, 1.0, 1.05);
+tt_check();
+tt_want(3, 4, 0.9, 1.1);
+tt_pt(0, 0.0, 1.3);
+tt_pt(1, 0.3, 1.15);
+tt_pt(2, 0.7, 0.9);
+tt_pt(3, 1.0, 0.75);
+tt_check();
+tt_want(4, 2, 0.7, 0.85);
+tt_pt(0, 0.0, 1.0);
+tt_pt(1, 1.0, 0.95);
+tt_check();
+tt_want(5, 3, 1.0, 0.95);
+tt_pt(0, 0.0, 0.75);
+tt_pt(1, 0.5, 0.75);
+tt_pt(2, 1.0, 0.75);
+tt_check();
+tt_want(6, 3, 1.0, 1.0);
+tt_pt(0, 0.0, 1.0);
+tt_pt(1, 0.5, 1.0);
+tt_pt(2, 1.0, 1.0);
+tt_check();
+tt_want(7, 4, 1.0, 1.0);
+tt_pt(0, 0.0, 0.7);
+tt_pt(1, 0.4, 0.75);
+tt_pt(2, 0.7, 0.95);
+tt_pt(3, 1.0, 1.1);
+tt_check();
+tt_want(8, 4, 0.95, 1.05);
+tt_pt(0, 0.0, 1.35);
+tt_pt(1, 0.2, 1.3);
+tt_pt(2, 0.6, 1.0);
+tt_pt(3, 1.0, 0.7);
+tt_check();
+assert_eq(tt_bad, 0, "all nine tones' points and scales, in the table and in the contour");
+assert_eq(svara_tone_points_into(SVARA_TONE_NONE, tt_xs, tt_ys), 0, "no tone has no points");
+assert_eq(svara_tone_points_into(9, tt_xs, tt_ys), 0, "nor does a value that is not a tone");
+var tt_hf = SvProsodyContour_f0_points(svara_tone_to_contour(99));
+assert_eq((vec_len(tt_hf) == 4) & (svara_pt_value(vec_get(tt_hf, 0)) == 0x3FF599999999999A), 1,
+  "a contour for a value that is not a tone is still high falling, as through 3.12.0");
+
+# ================================================================
+test_group("3.13.0: a source carrying a tone gives render_planned's pitch track (ADR-0016)");
+# ================================================================
+# render_planned sets f0 to base * contour(i / span) before every sample, from the contour
+# svara_tone_to_contour builds. A source carrying the tone looks it up only at period starts.
+# The two must give the same samples, for every tone.
+#must_use
+fn tt_twin(tone, base, span) {
+    var a = svara_glottal_new(f64_from(120), f64_from(44100));
+    var b = svara_glottal_new(f64_from(120), f64_from(44100));
+    var te = svara_glottal_set_tone(a, tone, base, span);
+    var pts = SvProsodyContour_f0_points(svara_tone_to_contour(tone));
+    var xs = alloc(64);
+    var ys = alloc(64);
+    var n = vec_len(pts);
+    svara_prosody_fill(pts, n, xs, ys);
+    var bad = 0;
+    var i = 0;
+    while (i < span) {
+        var m = svara_prosody_f0_at_filled(xs, ys, n, f64_div(f64_from(i), f64_from(span)));
+        var fe = svara_glottal_set_f0(b, f64_mul(base, m));
+        if (svara_glottal_next_sample(a) != svara_glottal_next_sample(b)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+var tw_bad = 0;
+var tw_t = 0;
+while (tw_t < 9) { tw_bad = tw_bad + tt_twin(tw_t, f64_from(130), 8820); tw_t = tw_t + 1; }
+assert_eq(tw_bad, 0, "all nine tones, 0.2 s at 130 Hz: bit for bit");
+var tw_a = svara_glottal_new(f64_from(120), f64_from(44100));
+var tw_b = svara_glottal_new(f64_from(120), f64_from(44100));
+var tw_e = svara_glottal_set_tone(tw_a, SVARA_TONE_RISING, f64_from(120), 8820);
+var tw_moved = 0;
+var tw_i = 0;
+while (tw_i < 8820) {
+    if (svara_glottal_next_sample(tw_a) != svara_glottal_next_sample(tw_b)) { tw_moved = tw_moved + 1; }
+    tw_i = tw_i + 1;
+}
+assert_eq(tw_moved > 1000, 1, "control: a rising tone moves the source from an untoned twin");
+var tw_c = svara_glottal_new(f64_from(120), f64_from(44100));
+var tw_d = svara_glottal_new(f64_from(120), f64_from(44100));
+var tw_e2 = svara_glottal_set_tone(tw_c, SVARA_TONE_FALLING, f64_from(120), 8820);
+var tw_e3 = svara_glottal_set_tone(tw_c, SVARA_TONE_NONE, f64_from(120), 8820);
+var tw_same = 0;
+tw_i = 0;
+while (tw_i < 8820) {
+    if (svara_glottal_next_sample(tw_c) != svara_glottal_next_sample(tw_d)) { tw_same = tw_same + 1; }
+    tw_i = tw_i + 1;
+}
+assert_eq(tw_same, 0, "SVARA_TONE_NONE clears a tone: the source matches an untoned one");
 
 var rc = assert_summary();
 syscall(60, rc);

@@ -756,6 +756,16 @@ fn svara_ph_alloc(n, room) {
     return svara_alloc_samples(n);
 }
 
+# ph_tone -- give a free-path synth's fresh glottal source the event's tone over its
+# n samples, around the voice's f0 (ADR-0016, 3.13.0). SVARA_TONE_NONE does nothing.
+# Returns SVARA_ERR_NONE, or SVARA_ERR_COMPUTATION if the source's tone buffers are
+# refused.
+#must_use
+fn svara_ph_tone(glottal, voice, tone, n) {
+    if (tone == SVARA_TONE_NONE) { return SVARA_ERR_NONE; }
+    return svara_glottal_set_tone(glottal, tone, SvVoiceProfile_base_f0(voice), n);
+}
+
 # ---- the runs both synthesis paths share (3.8.7) ---------------------------
 # Each class is synthesized twice: by the free svara_ph_synth_* functions, which
 # build fresh objects per call, and by the svara_synthctx_* methods, which reuse
@@ -923,7 +933,7 @@ fn svara_ph_approx_gain(buf, n) {
 
 # vowel: the voice's glottal source through a tract with height-adjusted formant amplitudes.
 #must_use
-fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var amps = alloc(40);
     svara_phoneme_height_adjusted_amplitudes(phoneme, amps);
@@ -939,6 +949,8 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room) {
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     # The vowel's spectral tilt, applied since 3.10.0 (ADR-0013). The Rust computes it
     # and drops it, because its tilt filter read dB as hertz and muted the voice; 3.9.0
     # fixed the filter (ADR-0012). Converted from dB/octave, /a/ loses 5.7 dB above 2 kHz.
@@ -952,11 +964,13 @@ fn svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room) {
 
 # diphthong: glottal source through a tract gliding from the phoneme's target to its end target.
 #must_use
-fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room, tone) {
     var start = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var endt = svara_voice_apply_formant_scale(voice, svara_ph_diphthong_end_target(phoneme));
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     svara_glottal_set_spectral_tilt(glottal, svara_phoneme_tilt_tl(phoneme));   # ADR-0013
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
@@ -991,7 +1005,7 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room) {
 # plosive: silent closure, noise burst and decaying aspiration at its VOT fractions, then
 # breathy voicing if voiced, else low-level filtered noise.
 #must_use
-fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room, tone) {
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     svara_formant_zero_buf(buf, n);
@@ -1032,6 +1046,8 @@ fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room) {
         if (svara_phoneme_is_voiced(phoneme) == 1) {
             var glottal = svara_voice_create_glottal_source(voice, sample_rate);
             if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+            var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+            if (svara_is_err(tg) == 1) { return tg; }
             svara_glottal_set_breathiness(glottal, SV_PH_030);
             var tract = svara_tract_new(sample_rate);
             if (svara_is_err(tract) == 1) { return tract; }
@@ -1048,7 +1064,7 @@ fn svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room) {
 
 # fricative: filtered noise, mixed with the glottal source through the tract if voiced.
 #must_use
-fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var noise = svara_rng_new(31);
     var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), sample_rate);
@@ -1061,6 +1077,8 @@ fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room) {
     if (voiced == 1) {
         glottal = svara_voice_create_glottal_source(voice, sample_rate);
         if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+        var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+        if (svara_is_err(tg) == 1) { return tg; }
         tract = svara_tract_new(sample_rate);
         if (svara_is_err(tract) == 1) { return tract; }
         var e = svara_tract_set_formants_from_target(tract, target);
@@ -1073,10 +1091,12 @@ fn svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room) {
 
 # nasal: glottal source through the tract at 0.8 nasal coupling, at the phoneme's place.
 #must_use
-fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
     var e = svara_tract_set_formants_from_target(tract, target);
@@ -1092,10 +1112,12 @@ fn svara_ph_synth_nasal(phoneme, voice, sample_rate, n, room) {
 
 # approximant: glottal source through the tract, with breathiness floored at 0.1.
 #must_use
-fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     svara_glottal_set_breathiness(glottal, svara_ph_approx_breathiness(voice));
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
@@ -1111,7 +1133,7 @@ fn svara_ph_synth_approximant(phoneme, voice, sample_rate, n, room) {
 
 # affricate: silent closure (n/4), noise burst (n/8), then frication, mixed with voicing if voiced.
 #must_use
-fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room, tone) {
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
     var noise = svara_rng_new(23);
@@ -1124,6 +1146,8 @@ fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room) {
     if (voiced == 1) {
         glottal = svara_voice_create_glottal_source(voice, sample_rate);
         if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+        var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+        if (svara_is_err(tg) == 1) { return tg; }
         tract = svara_tract_new(sample_rate);
         if (svara_is_err(tract) == 1) { return tract; }
         var e = svara_tract_set_formants_from_target(tract, target);
@@ -1136,7 +1160,7 @@ fn svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room) {
 
 # trill: glottal source through the tract, amplitude-modulated at 15-25 Hz by trill type.
 #must_use
-fn svara_ph_synth_trill(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_trill(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
@@ -1144,6 +1168,8 @@ fn svara_ph_synth_trill(phoneme, voice, sample_rate, n, room) {
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     var trill_rate = f64_from(25);
     if (phoneme == SVARA_PH_TRILL_UVULAR) { trill_rate = f64_from(20); }
     elif (phoneme == SVARA_PH_TRILL_BILABIAL) { trill_rate = f64_from(15); }
@@ -1163,7 +1189,7 @@ fn svara_ph_synth_trill(phoneme, voice, sample_rate, n, room) {
 
 # click: silence, then from 60% of n a filtered noise burst with a squared decay.
 #must_use
-fn svara_ph_synth_click(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_click(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
@@ -1178,7 +1204,7 @@ fn svara_ph_synth_click(phoneme, voice, sample_rate, n, room) {
 # ejective: silent closure (40%), noise burst (20%), then a decaying release, through the
 # fricative filter for ejective s and ch.
 #must_use
-fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
     if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
@@ -1198,7 +1224,7 @@ fn svara_ph_synth_ejective(phoneme, voice, sample_rate, n, room) {
 
 # implosive: silent closure (n/3), then creaky voicing through the tract at half amplitude.
 #must_use
-fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
@@ -1206,6 +1232,8 @@ fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room) {
     if (svara_is_err(e) == 1) { return e; }
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     svara_glottal_set_creaky(glottal, F64_HALF);
     var buf = svara_ph_alloc(n, room);
     if (buf == 0) { return SVARA_ERR_COMPUTATION; }
@@ -1216,7 +1244,7 @@ fn svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room) {
 
 # nasalized vowel/diphthong: ramp nasal coupling in over the final portion.
 #must_use
-fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room) {
+fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room, tone) {
     var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
@@ -1225,6 +1253,8 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room) {
     svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
     var glottal = svara_voice_create_glottal_source(voice, sample_rate);
     if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tg = svara_ph_tone(glottal, voice, tone, n);   # ADR-0016
+    if (svara_is_err(tg) == 1) { return tg; }
     svara_glottal_set_spectral_tilt(glottal, svara_phoneme_tilt_tl(phoneme));   # ADR-0013
     # `nasal` is caller-supplied, so onset can be NaN or huge -- saturate as
     # Rust's `as usize` does rather than letting f64_to keep a negative value.
@@ -1264,7 +1294,7 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room) {
 # 64 KB room and the small objects the render builds.
 # dispatch a phoneme to its per-class synth -> raw buffer of n, or neg error.
 #must_use
-fn svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, room) {
+fn svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, room, tone) {
     if (phoneme == SVARA_PH_SILENCE) {
         var z = svara_ph_alloc(n, room);
         if (z == 0) { return SVARA_ERR_COMPUTATION; }
@@ -1272,19 +1302,19 @@ fn svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, room) {
         return z;
     }
     var c = svara_phoneme_class(phoneme);
-    if (c == SVARA_CLASS_VOWEL) { return svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_DIPHTHONG) { return svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_PLOSIVE) { return svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_FRICATIVE) { return svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_NASAL) { return svara_ph_synth_nasal(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_AFFRICATE) { return svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room); }
+    if (c == SVARA_CLASS_VOWEL) { return svara_ph_synth_vowel(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_DIPHTHONG) { return svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_PLOSIVE) { return svara_ph_synth_plosive(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_FRICATIVE) { return svara_ph_synth_fricative(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_NASAL) { return svara_ph_synth_nasal(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_AFFRICATE) { return svara_ph_synth_affricate(phoneme, voice, sample_rate, n, room, tone); }
     if ((c == SVARA_CLASS_APPROXIMANT) | (c == SVARA_CLASS_LATERAL)) {
-        return svara_ph_synth_approximant(phoneme, voice, sample_rate, n, room);
+        return svara_ph_synth_approximant(phoneme, voice, sample_rate, n, room, tone);
     }
-    if (c == SVARA_CLASS_TRILL) { return svara_ph_synth_trill(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_CLICK) { return svara_ph_synth_click(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_EJECTIVE) { return svara_ph_synth_ejective(phoneme, voice, sample_rate, n, room); }
-    if (c == SVARA_CLASS_IMPLOSIVE) { return svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room); }
+    if (c == SVARA_CLASS_TRILL) { return svara_ph_synth_trill(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_CLICK) { return svara_ph_synth_click(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_EJECTIVE) { return svara_ph_synth_ejective(phoneme, voice, sample_rate, n, room, tone); }
+    if (c == SVARA_CLASS_IMPLOSIVE) { return svara_ph_synth_implosive(phoneme, voice, sample_rate, n, room, tone); }
     # Silence class
     var z2 = svara_ph_alloc(n, room);
     if (z2 == 0) { return SVARA_ERR_COMPUTATION; }
@@ -1307,7 +1337,7 @@ fn svara_phoneme_synthesize(phoneme, voice, sample_rate, duration) {
     # reproduces that -- a bare f64_to would not bound it. See error.cyr.
     var n = svara_count_from_f64(f64_mul(duration, sample_rate));
     if (n == 0) { return vec_new(); }
-    var data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, 1);
+    var data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, 1, SVARA_TONE_NONE);
     if (svara_is_err(data) == 1) { return data; }
     return svara_vec_adopt(data, n, svara_vec_room_bytes(n));
 }
@@ -1319,7 +1349,8 @@ fn svara_phoneme_synthesize(phoneme, voice, sample_rate, duration) {
 #must_use
 fn svara_phoneme_synthesize_nasalized(phoneme, voice, sample_rate, duration, nasal) {
     var cnt[8];
-    var data = svara_ph_synthesize_nasalized_raw(phoneme, voice, sample_rate, duration, nasal, 1, &cnt);
+    var data = svara_ph_synthesize_nasalized_raw(phoneme, voice, sample_rate, duration, nasal, 1, SVARA_TONE_NONE,
+      &cnt);
     if (svara_is_err(data) == 1) { return data; }
     var n = load64(&cnt);
     if (n == 0) { return vec_new(); }
@@ -1332,7 +1363,7 @@ fn svara_phoneme_synthesize_nasalized(phoneme, voice, sample_rate, duration, nas
 # writes the count to `count_out`, or returns a neg error; a count of 0 returns 0.
 # Room 0 is for a caller that reads the samples once, as svara_sequence_render does.
 #must_use
-fn svara_ph_synthesize_nasalized_raw(phoneme, voice, sample_rate, duration, nasal, room, count_out) {
+fn svara_ph_synthesize_nasalized_raw(phoneme, voice, sample_rate, duration, nasal, room, tone, count_out) {
     store64(count_out, 0);
     if (svara_phoneme_is_valid(phoneme) == 0) { return SVARA_ERR_INVALID_PHONEME; }
     if (f64_le(duration, 0) == 1) { return SVARA_ERR_INVALID_DURATION; }
@@ -1343,9 +1374,9 @@ fn svara_ph_synthesize_nasalized_raw(phoneme, voice, sample_rate, duration, nasa
     var c = svara_phoneme_class(phoneme);
     var data = 0;
     if ((((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG)) == 1) & (nasal != 0)) {
-        data = svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room);
+        data = svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room, tone);
     } else {
-        data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, room);
+        data = svara_ph_synth_dispatch(phoneme, voice, sample_rate, n, room, tone);
     }
     if (svara_is_err(data) == 1) { return data; }
     store64(count_out, n);
@@ -1809,10 +1840,20 @@ fn svara_synthctx_count_for(phoneme, f0, duration, sample_rate) {
 # ================================================================
 # synthesize -- render one phoneme into the context's reused buffer.
 # Returns the sample count (>=0), or a negative SVARA_ERR_*. Read samples via
-# svara_synthctx_buffer(ctx)[0..count].
+# svara_synthctx_buffer(ctx)[0..count]. No tone: svara_synthctx_synthesize_toned
+# with SVARA_TONE_NONE.
 # ================================================================
 #must_use
 fn svara_synthctx_synthesize(self, phoneme, voice, duration, nasal) {
+    return svara_synthctx_synthesize_toned(self, phoneme, voice, duration, nasal, SVARA_TONE_NONE);
+}
+
+# synthesize_toned -- as svara_synthctx_synthesize, voicing a lexical tone over the
+# phoneme (ADR-0016, 3.13.0): the context's glottal source carries it and sets f0
+# from it at each period start, around the voice's f0. SVARA_TONE_NONE clears any
+# tone the source carries from the phoneme before.
+#must_use
+fn svara_synthctx_synthesize_toned(self, phoneme, voice, duration, nasal, tone) {
     # The two argument rejections below sit BEFORE the span: a call refused on
     # its arguments did no work worth timing, and an error line says more than
     # a zero-length span would.
@@ -1860,6 +1901,15 @@ fn svara_synthctx_synthesize(self, phoneme, voice, duration, nasal) {
     svara_glottal_set_vibrato(g, SvVoiceProfile_vibrato_rate(voice), SvVoiceProfile_vibrato_depth(voice));
     # A vowel's tilt (ADR-0013); 0 for every other class, which clears the last one's.
     svara_glottal_set_spectral_tilt(g, svara_phoneme_tilt_tl(phoneme));
+    # The event's tone (ADR-0016); SVARA_TONE_NONE clears the last phoneme's.
+    var te = svara_glottal_set_tone(g, tone, SvVoiceProfile_base_f0(voice), n);
+    if (svara_is_err(te) == 1) {
+        #ifdef LOGGING
+        svara_span_leave(_sp);
+        var _d6 = svara_log_err(te);
+        #endif
+        return te;
+    }
 
     var e = SVARA_ERR_NONE;
     if (phoneme == SVARA_PH_SILENCE) {

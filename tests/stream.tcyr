@@ -71,7 +71,8 @@ fn st_stream(seq, voice, sr) {
 
 # The reference: each event rendered on a second fresh context with the plan the
 # vec forms build (svara_seq_detect_clusters, svara_seq_durations,
-# svara_detect_nasalization), stress f0 written out here, then svara_seq_crossfade.
+# svara_detect_nasalization), stress f0 written out here, and the event's tone,
+# then svara_seq_crossfade.
 #must_use
 fn st_reference(seq, voice, sr) {
     var ctx = svara_synthctx_new(voice, sr);
@@ -87,7 +88,8 @@ fn st_reference(seq, voice, sr) {
         var st = SvPhonemeEvent_stress(e);
         if (st == SVARA_STRESS_PRIMARY) { SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10)); }
         if (st == SVARA_STRESS_SECONDARY) { SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05)); }
-        var cnt = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, vec_get(durs, i), vec_get(nas, i));
+        var cnt = svara_synthctx_synthesize_toned(ctx, SvPhonemeEvent_phoneme(e), ev, vec_get(durs, i), vec_get(nas, i),
+          SvPhonemeEvent_tone(e));
         if (svara_is_err(cnt) == 1) { return cnt; }
         var seg = vec_new();
         var b = svara_synthctx_buffer(ctx);
@@ -288,6 +290,19 @@ var flat = svara_sequence_new();
 svara_sequence_push(flat, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, U));
 var r4 = st_stream(flat, high, SR);
 assert_eq(svara_is_err(ST_RC), 0, "control: 1900 Hz unstressed is accepted");
+
+# ================================================================
+test_group("3.13.0: the stream voices each event's tone (ADR-0016)");
+# ================================================================
+# The sentence with a tone on every event: rising, dipping, falling, high in turn.
+var tsent = st_seq(ids, dur, str, NS);
+var tev = svara_sequence_events(tsent);
+var tk = 0;
+while (tk < vec_len(tev)) { SvPhonemeEvent_set_tone(vec_get(tev, tk), (tk + 1) % 4); tk = tk + 1; }
+var tgot = st_stream(tsent, male, SR);
+assert_eq(svara_is_err(ST_RC), 0, "the toned sentence streams");
+assert_eq(st_diff(tgot, st_reference(tsent, male, SR)), 0, "it is the toned reference, bit for bit");
+assert_eq(st_diff(tgot, st_stream(sentence, male, SR)) > 1000, 1, "control: and not the untoned sentence");
 
 var rc = assert_summary();
 syscall(60, rc);

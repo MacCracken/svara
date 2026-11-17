@@ -238,10 +238,22 @@ SvGlottalSource_set_vibrato_lfo(pin_gs, 1023);
 SvGlottalSource_set_tilt_alpha(pin_gs, 1024);
 SvGlottalSource_set_tilt_alpha_tilt(pin_gs, 1025);
 SvGlottalSource_set_tilt_alpha_rate(pin_gs, 1026);
+SvGlottalSource_set_tone_n(pin_gs, 1027);
+SvGlottalSource_set_tone_base(pin_gs, 1028);
+SvGlottalSource_set_tone_span(pin_gs, 1029);
+SvGlottalSource_set_tone_pos(pin_gs, 1030);
+SvGlottalSource_set_tone_xs(pin_gs, 1031);
+SvGlottalSource_set_tone_ys(pin_gs, 1032);
 var pin_gs_bad = 0;
 if (load64(pin_gs + SV_GS_MODEL) != 1000) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_SPEED_QUOTIENT) != 1008) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA) != 1024) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_N) != 1027) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_BASE) != 1028) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_SPAN) != 1029) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_POS) != 1030) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_XS) != 1031) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TONE_YS) != 1032) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA_TILT) != 1025) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_TILT_ALPHA_RATE) != 1026) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_LF_TA) != 1002) { pin_gs_bad = pin_gs_bad + 1; }
@@ -265,7 +277,7 @@ if (load64(pin_gs + SV_GS_CURRENT_AMPLITUDE) != 1020) { pin_gs_bad = pin_gs_bad 
 if (load64(pin_gs + SV_GS_RNG) != 1021) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_ASPIRATION_NOISE) != 1022) { pin_gs_bad = pin_gs_bad + 1; }
 if (load64(pin_gs + SV_GS_VIBRATO_LFO) != 1023) { pin_gs_bad = pin_gs_bad + 1; }
-assert_eq(pin_gs_bad, 0, "the 26 offsets read the fields their accessors write");
+assert_eq(pin_gs_bad, 0, "the 32 offsets read the fields their accessors write");
 assert_eq(load64(pin_gs + SV_GS_MODEL + 8) != 1000, 1, "control: the next word holds another field");
 
 # 10*log10 of the power gain at 3 kHz of y = (1-a)x + a*y[n-1], from its transfer

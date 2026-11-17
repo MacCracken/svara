@@ -232,8 +232,8 @@ fn svara_batch_render_with_progress(r, cb, user) {
         var e = vec_get(events, i);
         var evv = svara_voice_copy_into(voice, ev);
         SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(f0, SvPhonemeEvent_stress(e)));
-        var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, svara_seq_event_duration(e, 0),
-          vec_get(nasals, i));
+        var n = svara_synthctx_synthesize_toned(ctx, SvPhonemeEvent_phoneme(e), ev, svara_seq_event_duration(e, 0),
+          vec_get(nasals, i), SvPhonemeEvent_tone(e));
         if (svara_is_err(n) == 1) { return n; }
         # SVARA_ERR_COMPUTATION past SV_MAX_SAMPLES, the most a vec holds.
         var ae = svara_samples_acc_append(&acc, svara_synthctx_buffer(ctx), n);

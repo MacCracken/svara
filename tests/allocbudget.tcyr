@@ -765,6 +765,18 @@ fn main() {
     var n2 = svara_sequence_render_into(st_sq, voice, sctx, &ab_sink, 0);
     assert_eq(alloc_used() - s1, 0, "a second stream keeps no bytes");
     assert_eq(n2, n1, "control: and streamed as many samples");
+    # 3.13.0: with a tone on every event, the context's source keeps its tone points in
+    # two buffers built on its first tone, so a warmed context still keeps nothing.
+    var st_ev = svara_sequence_events(st_sq);
+    var st_k = 0;
+    while (st_k < vec_len(st_ev)) { SvPhonemeEvent_set_tone(vec_get(st_ev, st_k), st_k % 9); st_k = st_k + 1; }
+    var n3 = svara_sequence_render_into(st_sq, voice, sctx, &ab_sink, 0);
+    var s3 = alloc_used();
+    var n4 = svara_sequence_render_into(st_sq, voice, sctx, &ab_sink, 0);
+    assert_eq(alloc_used() - s3, 0, "a warmed context streams a toned sequence keeping no bytes");
+    assert_eq((n3 > 0) & (n4 == n3), 1, "control: both toned streams rendered as many samples");
+    st_k = 0;
+    while (st_k < vec_len(st_ev)) { SvPhonemeEvent_set_tone(vec_get(st_ev, st_k), SVARA_TONE_NONE); st_k = st_k + 1; }
     var r0 = alloc_used();
     var rr = svara_sequence_render(st_sq, voice, SR);
     # Each phoneme's samples, then the output: at least 16 bytes a sample.

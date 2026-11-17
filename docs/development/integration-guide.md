@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.12.0"
+tag = "3.13.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -276,6 +276,22 @@ Since 3.12.0 those paths retarget with `svara_tract_retarget`, which keeps the r
 −53 dB for /aɪ/. `render_planned`'s levels move by vowel: /a/ +12 dB, /i/ +6 dB and /u/ +29 dB
 against 3.11.0. `svara_tract_set_formants_from_target` still resets, for a one-off setting. See
 [ADR-0015](../adr/0015-retarget-the-formant-bank-without-resetting-it.md).
+
+## Tone in every render (3.13.0)
+
+An event's lexical tone (`svara_phoneme_event_with_tone`) is voiced by every sequence render since
+3.13.0:
+- `svara_sequence_render`;
+- the stream, `svara_sequence_render_into`;
+- the batch render;
+- `svara_sequence_render_planned`, as before.
+
+Through 3.12.0, as in the Rust, only `render_planned` voiced it, and the others gave the same samples
+with or without a tone. Untoned input is unchanged, bit for bit.
+
+To voice a tone on a single phoneme through a context of your own, call
+`svara_synthctx_synthesize_toned`. A glottal source of your own takes one through
+`svara_glottal_set_tone`. See [ADR-0016](../adr/0016-honour-tone-in-every-sequence-render.md).
 
 ## Quality scaling
 

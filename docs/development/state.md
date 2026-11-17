@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.13.0** (2026-11-16) — **tone in every render.** The fifth 3.9.x quirk, decided by the
+maintainer in ADR-0016. An event's tone was voiced only by `render_planned`, as in the Rust;
+`sequence_render`, the stream and the batch render gave the same samples with or without it.
+The glottal source can now carry a tone (`svara_glottal_set_tone`) and look its contour up at
+each period start, where `render_planned`'s per-sample f0 takes effect, which gives the same
+pitch track. The tone ids, a non-allocating points table and the contour lookup moved to
+`glottal.cyr`. Untoned output is bit-identical; only the sweep's toned sequence moved. One
+3.9.x item is left, the plosive and trill path differences. **1,441 assertions / 27 suites**,
+`cyrius audit` exit 0.
+
 **3.12.0** (2026-11-16) — **formants that move keep ringing.** The fourth 3.9.x item, decided
 by the maintainer in ADR-0015. Every retarget of the formant bank also reset it, as the Rust's
 does. So `render_planned`, which retargets every sample, produced no formants (/a/, /i/ and /u/
@@ -434,11 +444,11 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
 | L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 36 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
-| L3 | prosody.rs | src/prosody.cyr | ✅ ported | 17 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
+| L3 | prosody.rs | src/prosody.cyr | ✅ ported | 34 | ProsodyContour (f0 points + monotone-cubic), 4 intonation patterns, 9 tones, stress |
 | L3 | trajectory.rs | src/trajectory.cyr | ✅ ported | 12 | TrajectoryPlanner + FormantKeypoint; Catmull-Rom + resistance blend; speaking-rate |
 | L3 | sequence.rs | src/sequence.cyr | ✅ ported | 29 | PhonemeEvent/Sequence; coarticulation crossfade render + trajectory-planned render_planned; cluster compression |
 | L4 | pool.rs | src/pool.cyr | ✅ ported | 16 | SynthesisPool (pooled SynthesisContext + render_batch + counters) |
-| L4 | render.rs | src/render.cyr | ✅ ported | 16 | BatchRenderer / RenderOutput / RenderProgress; progress via callptr |
+| L4 | render.rs | src/render.cyr | ✅ ported | 22 | BatchRenderer / RenderOutput / RenderProgress; progress via callptr |
 | L4 | bridge.rs | src/bridge.cyr | ✅ ported | 37 | 19 scalar emotion/TTS/creature/acoustics/weather → synth-param maps |
 
 **ALL 19 Rust modules ported (16 `.cyr` modules; dsp folded into error, math → ganita).
@@ -448,7 +458,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,424 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
+1,441 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -531,8 +541,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (379 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,424 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (386 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,441 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

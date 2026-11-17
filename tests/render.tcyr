@@ -104,5 +104,37 @@ assert_eq(svara_batch_len(rcl), 1, "len 1 after push");
 svara_batch_clear(rcl);
 assert_eq(svara_batch_is_empty(rcl), 1, "empty after clear");
 
+# ================================================================
+test_group("3.13.0: the batch render voices each event's tone (ADR-0016)");
+# ================================================================
+# /m/ /a/ /i/, untoned and with a falling tone on /a/ and a rising one on /i/.
+#must_use
+fn rn_toned_batch(ta, ti) {
+    var r = svara_batch_new(svara_voice_new_male(), f64_from(44100));
+    var ev = vec_new();
+    vec_push(ev, svara_phoneme_event_new(SVARA_PH_NASAL_M, 0x3FB47AE147AE147B, SVARA_STRESS_UNSTRESSED));
+    vec_push(ev, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_A, 0x3FC999999999999A, SVARA_STRESS_PRIMARY, ta));
+    vec_push(ev, svara_phoneme_event_with_tone(SVARA_PH_VOWEL_I, 0x3FC999999999999A, SVARA_STRESS_UNSTRESSED, ti));
+    svara_batch_extend(r, ev);
+    return SvRenderOutput_samples(svara_batch_render_all(r));
+}
+# Samples of two vecs that differ in any bit, plus any length difference.
+#must_use
+fn rn_vdiff(a, b) {
+    var bad = vec_len(a) - vec_len(b);
+    if (bad < 0) { bad = 0 - bad; }
+    var n = vec_len(a);
+    if (vec_len(b) < n) { n = vec_len(b); }
+    var i = 0;
+    while (i < n) { if (vec_get(a, i) != vec_get(b, i)) { bad = bad + 1; } i = i + 1; }
+    return bad;
+}
+var rn_plain = rn_toned_batch(SVARA_TONE_NONE, SVARA_TONE_NONE);
+var rn_tone = rn_toned_batch(SVARA_TONE_FALLING, SVARA_TONE_RISING);
+assert_eq(rn_vdiff(rn_tone, rn_plain) > 1000, 1, "falling and rising tones move the batch render");
+assert_eq(rn_vdiff(rn_toned_batch(SVARA_TONE_MID, SVARA_TONE_MID), rn_plain), 0,
+  "Mid, flat at 1.0, leaves it bit for bit");
+assert_eq(vec_len(rn_tone), vec_len(rn_plain), "control: a tone does not change the length");
+
 var rc = assert_summary();
 syscall(60, rc);
