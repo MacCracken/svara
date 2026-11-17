@@ -194,42 +194,59 @@ fn svara_batch_render_with_progress(r, cb, user) {
     var total = vec_len(events);
     var voice = SvBatchRenderer_voice(r);
     var ctx = SvBatchRenderer_ctx(r);
-    var output = vec_new();
+    var f0 = SvVoiceProfile_base_f0(voice);
 
     var pl = vec_new();
     var i = 0;
     while (i < total) { vec_push(pl, SvPhonemeEvent_phoneme(vec_get(events, i))); i = i + 1; }
     var nasals = svara_detect_nasalization(pl);
 
+    # The output is sized once from the plan and one voice copy serves every event
+    # (3.8.3). An event renders at svara_seq_event_duration(e, 0), its stressed
+    # duration with no cluster shortening, and svara_seq_stress_f0's pitch.
+    var sr = SvSynthCtx_sample_rate(ctx);
+    var expect = 0;
+    i = 0;
+    while (i < total) {
+        var pe = vec_get(events, i);
+        var c = svara_synthctx_count_for(SvPhonemeEvent_phoneme(pe), svara_seq_stress_f0(f0, SvPhonemeEvent_stress(pe)),
+          svara_seq_event_duration(pe, 0), sr);
+        if (c < 0) {
+            # The render fails at this event: size nothing it would not have pushed.
+            expect = 0;
+            i = total;
+        } else {
+            expect = expect + c;
+            if (expect > SV_MAX_SAMPLES) { expect = SV_MAX_SAMPLES; }
+            i = i + 1;
+        }
+    }
+    var acc[24];
+    var ai = svara_samples_acc_init(&acc, expect);
+    if (ai < 0) { return ai; }
+    var ev = alloc(sizeof(SvVoiceProfile));
+    if (ev == 0) { svara_alloc_refused(); }
+
     i = 0;
     while (i < total) {
         var e = vec_get(events, i);
-        var ev = svara_seq_voice_clone(voice);
-        var ss = 0.9;
-        var st = SvPhonemeEvent_stress(e);
-        if (st == SVARA_STRESS_PRIMARY) {
-            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10));
-            ss = 1.15;
-        } elif (st == SVARA_STRESS_SECONDARY) {
-            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
-            ss = 1.05;
-        }
-        var dur = f64_mul(SvPhonemeEvent_duration(e), ss);
-        var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, dur, vec_get(nasals, i));
+        var evv = svara_voice_copy_into(voice, ev);
+        SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(f0, SvPhonemeEvent_stress(e)));
+        var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, svara_seq_event_duration(e, 0),
+          vec_get(nasals, i));
         if (svara_is_err(n) == 1) { return n; }
-        var buf = svara_synthctx_buffer(ctx);
-        # A vec holds at most SV_MAX_SAMPLES; past it vec_push ends the process.
-        if (n > SV_MAX_SAMPLES - vec_len(output)) { return SVARA_ERR_COMPUTATION; }
-        var j = 0;
-        while (j < n) { vec_push(output, load64(buf + j * 8)); j = j + 1; }
+        # SVARA_ERR_COMPUTATION past SV_MAX_SAMPLES, the most a vec holds.
+        var ae = svara_samples_acc_append(&acc, svara_synthctx_buffer(ctx), n);
+        if (ae < 0) { return ae; }
         if (cb != 0) {
             # Rust's callback returns (), so what this one returns is ignored: it
             # cannot fail or cancel the render.
-            var cbr = callptr(cb, user, svara_render_progress_new(i + 1, total, vec_len(output)));
+            var cbr = callptr(cb, user, svara_render_progress_new(i + 1, total, svara_samples_acc_len(&acc)));
         }
         i = i + 1;
     }
-    return svara_render_output_new(output, svara_render_progress_new(total, total, vec_len(output)));
+    var done = svara_samples_acc_len(&acc);
+    return svara_render_output_new(svara_samples_acc_vec(&acc), svara_render_progress_new(total, total, done));
 }
 
 # render_all -- render synchronously, no progress callback.

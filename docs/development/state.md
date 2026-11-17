@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.8.3** (2026-11-16) — **each render keeps its samples about once.** A cyrius vec
+cannot be sized up front, and doubling from 16 slots in an arena that never frees kept
+every render's output about four times over. `svara_vec_adopt` hands the vec the buffer
+the samples were rendered into, through an Allocator of svara's own. `sequence_render`
+crossfades straight into one presized output, and the batch renders size theirs from the
+plan. Each render keeps 0.30x to 0.50x of 3.8.2's bytes: `sequence_render` 24 bytes a
+sample instead of 81, `render_planned` 10 instead of 27. Every value is the same bits.
+`vec_with_capacity` is asked for upstream. **1,342 assertions / 26 suites**, `cyrius
+audit` exit 0.
+
 **3.8.2** (2026-11-16) — **the tract chain in 0.74x the instructions.** The formant bank
 skips its unused slots while that is exact, the tract keeps its quality flags as bits,
 a converged smoother returns at once, and cyrius inlines the formant filter's wrapper.
@@ -350,7 +360,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,303 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,342 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -395,13 +405,16 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
   measured counts, never by written-down indices. A refused naad allocation must
   come back as `SVARA_ERR_COMPUTATION`, not as a handle. Against the unfixed glottal
   source it reports 0 of 6 and `restore` ends the run.
-- **`allocbudget.tcyr` (66)** — each `_into` variant compared **bit for bit**
+- **`allocbudget.tcyr` (105)** — each `_into` variant compared **bit for bit**
   against the allocating function it replaced (exact `assert_eq` on raw f64
   patterns, not tolerances: same arithmetic, same order, so it holds on every
   arch — unlike a stored golden digest, which transcendentals make
   arch-specific). Plus the marginal-bytes-per-sample budget, each bound paired
   with a control proving the measurement is not reading zero, and since 3.6.5 a
-  warmed context's zero bytes per phoneme across every class.
+  warmed context's zero bytes per phoneme across every class. Since 3.8.3: a vec
+  adopts the buffer its samples were rendered into and never writes past a short one,
+  each render's bytes per sample is bounded against its 3.8.2 figure, and each render
+  is compared bit for bit with the 3.8.2 code rebuilt from public pieces.
 
 ## Benchmarks
 
@@ -430,8 +443,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (314 fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,303 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (362 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,342 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

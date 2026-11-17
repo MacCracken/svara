@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -52,10 +52,11 @@ measured effect does not earn a place in the source.
       `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
       2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
       form owes the path it stands for.
-- [ ] **Pool the per-note render buffers.** `phoneme.cyr` allocates about 16× per note,
-      and `pool.cyr` is not wired into the render path: `sequence.cyr` and `render.cyr`
-      never reference it.
-- [ ] **A voice is cloned, and a progress object built, per event.**
+- [ ] **A glottal source and tract per phoneme.** `svara_sequence_render` builds both
+      for every phoneme, about 2.4 KB, because the Rust starts each phoneme from fresh
+      state. `svara_sequence_render_into` avoids them. Reusing them needs a reset that
+      gives a fresh object's bits, checked by the sweep. 3.8.3 took the samples down to
+      about one copy and left these.
 
 ### Refactors the 3.6.3 sweep left
 
@@ -64,12 +65,13 @@ Each changes the shape of a hot path, so each needs the measurement above.
 - [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
       repeat each other. Share what is the same, and leave what differs to 3.9.x.
 - [ ] **13 test files define their own `approx`.** Move it to one include.
-- [ ] **The crossfade is written twice over.** `svara_seq_crossfade` has its fade-out
-      loop twice, and `svara_seq_xf_segment` (3.8.0) repeats all of it for the stream.
-      `tests/stream.tcyr` pins the two to the same bits, so a shared step is safe to
-      try. The stress table is down to `svara_seq_stress_f0` and
-      `svara_seq_event_duration` (3.8.0 and 3.8.1), with one copy left in
-      `svara_batch_render_with_progress`.
+- [ ] **The crossfade's reference.** Since 3.8.3 both sequence renders crossfade through
+      `svara_seq_xf_segment`. `svara_seq_crossfade` is the Rust's shape, with its
+      fade-out loop written twice, and only the tests call it: `tests/stream.tcyr` and
+      `tests/allocbudget.tcyr` hold the step to it bit for bit. Either move it into a
+      test include, or keep it in `src/` as the port's record of the Rust. The stress
+      table is down to `svara_seq_stress_f0` and `svara_seq_event_duration`, which the
+      batch render uses too since 3.8.3.
 
 **Gate:** `scripts/sweep/compare.py` shows no moved value, and `tests/allocbudget.tcyr`
 holds.
@@ -124,10 +126,18 @@ bank going from 10.5 to 3.2 ns per filter with `f64v256_*` in structure-of-array
 
 ### ⛔ Blocked upstream
 
-- [ ] ⛔ **`svara_ph_buf_to_vec` doubles its result vec from empty**, so every render
-      leaves about one dead copy of its output in the arena. **Blocked on
-      `vec_with_capacity` in `lib/vec.cyr`**, still absent at cyrius 6.7.18. Do not
-      hand-build a vec header in svara.
+- [ ] ⛔ **A vec sized up front.** Since 3.8.3 a sample vec adopts the buffer it was
+      rendered into, through an Allocator of svara's own (`svara_vec_adopt`). Two costs
+      remain:
+      - the buffer is rounded up to a vec's power-of-two capacity, up to twice its
+        samples;
+      - each vec carries 56 bytes of Allocator and state.
+
+      **Blocked on `vec_with_capacity`, or a vec over an existing buffer, in
+      `lib/vec.cyr`**, still absent at cyrius 6.7.18. It is asked for in cyrius
+      `docs/development/issues/2026-11-11-vec-keeps-outgrown-buffer-and-aborts.md`, in
+      svara's 2026-11-16 section. When it ships, drop the Allocator and size each
+      buffer to its samples. Do not hand-build a vec header in svara.
 - ⛔ **Codegen.** naad measured 9.5 ns against Rust's 2.8 on the same loop. It is the
   largest single factor left, and it belongs to cyrius.
 - [ ] ⛔ **The generated JSON decoder hangs on a stray `}` in a vec of structs.**

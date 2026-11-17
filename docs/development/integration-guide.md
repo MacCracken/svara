@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.2"
+tag = "3.8.3"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -152,9 +152,11 @@ The per-sample synthesis path inside svara allocates nothing; that is pinned by
   class (`tests/allocbudget.tcyr` pins it). The first phoneme of a class builds
   what the context keeps for it, such as a frication filter. `svara_synthctx_new`
   is 2,280 bytes. Through 3.6.4 a warmed context kept 160 to 1,048 bytes a phoneme.
-- ⚠ `svara_sequence_render` keeps about 127 bytes per output sample, and the
-  default allocator never frees. Each phoneme gets a new glottal source, tract and
-  sample vector, and the crossfade builds another.
+- ⚠ `svara_sequence_render` keeps every sample about twice, and the default
+  allocator never frees. Each phoneme gets a new glottal source, tract and sample
+  buffer, and the crossfade writes the output into one more. 3.8.3 measured 24 bytes
+  per output sample on four phonemes at 44.1 kHz. Before 3.8.3 the vecs doubled as
+  they grew: 81 bytes on the same four, and hoosh measured 127 on twelve.
 
 **A server should stream a sequence** with `svara_sequence_render_into` (3.8.0).
 It renders on a context you keep and hands the samples to your sink as soon as no

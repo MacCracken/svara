@@ -121,25 +121,44 @@ fn svara_pool_render(p, phoneme, voice, duration) {
 # SVARA_ERR_INVALID_DURATION if the two vecs differ in length.
 #must_use
 fn svara_pool_render_batch(p, phonemes, durations, voice) {
-    var output = vec_new();
     var ctx = SvSynthesisPool_ctx(p);
     var np = vec_len(phonemes);
     # Rust takes (phoneme, duration) pairs, so the lengths cannot differ there.
     if (vec_len(durations) != np) { return SVARA_ERR_INVALID_DURATION; }
+    var acc[24];
+    var ai = svara_samples_acc_init(&acc, svara_pool_batch_expect(ctx, phonemes, durations, voice));
+    if (ai < 0) { return ai; }
     var i = 0;
     while (i < np) {
         var n = svara_synthctx_synthesize(ctx, vec_get(phonemes, i), voice, vec_get(durations, i), 0);
         if (svara_is_err(n) == 1) { return n; }
-        var buf = svara_synthctx_buffer(ctx);
-        # A vec holds at most SV_MAX_SAMPLES; past it vec_push ends the process.
-        if (n > SV_MAX_SAMPLES - vec_len(output)) { return SVARA_ERR_COMPUTATION; }
-        var j = 0;
-        while (j < n) { vec_push(output, load64(buf + j * 8)); j = j + 1; }
+        # SVARA_ERR_COMPUTATION past SV_MAX_SAMPLES, the most a vec holds.
+        var ae = svara_samples_acc_append(&acc, svara_synthctx_buffer(ctx), n);
+        if (ae < 0) { return ae; }
         SvSynthesisPool_set_render_count(p, SvSynthesisPool_render_count(p) + 1);
         if (n > SvSynthesisPool_peak_samples(p)) { SvSynthesisPool_set_peak_samples(p, n); }
         i = i + 1;
     }
-    return output;
+    return svara_samples_acc_vec(&acc);
+}
+
+# pool_batch_expect -- the samples svara_pool_render_batch will output, so it can
+# size its output once (3.8.3), or 0 when some pair would be refused: the render
+# fails there, and sizes nothing it would not have pushed.
+#must_use
+fn svara_pool_batch_expect(ctx, phonemes, durations, voice) {
+    var sr = SvSynthCtx_sample_rate(ctx);
+    var f0 = SvVoiceProfile_base_f0(voice);
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(phonemes)) {
+        var c = svara_synthctx_count_for(vec_get(phonemes, i), f0, vec_get(durations, i), sr);
+        if (c < 0) { return 0; }
+        total = total + c;
+        if (total > SV_MAX_SAMPLES) { return SV_MAX_SAMPLES; }
+        i = i + 1;
+    }
+    return total;
 }
 
 # buffer holding the most recent render's samples.

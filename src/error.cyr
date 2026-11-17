@@ -115,6 +115,151 @@ fn svara_vec_copy(v) {
     return c;
 }
 
+# ---- sample vecs without the doubling (3.8.3) ----------------------------------
+# lib/vec.cyr has no way to size a vec up front. vec_push doubles from 16 and copies,
+# and the bump allocator never frees, so a vec pushed to n samples keeps every
+# outgrown buffer: about twice its final capacity, beside the buffer the samples
+# were rendered into. A 0.1 s phoneme kept 169 KB for its 35 KB of samples.
+#
+# svara_vec_adopt builds the vec through vec_new_a / vec_push_a with an Allocator
+# of its own, which answers every data-sized request that fits with the buffer the
+# samples already sit in. The vec "grows" into that same buffer, its copy writes
+# each word over itself, and it ends holding the buffer. Only lib/alloc.cyr's
+# Allocator contract is relied on, not vec's layout: a request under 64 bytes (the
+# vec header) or larger than the buffer gets an ordinary allocation, so a buffer
+# smaller than claimed is copied out of, never written past. A real
+# vec_with_capacity is asked for upstream, in cyrius
+# docs/development/issues/2026-11-11-vec-keeps-outgrown-buffer-and-aborts.md
+# (svara's 2026-11-16 section).
+
+# vec_cap_for -- the capacity a vec pushed to n elements ends with: 16, doubled
+# until it holds n.
+#must_use
+fn svara_vec_cap_for(n) {
+    var c = 16;
+    while (c < n) { c = c * 2; }
+    return c;
+}
+
+# alloc_vec_room -- room for n samples that svara_vec_adopt turns into a vec without
+# copying: svara_vec_cap_for(n) slots. 0 for n outside (0, SV_MAX_SAMPLES] or a
+# refused allocation.
+#must_use
+fn svara_alloc_vec_room(n) {
+    if (n <= 0) { return 0; }
+    if (n > SV_MAX_SAMPLES) { return 0; }
+    return alloc(svara_vec_cap_for(n) * 8);
+}
+
+# vec_room_bytes -- the size of what svara_alloc_vec_room(n) allocates.
+#must_use
+fn svara_vec_room_bytes(n) { return svara_vec_cap_for(n) * 8; }
+
+# The adopting Allocator's entries. Its state is [buffer, size in bytes].
+fn _svara_room_alloc(state, size) {
+    if ((size >= 64) & (size <= load64(state + 8))) { return load64(state); }
+    return alloc(size);
+}
+
+# realloc entry: the buffer again when it fits, else a fresh copy.
+fn _svara_room_realloc(state, old_ptr, old_size, new_size) {
+    if ((old_ptr == load64(state)) & (new_size <= load64(state + 8))) { return old_ptr; }
+    var p = alloc(new_size);
+    if (p == 0) { return 0; }
+    var copy = old_size;
+    if (new_size < copy) { copy = new_size; }
+    var i = 0;
+    while (i < copy) { store8(p + i, load8(old_ptr + i)); i = i + 1; }
+    return p;
+}
+
+# free entry: a no-op, as the bump allocator's is.
+fn _svara_room_free(state, ptr) { return 0; }
+
+# reset entry: a no-op.
+fn _svara_room_reset(state) { return 0; }
+
+# vec_adopt -- a vec holding the n f64s at `buf`, an allocation `bytes` long. When
+# `bytes` is svara_vec_room_bytes(n) the vec keeps `buf` itself and only its 24-byte
+# header, the Allocator and its state are new; otherwise it copies as vec_push would.
+# A refused allocation ends the process, as vec_push's does.
+#must_use
+fn svara_vec_adopt(buf, n, bytes) {
+    var st = alloc(16);
+    if (st == 0) { svara_alloc_refused(); }
+    store64(st, buf);
+    store64(st + 8, bytes);
+    var a = allocator_new(&_svara_room_alloc, &_svara_room_realloc, &_svara_room_free, &_svara_room_reset, st);
+    if (a == 0) { svara_alloc_refused(); }
+    var v = vec_new_a(a);
+    if (v == 0) { svara_alloc_refused(); }
+    var i = 0;
+    while (i < n) {
+        if (vec_push_a(a, v, load64(buf + i * 8)) < 0) { svara_alloc_refused(); }
+        i = i + 1;
+    }
+    return v;
+}
+
+# samples_acc -- 24 bytes the caller keeps, usually on its stack: [buffer, length,
+# capacity]. Samples appended in order land in one svara_alloc_vec_room buffer that
+# svara_samples_acc_vec hands to svara_vec_adopt. Start it at the length the caller
+# expects. An append past the capacity grows the buffer to room for the new length,
+# copying once, so an expectation that is wrong costs memory, never a sample.
+
+# samples_acc_init -- an empty accumulator with room for `expect` samples (none for
+# 0, and at most SV_MAX_SAMPLES). 0, or SVARA_ERR_COMPUTATION when the room is refused.
+#must_use
+fn svara_samples_acc_init(acc, expect) {
+    store64(acc, 0);
+    store64(acc + 8, 0);
+    store64(acc + 16, 0);
+    if (expect <= 0) { return 0; }
+    var e = expect;
+    if (e > SV_MAX_SAMPLES) { e = SV_MAX_SAMPLES; }
+    var b = svara_alloc_vec_room(e);
+    if (b == 0) { return SVARA_ERR_COMPUTATION; }
+    store64(acc, b);
+    store64(acc + 16, svara_vec_cap_for(e));
+    return 0;
+}
+
+# samples_acc_append -- append the n samples at `src`. 0, or SVARA_ERR_COMPUTATION
+# when they would take the length past SV_MAX_SAMPLES, which is the most a vec
+# holds, or when a growth is refused. A refusal appends nothing.
+#must_use
+fn svara_samples_acc_append(acc, src, n) {
+    var len = load64(acc + 8);
+    if (n > SV_MAX_SAMPLES - len) { return SVARA_ERR_COMPUTATION; }
+    var need = len + n;
+    var buf = load64(acc);
+    if (need > load64(acc + 16)) {
+        var grown = svara_alloc_vec_room(need);
+        if (grown == 0) { return SVARA_ERR_COMPUTATION; }
+        var i = 0;
+        while (i < len) { store64(grown + i * 8, load64(buf + i * 8)); i = i + 1; }
+        buf = grown;
+        store64(acc, grown);
+        store64(acc + 16, svara_vec_cap_for(need));
+    }
+    var j = 0;
+    while (j < n) { store64(buf + (len + j) * 8, load64(src + j * 8)); j = j + 1; }
+    store64(acc + 8, need);
+    return 0;
+}
+
+# samples_acc_len -- the samples appended so far.
+#must_use
+fn svara_samples_acc_len(acc) { return load64(acc + 8); }
+
+# samples_acc_vec -- the appended samples as a vec that keeps the buffer.
+#must_use
+fn svara_samples_acc_vec(acc) {
+    var len = load64(acc + 8);
+    if (len == 0) { return vec_new(); }
+    return svara_vec_adopt(load64(acc), len, load64(acc + 16) * 8);
+}
+
 # ---- module-scratch locks ---------------------------------------------------
 # A few functions keep grow-only scratch at module level, because the bump
 # allocator never frees and they run too often to allocate per call: the spectral

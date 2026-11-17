@@ -65,6 +65,22 @@ Rust's own inputs; their Rust medians are in
 | `render_planned` (3 phonemes) | ~10.6 ms | ~13.5 ms | per-sample formant interpolation + tract re-target |
 | `render_planned` toned | ~13.2 ms | ~16.6 ms | as above, plus a per-sample prosody contour lookup |
 
+**3.8.3 changed memory, not time**, so the table above stands for it. Its retired
+instructions are within 0.3% of 3.8.2's on every probe but phoneme /a/, at 0.984x,
+which no timer here resolves. What moved is the arena each render keeps, which no
+row above can see. Bytes kept per output sample, male voice at 44.1 kHz:
+
+| Render | 3.8.2 | 3.8.3 |
+|---|---:|---:|
+| `svara_phoneme_synthesize`, /a/ for 0.1 s | 38 | 15 |
+| `svara_sequence_render`, four phonemes | 81 | 24 |
+| `svara_sequence_render_planned`, the same four | 27 | 10 |
+| a warmed batch render or pool batch, three events | 21 | 10 |
+
+A vec doubling from 16 slots had kept each output about four times. Now each render
+keeps one buffer rounded up to a vec's capacity, and `sequence_render` also keeps one
+exact buffer per phoneme. `tests/allocbudget.tcyr` pins every row.
+
 **3.8.2 took the tract chain to 0.744x of 3.8.1's retired instructions and 0.709x
 its cycles**, bit-identical. A component profile put 59% of `tract process_sample`
 in the formant bank, which ran all eight slots for five formants. Four changes:

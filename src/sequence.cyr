@@ -288,7 +288,10 @@ fn svara_seq_sigmoid_fade(t) {
 
 # crossfade_segments_variable -- blend adjacent sample vecs with per-boundary
 # crossfade lengths (sigmoid). Returns the concatenated/blended sample vec, or
-# SVARA_ERR_COMPUTATION if it would pass SV_MAX_SAMPLES.
+# SVARA_ERR_COMPUTATION if it would pass SV_MAX_SAMPLES. The Rust's own shape
+# (`git show 3.6.5:rust-old/src/sequence.rs`), kept as the reference: since 3.8.3
+# no render calls it, and tests/stream.tcyr holds svara_seq_xf_segment, which both
+# svara_sequence_render and the stream use, to it bit for bit.
 #must_use
 fn svara_seq_crossfade(segments, cf_lengths) {
     var ns = vec_len(segments);
@@ -384,14 +387,21 @@ fn svara_sequence_render(seq, voice, sample_rate) {
     var durs = svara_seq_durations(seq, in_cluster);
     var nasals = svara_detect_nasalization(svara_seq_phoneme_list(seq));
 
-    var segments = vec_new();
+    # Each phoneme's samples stay in their raw buffer (3.8.3), at segs + 16 * i as
+    # [buffer, count], and one voice copy serves the whole render instead of one per
+    # event. The crossfade then runs straight into one buffer sized for the output,
+    # which becomes the returned vec.
+    var segs = alloc(n * 16);
+    var ev = alloc(sizeof(SvVoiceProfile));
+    if ((segs == 0) | (ev == 0)) { svara_alloc_refused(); }
+    var cnt[8];
     var i = 0;
     while (i < n) {
         var e = vec_get(events, i);
-        var ev = svara_seq_voice_clone(voice);
-        SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(SvVoiceProfile_base_f0(ev), SvPhonemeEvent_stress(e)));
-        var seg = svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, sample_rate,
-          vec_get(durs, i), vec_get(nasals, i));
+        var evv = svara_voice_copy_into(voice, ev);
+        SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(SvVoiceProfile_base_f0(voice), SvPhonemeEvent_stress(e)));
+        var seg = svara_ph_synthesize_nasalized_raw(SvPhonemeEvent_phoneme(e), ev, sample_rate,
+          vec_get(durs, i), vec_get(nasals, i), 0, &cnt);
         if (svara_is_err(seg) == 1) {
             #ifdef LOGGING
             svara_span_leave(_sp);
@@ -399,23 +409,56 @@ fn svara_sequence_render(seq, voice, sample_rate) {
             #endif
             return seg;
         }
-        vec_push(segments, seg);
+        store64(segs + i * 16, seg);
+        store64(segs + i * 16 + 8, load64(&cnt));
         i = i + 1;
     }
-
-    var cfs = vec_new();
-    var min_cf = svara_seq_min_crossfade(seq, sample_rate);
-    i = 0;
-    while (i < n - 1) {
-        vec_push(cfs, svara_seq_crossfade_len(events, i, vec_len(vec_get(segments, i)),
-            vec_len(vec_get(segments, i + 1)), min_cf));
-        i = i + 1;
-    }
-    var out = svara_seq_crossfade(segments, cfs);
+    var out = svara_seq_join(events, segs, n, svara_seq_min_crossfade(seq, sample_rate));
     #ifdef LOGGING
     svara_span_leave(_sp);
     #endif
     return out;
+}
+
+# seq_join -- svara_seq_crossfade over the n raw segments at segs ([buffer, count]
+# per event, 16 bytes each), into one buffer sized for the result, which becomes the
+# returned vec. The crossfade is svara_seq_xf_segment, the stream's step, which
+# tests/stream.tcyr holds to svara_seq_crossfade bit for bit. Refuses with
+# SVARA_ERR_COMPUTATION where svara_seq_crossfade does: at a segment that would take
+# the output past SV_MAX_SAMPLES.
+#must_use
+fn svara_seq_join(events, segs, n, min_cf) {
+    # Pass 1, the output's length: all of the first segment, then each later one
+    # past its fade-in, which is what svara_seq_xf_segment appends.
+    var total = 0;
+    var cf_prev = 0;
+    var i = 0;
+    while (i < n) {
+        var cnt = load64(segs + i * 16 + 8);
+        if (cnt > SV_MAX_SAMPLES - total) { return SVARA_ERR_COMPUTATION; }
+        var fl = cf_prev;
+        if (fl > cnt) { fl = cnt; }
+        total = total + (cnt - fl);
+        cf_prev = 0;
+        if (i < n - 1) { cf_prev = svara_seq_crossfade_len(events, i, cnt, load64(segs + i * 16 + 24), min_cf); }
+        i = i + 1;
+    }
+    if (total == 0) { return vec_new(); }
+    var out = svara_alloc_vec_room(total);
+    if (out == 0) { return SVARA_ERR_COMPUTATION; }
+    # Pass 2, the crossfade.
+    var p = 0;
+    cf_prev = 0;
+    i = 0;
+    while (i < n) {
+        var c2 = load64(segs + i * 16 + 8);
+        var cf_next = 0;
+        if (i < n - 1) { cf_next = svara_seq_crossfade_len(events, i, c2, load64(segs + i * 16 + 24), min_cf); }
+        p = svara_seq_xf_segment(out, p, 0, load64(segs + i * 16), c2, i, n, cf_prev, cf_next);
+        cf_prev = cf_next;
+        i = i + 1;
+    }
+    return svara_vec_adopt(out, total, svara_vec_room_bytes(total));
 }
 
 # ================================================================
@@ -675,7 +718,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
     var tract = svara_tract_new(sample_rate);
     if (svara_is_err(tract) == 1) { return tract; }
     var noise = svara_rng_new(17);
-    var out = svara_alloc_samples(total);
+    var out = svara_alloc_vec_room(total);   # becomes the returned vec (3.8.3)
     if (out == 0) { return SVARA_ERR_COMPUTATION; }
 
     # One contour per event, built once. This used to be rebuilt inside the
@@ -814,5 +857,5 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
         store64(out + ridx * 8, f64_mul(load64(out + ridx * 8), e2));
         b = b + 1;
     }
-    return svara_ph_buf_to_vec(out, total);
+    return svara_vec_adopt(out, total, svara_vec_room_bytes(total));
 }

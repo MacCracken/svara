@@ -89,8 +89,11 @@ it is unbounded growth. The per-sample path therefore allocates nothing, which
 took deliberate work: `svara_tract_set_formants` rebuilds the filter *in place*,
 `svara_trajectory_formants_at_into` and `svara_vowel_target_to_formants_into`
 write into caller-owned storage, and the tone contour is built once per event
-rather than once per sample. `tests/allocbudget.tcyr` pins the result as marginal
-arena bytes per sample. See
+rather than once per sample. A growing vec is the same hazard one level up:
+`vec_push` doubles and copies, and the arena keeps every buffer it outgrows. So since
+3.8.3 a render never pushes its samples onto a vec. It renders into a buffer with a
+vec's capacity, and `svara_vec_adopt` makes that buffer the vec's own.
+`tests/allocbudget.tcyr` pins the result as marginal arena bytes per sample. See
 [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md) for the
 related allocation-failure discipline.
 

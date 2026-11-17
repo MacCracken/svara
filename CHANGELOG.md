@@ -5,6 +5,110 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.3] - 2026-11-16 — each render keeps its samples about once
+
+Performance release, in memory rather than time. A cyrius `vec` cannot be sized up front:
+`vec_push` doubles from 16 slots and copies, and the bump allocator never frees. So every render
+kept its output about four times over: the buffer it rendered into, then every buffer the vec
+outgrew, then the vec. **Each render now keeps between 0.30x and 0.50x of 3.8.2's bytes**,
+measured on the same inputs (male voice, 44.1 kHz):
+
+| Render | samples | 3.8.2 | 3.8.3 |
+|---|---:|---:|---:|
+| `svara_phoneme_synthesize`, /a/ for 0.1 s | 4,410 | 169,160 B | 68,528 B |
+| `svara_phoneme_synthesize`, /s/ for 0.08 s | 3,528 | 95,184 B | 34,376 B |
+| `svara_sequence_render`, four phonemes | 7,513 | 610,496 B (81 a sample) | 184,656 B (24) |
+| `svara_sequence_render_planned`, the same four | 13,589 | 375,744 B (27) | 136,144 B (10) |
+| a warmed batch render, three events | 12,082 | 262,624 B (21) | 131,592 B (10) |
+| a warmed pool batch, three pairs | 12,348 | 262,040 B (21) | 131,152 B (10) |
+
+**No output moves**: against 3.8.2, 558,721 values, the JSON and all 638 hostile cases are
+identical. Retired instructions are within 0.3% on every probe but phoneme /a/, at 0.984x. Cycles
+moved only with host noise: the geomean was 1.001 and 1.005 in two sweeps. **1,342 assertions /
+26 suites.**
+
+### Changed
+
+- **A sample vec keeps the buffer its samples were rendered into.** `svara_vec_adopt`
+  (`src/error.cyr`) builds the vec through `vec_new_a` and `vec_push_a` with an Allocator of its
+  own. That Allocator answers every data-sized request that fits with the rendered buffer, so the
+  vec "grows" into it, its copy writes each word over itself, and it ends up holding the buffer.
+  - **What it relies on.** `lib/alloc.cyr`'s Allocator contract, not `vec`'s layout, so the
+    roadmap's "do not hand-build a vec header" still holds. A request under 64 bytes (the header)
+    or larger than the buffer gets an ordinary allocation, so a short buffer is copied out of and
+    never written past.
+  - **What it costs.** The buffer must have the capacity the vec would grow to
+    (`svara_alloc_vec_room`: 16 slots, doubled until they hold n), which is up to twice its
+    samples. Each vec also carries a 40-byte Allocator and 16 bytes of state.
+  - **What would remove that.** A `vec_with_capacity` in cyrius, now asked for upstream.
+- **`svara_phoneme_synthesize` and `_nasalized` render into that room and adopt it.** The vowel,
+  nasal and approximant synths write straight into it through `svara_tract_synthesize_into`, rather
+  than through a vec of the tract's own. `svara_ph_buf_to_vec`, which pushed every sample onto a
+  vec from empty, is gone.
+- **`svara_sequence_render` keeps each phoneme's samples in a buffer of exactly their length**
+  (`svara_ph_synthesize_nasalized_raw`), then crossfades them straight into one buffer sized for
+  the output, which becomes the returned vec (`svara_seq_join`).
+  - The crossfade step is `svara_seq_xf_segment`, the stream's step since 3.8.0.
+    `tests/stream.tcyr` holds it to `svara_seq_crossfade` bit for bit.
+  - One voice copy serves the whole render, instead of a clone per event.
+  - `svara_seq_crossfade` stays as the reference that both are held to.
+- **`svara_sequence_render_planned` adopts its output buffer** instead of copying it into a vec.
+- **The batch render and the pool batch size their output once, from the plan**
+  (`svara_synthctx_count_for`, `svara_samples_acc_*`). A batch render also copies its voice once
+  instead of per event.
+  - **A render that will fail sizes nothing.** If an event would be refused, they grow as they go
+    instead, so the render keeps no room for the events after the refusal.
+  - **One stress table left.** The batch render now takes its pitch and duration from
+    `svara_seq_stress_f0` and `svara_seq_event_duration(e, 0)`. That removes the last copy of the
+    stress table outside `src/sequence.cyr`, and the bits are the same.
+- **A refused growth of a render's output returns `SVARA_ERR_COMPUTATION`.** It used to end the
+  process inside `vec_push`. A refused vec header or Allocator still ends it, as `vec_push`'s did.
+- **Not taken:**
+  - **The batch render's progress object.** It is still built per event. The callback was never
+    told the object is valid only during the call, and it is 24 bytes an event, not a sample.
+  - **The glottal source and tract per phoneme** in `svara_sequence_render` stay too, about
+    2.4 KB a phoneme. `svara_sequence_render_into` is the render that avoids them.
+
+### Added
+
+- **`tests/allocbudget.tcyr`: three groups for 3.8.3** (39 assertions):
+  - **The vec keeps its buffer.** Adopting a vec's room keeps at most 128 bytes. A short buffer is
+    copied out of and never grown into: a guard right after an 800-byte buffer survives pushes up
+    to the vec's capacity. An adopted vec grows like any other. The accumulator holds its samples
+    through two growths, an empty append and a refusal past `SV_MAX_SAMPLES`.
+  - **What each render keeps.** Each one is bounded against its 3.8.2 figure, with controls. A
+    pool batch and a batch render refused at their first event keep no room for the rest.
+  - **The same samples.** Each render is compared bit for bit with the 3.8.2 code, rebuilt in the
+    test from public pieces:
+    - `svara_sequence_render` on a nine-event sequence through every crossfade branch, on one
+      event, and with a second voice;
+    - the batch render and the pool batch, over the same nine events.
+
+  11 mutants each fail their own check:
+  - the Allocator never adopting, and adopting past the buffer;
+  - `render_planned` copying out;
+  - the segments taking a vec's room;
+  - the join ignoring the fades in its length;
+  - both batch renders sizing past a refusal;
+  - a growth dropping samples;
+  - one voice copy with the stress compounding;
+  - the batch render shortening clusters;
+  - the pool batch dropping a sample.
+
+  Two more were tried. Leaving the scratch voice uncopied ends the suite on a fault, and the other
+  was equivalent and was dropped.
+- **Upstream: svara's section in cyrius
+  `docs/development/issues/2026-11-11-vec-keeps-outgrown-buffer-and-aborts.md`.** It asks for
+  `vec_with_capacity` or a vec over an existing buffer, with a repro: 4,410 words pushed from empty
+  keep 130,968 bytes, and adopted, 65,600.
+- `svara_vec_adopt`, `svara_alloc_vec_room`, `svara_vec_room_bytes`, `svara_vec_cap_for`, the
+  `svara_samples_acc_*` accumulator, `svara_ph_alloc`, `svara_ph_synthesize_nasalized_raw`,
+  `svara_seq_join`, `svara_synthctx_count_for` and `svara_pool_batch_expect`.
+
+### Removed
+
+- `svara_ph_buf_to_vec`. Nothing calls it.
+
 ## [3.8.2] - 2026-11-16 — the tract chain in 0.74x the instructions
 
 Performance release. **`tract process_sample` retires 0.744x of 3.8.1's instructions in 0.709x

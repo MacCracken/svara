@@ -16,7 +16,7 @@
 #
 # Include order: hisab -> goonj -> naad -> error -> rng -> smooth -> lod ->
 # formant -> spectral -> glottal -> tract -> voice -> phoneme -> prosody ->
-# trajectory -> sequence.
+# trajectory -> sequence -> pool -> render.
 
 include "lib/hisab.cyr"
 include "lib/goonj.cyr"
@@ -36,6 +36,8 @@ include "src/phoneme.cyr"
 include "src/prosody.cyr"
 include "src/trajectory.cyr"
 include "src/sequence.cyr"
+include "src/pool.cyr"
+include "src/render.cyr"
 
 var SR = 0x40E5888000000000;   # 44100.0
 
@@ -218,6 +220,120 @@ fn ctx_pass_bytes(ctx, voice) {
     return used;
 }
 
+# 3.8.2's svara_sequence_render, from the pieces it was made of: a voice clone per
+# event, svara_phoneme_synthesize_nasalized's vecs, then svara_seq_crossfade.
+#must_use
+fn ref_sequence_render(seq, voice) {
+    var events = SvPhonemeSequence_events(seq);
+    var n = vec_len(events);
+    var durs = svara_seq_durations(seq, svara_seq_detect_clusters(events));
+    var nasals = svara_detect_nasalization(svara_seq_phoneme_list(seq));
+    var segments = vec_new();
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        var ev = svara_seq_voice_clone(voice);
+        SvVoiceProfile_set_base_f0(ev, svara_seq_stress_f0(SvVoiceProfile_base_f0(ev), SvPhonemeEvent_stress(e)));
+        vec_push(segments, svara_phoneme_synthesize_nasalized(SvPhonemeEvent_phoneme(e), ev, SR, vec_get(durs, i),
+            vec_get(nasals, i)));
+        i = i + 1;
+    }
+    var cfs = vec_new();
+    var min_cf = svara_seq_min_crossfade(seq, SR);
+    i = 0;
+    while (i < n - 1) {
+        vec_push(cfs, svara_seq_crossfade_len(events, i, vec_len(vec_get(segments, i)),
+            vec_len(vec_get(segments, i + 1)), min_cf));
+        i = i + 1;
+    }
+    return svara_seq_crossfade(segments, cfs);
+}
+
+# 3.8.2's batch render loop on a fresh context: a voice clone per event, its own
+# stress table, and every sample pushed onto a vec from empty.
+#must_use
+fn ref_batch(voice, events) {
+    var ctx = svara_synthctx_new(voice, SR);
+    var pl = vec_new();
+    var i = 0;
+    while (i < vec_len(events)) { vec_push(pl, SvPhonemeEvent_phoneme(vec_get(events, i))); i = i + 1; }
+    var nasals = svara_detect_nasalization(pl);
+    var out = vec_new();
+    i = 0;
+    while (i < vec_len(events)) {
+        var e = vec_get(events, i);
+        var ev = svara_seq_voice_clone(voice);
+        var ss = 0.9;
+        var st = SvPhonemeEvent_stress(e);
+        if (st == SVARA_STRESS_PRIMARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.10));
+            ss = 1.15;
+        } elif (st == SVARA_STRESS_SECONDARY) {
+            SvVoiceProfile_set_base_f0(ev, f64_mul(SvVoiceProfile_base_f0(ev), 1.05));
+            ss = 1.05;
+        }
+        var n = svara_synthctx_synthesize(ctx, SvPhonemeEvent_phoneme(e), ev, f64_mul(SvPhonemeEvent_duration(e), ss),
+          vec_get(nasals, i));
+        var buf = svara_synthctx_buffer(ctx);
+        var j = 0;
+        while (j < n) { vec_push(out, load64(buf + j * 8)); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+# 3.8.2's pool batch on a fresh context: every sample pushed onto a vec from empty.
+#must_use
+fn ref_pool(voice, phs, durs) {
+    var ctx = svara_synthctx_new(voice, SR);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(phs)) {
+        var n = svara_synthctx_synthesize(ctx, vec_get(phs, i), voice, vec_get(durs, i), 0);
+        var buf = svara_synthctx_buffer(ctx);
+        var j = 0;
+        while (j < n) { vec_push(out, load64(buf + j * 8)); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+# A sequence that reaches every branch of the crossfade: stress, a nasal ahead of a
+# vowel, a consonant cluster, a plosive, silence, a diphthong, segments shorter than
+# their fades and one of no samples at all.
+#must_use
+fn mixed_seq() {
+    var s = svara_sequence_new();
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.08, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_PLOSIVE_T, 0.05, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_SECONDARY));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_NASAL_M, 0.0005, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_VOWEL_E, 0.00001, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_SILENCE, 0.05, SVARA_STRESS_UNSTRESSED));
+    svara_sequence_push(s, svara_phoneme_event_new(SVARA_PH_DIPH_AI, 0.12, SVARA_STRESS_PRIMARY));
+    return s;
+}
+
+# Arena bytes a call to svara_vec_adopt keeps, for n samples in `bytes` of room.
+#must_use
+fn adopt_bytes(n, bytes) {
+    var b = alloc(bytes);
+    var i = 0;
+    while (i < n) { store64(b + i * 8, i * 3 + 1); i = i + 1; }
+    var a = alloc_used();
+    var v = svara_vec_adopt(b, n, bytes);
+    var used = alloc_used() - a;
+    if (vec_len(v) != n) { return 0 - 1; }
+    i = 0;
+    while (i < n) {
+        if (vec_get(v, i) != i * 3 + 1) { return 0 - 1; }
+        i = i + 1;
+    }
+    return used;
+}
+
 # Test entry point — runs this file's suite and returns the assert summary.
 fn main() {
     alloc_init();
@@ -345,12 +461,13 @@ fn main() {
     # ================================================================
     test_group("render_planned allocates per sample only for its output");
     # ================================================================
-    # 3.1.2 measured 1121 (untoned) and 1505 (toned) bytes per sample here.
-    # What remains is the output buffer plus the vec it is copied into; the
-    # per-sample synthesis work itself allocates nothing.
+    # 3.1.2 measured 1121 (untoned) and 1505 (toned) bytes per sample here, and
+    # 3.8.2 35, the output buffer plus the vec it was copied into. Since 3.8.3 the
+    # buffer is the vec (svara_vec_adopt), and 13 remain: the buffer's room, rounded
+    # up to a vec's capacity. The per-sample synthesis itself allocates nothing.
     var untoned = marginal_bytes(0);
     assert_eq(untoned > 0, 1, "control: the budget measurement reads a real number");
-    assert_eq(untoned < 64, 1, "untoned render stays under 64 bytes per sample");
+    assert_eq(untoned < 20, 1, "untoned render stays under 20 bytes per sample");
     var toned = marginal_bytes(1);
     assert_eq(toned > 0, 1, "control: the toned budget reads a real number");
     # hisab 3.4.1 holds calc_monotone_cubic_checked's scratch on its stack up to 16
@@ -649,10 +766,165 @@ fn main() {
     assert_eq(n2, n1, "control: and streamed as many samples");
     var r0 = alloc_used();
     var rr = svara_sequence_render(st_sq, voice, SR);
-    # 63 bytes a sample measured on this two-vowel sequence (127 on hoosh's twelve
-    # phonemes): every phoneme's samples, then the crossfade's own output vec.
-    assert_eq((alloc_used() - r0) / vec_len(rr) > 32, 1,
-      "control: svara_sequence_render keeps more than 32 bytes a sample on the same sequence");
+    # Each phoneme's samples, then the output: at least 16 bytes a sample.
+    assert_eq((alloc_used() - r0) / vec_len(rr) >= 16, 1,
+      "control: svara_sequence_render keeps its samples twice on the same sequence");
+
+    # ================================================================
+    test_group("3.8.3: a sample vec keeps the buffer it was rendered into");
+    # ================================================================
+    # lib/vec.cyr cannot size a vec up front, and vec_push doubles from 16 and copies
+    # into a bump arena that never frees: a vec of n samples kept about twice its
+    # capacity, beside the buffer the samples were rendered into. svara_vec_adopt
+    # hands vec_new_a an Allocator that answers with that buffer.
+    var ad = adopt_bytes(100, svara_vec_room_bytes(100));
+    assert_eq(ad >= 0, 1, "control: an adopted vec holds the buffer's 100 samples, in order");
+    assert_eq(ad <= 128, 1, "adopting a vec's room keeps only the vec header and its Allocator");
+    var ad_short = adopt_bytes(100, 800);
+    assert_eq(ad_short >= 0, 1, "control: an adopted short buffer gives the same 100 samples");
+    assert_eq(ad_short >= 1024, 1,
+      "control: a buffer short of a vec's capacity is copied out of, so the measure sees it");
+    # A buffer shorter than the vec's capacity must never be grown into: the vec
+    # would take the bytes past it for its own.
+    var short = alloc(800);
+    var guard = alloc(256);   # room for the 28 pushes a mutant would write into it
+    assert_eq(guard - short, 800, "control: the guard sits right after the 800-byte buffer");
+    store64(guard, 0x5A5A5A5A5A5A5A5A);
+    var gi = 0;
+    while (gi < 100) { store64(short + gi * 8, (gi * 3 + 1)); gi = gi + 1; }
+    var sv = svara_vec_adopt(short, 100, 800);
+    while (gi < 128) { vec_push(sv, (gi * 3 + 1)); gi = gi + 1; }
+    assert_eq(load64(guard), 0x5A5A5A5A5A5A5A5A, "pushing up to the vec's capacity never writes past a short buffer");
+    var gbad = 0;
+    gi = 0;
+    while (gi < 128) { if (vec_get(sv, gi) != (gi * 3 + 1)) { gbad = gbad + 1; } gi = gi + 1; }
+    assert_eq(gbad, 0, "and the vec holds all 128 values");
+    # An adopted vec grows like any other once it is full.
+    var room = svara_alloc_vec_room(100);
+    gi = 0;
+    while (gi < 100) { store64(room + gi * 8, (gi * 3 + 1)); gi = gi + 1; }
+    var gv = svara_vec_adopt(room, 100, svara_vec_room_bytes(100));
+    while (gi < 300) { vec_push(gv, (gi * 3 + 1)); gi = gi + 1; }
+    gbad = 0;
+    gi = 0;
+    while (gi < 300) { if (vec_get(gv, gi) != (gi * 3 + 1)) { gbad = gbad + 1; } gi = gi + 1; }
+    assert_eq(vec_len(gv), 300, "an adopted vec pushed past its room grows");
+    assert_eq(gbad, 0, "and keeps every value");
+
+    # The accumulator the batch renders fill: sized to an expectation, grown past it.
+    var src = alloc(40 * 8);
+    gi = 0;
+    while (gi < 40) { store64(src + gi * 8, (gi * 3 + 1)); gi = gi + 1; }
+    var acc[24];
+    assert_eq(svara_samples_acc_init(&acc, 10), 0, "an accumulator takes an expectation");
+    assert_eq(svara_samples_acc_append(&acc, src, 7), 0, "an append inside the expectation");
+    assert_eq(svara_samples_acc_append(&acc, src + 56, 7), 0, "an append past the expectation grows it");
+    assert_eq(svara_samples_acc_append(&acc, src + 112, 0), 0, "an empty append");
+    assert_eq(svara_samples_acc_append(&acc, src + 112, 26), 0, "a second growth");
+    assert_eq(svara_samples_acc_append(&acc, src, SV_MAX_SAMPLES), SVARA_ERR_COMPUTATION,
+      "an append past SV_MAX_SAMPLES is refused");
+    assert_eq(svara_samples_acc_len(&acc), 40, "and appends nothing");
+    var av = svara_samples_acc_vec(&acc);
+    gbad = 0;
+    gi = 0;
+    while (gi < 40) { if (vec_get(av, gi) != (gi * 3 + 1)) { gbad = gbad + 1; } gi = gi + 1; }
+    assert_eq(vec_len(av), 40, "the vec holds all 40 samples");
+    assert_eq(gbad, 0, "in order, across both growths");
+    assert_eq(svara_samples_acc_init(&acc, 0), 0, "an accumulator with no expectation");
+    assert_eq(vec_len(svara_samples_acc_vec(&acc)), 0, "gives an empty vec");
+
+    # ================================================================
+    test_group("3.8.3: each render keeps its samples about once");
+    # ================================================================
+    # Bytes kept per output sample, against 3.8.2 on the same inputs. A vec room is
+    # at most twice its samples, so 16 bytes a sample is the most one copy can keep.
+    var pa = alloc_used();
+    var pv = svara_phoneme_synthesize(SVARA_PH_VOWEL_A, voice, SR, 0.1);
+    var pb = (alloc_used() - pa) / vec_len(pv);
+    assert_eq(pb >= 8, 1, "control: a phoneme keeps at least its samples");
+    assert_eq(pb < 20, 1, "phoneme_synthesize keeps under 20 bytes a sample (3.8.2: 38)");
+    var sr_a = alloc_used();
+    var sv2 = svara_sequence_render(st_sq, voice, SR);
+    var sr_b = (alloc_used() - sr_a) / vec_len(sv2);
+    assert_eq(sr_b < 24, 1, "sequence_render keeps under 24 bytes a sample (3.8.2: 63)");
+    var br = svara_batch_new(voice, SR);
+    svara_batch_push(br, SVARA_PH_VOWEL_A, 0.1, SVARA_STRESS_PRIMARY);
+    svara_batch_push(br, SVARA_PH_NASAL_N, 0.06, SVARA_STRESS_UNSTRESSED);
+    svara_batch_push(br, SVARA_PH_VOWEL_I, 0.1, SVARA_STRESS_SECONDARY);
+    var bo1 = svara_batch_render_all(br);
+    var bt_a = alloc_used();
+    var bo2 = svara_batch_render_all(br);
+    var bn = vec_len(SvRenderOutput_samples(bo2));
+    var bt_b = (alloc_used() - bt_a) / bn;
+    assert_eq(bt_b >= 8, 1, "control: a warmed batch render keeps at least its samples");
+    assert_eq(bt_b < 16, 1, "a warmed batch render keeps under 16 bytes a sample (3.8.2: 21)");
+    var pool = svara_pool_new(voice, SR);
+    var pph = vec_new();
+    vec_push(pph, SVARA_PH_VOWEL_A); vec_push(pph, SVARA_PH_FRIC_S); vec_push(pph, SVARA_PH_VOWEL_I);
+    var pdu = vec_new();
+    vec_push(pdu, 0.1); vec_push(pdu, 0.08); vec_push(pdu, 0.1);
+    var q1 = svara_pool_render_batch(pool, pph, pdu, voice);
+    var qa = alloc_used();
+    var q2 = svara_pool_render_batch(pool, pph, pdu, voice);
+    var qb = (alloc_used() - qa) / vec_len(q2);
+    assert_eq(qb >= 8, 1, "control: a warmed pool batch keeps at least its samples");
+    assert_eq(qb < 16, 1, "a warmed pool batch keeps under 16 bytes a sample (3.8.2: 21)");
+    # A render that fails at its first event sizes nothing for the events after it.
+    var pbad = vec_new();
+    vec_push(pbad, 0 - F64_ONE); vec_push(pbad, F64_ONE); vec_push(pbad, F64_ONE);
+    var fl_a = alloc_used();
+    assert_eq(svara_pool_render_batch(pool, pph, pbad, voice), SVARA_ERR_INVALID_DURATION,
+      "control: a pool batch with a negative first duration is refused");
+    assert_eq(alloc_used() - fl_a < 1024, 1, "and keeps no room for the 2 s after it");
+    var hv = svara_voice_new_male();
+    SvVoiceProfile_set_base_f0(hv, f64_from(1900));
+    var hb = svara_batch_new(hv, SR);
+    # The context sizes its own buffer before it sets the pitch, so warm it past the
+    # refused event's 1.15 s first: what is left to see is the output's room.
+    svara_batch_push(hb, SVARA_PH_VOWEL_A, 1.3, SVARA_STRESS_UNSTRESSED);
+    assert_eq(svara_is_err(svara_batch_render_all(hb)), 0, "control: the batch renders at 1900 Hz unstressed");
+    svara_batch_clear(hb);
+    svara_batch_push(hb, SVARA_PH_VOWEL_A, F64_ONE, SVARA_STRESS_PRIMARY);
+    svara_batch_push(hb, SVARA_PH_VOWEL_A, F64_ONE, SVARA_STRESS_UNSTRESSED);
+    var ha = alloc_used();
+    assert_eq(svara_batch_render_all(hb), SVARA_ERR_INVALID_PITCH,
+      "control: a batch whose first event stresses 1900 Hz past 2000 is refused");
+    assert_eq(alloc_used() - ha < 1024, 1, "and keeps no room for the second event");
+
+    # ================================================================
+    test_group("3.8.3: the renders give 3.8.2's samples");
+    # ================================================================
+    # Each against the 3.8.2 code, rebuilt above from public pieces, bit for bit.
+    var mx = mixed_seq();
+    var mr = svara_sequence_render(mx, voice, SR);
+    assert_eq(vec_len(mr) > 0, 1, "control: the mixed sequence renders");
+    assert_eq(samples_same(mr, ref_sequence_render(mx, voice)), 1,
+      "sequence_render is svara_seq_crossfade over the phonemes' vecs, on a sequence through every crossfade branch");
+    var one = svara_sequence_new();
+    svara_sequence_push(one, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0.05, SVARA_STRESS_PRIMARY));
+    assert_eq(samples_same(svara_sequence_render(one, voice, SR), ref_sequence_render(one, voice)), 1,
+      "and on one event");
+    var fem = svara_voice_new_female();
+    assert_eq(samples_same(svara_sequence_render(mx, fem, SR), ref_sequence_render(mx, fem)), 1,
+      "and with another voice");
+    assert_eq(samples_same(mr, svara_sequence_render(mx, fem, SR)), 0, "control: the voice changes the samples");
+    var mb = svara_batch_new(voice, SR);
+    svara_batch_extend(mb, SvPhonemeSequence_events(mx));
+    var mbo = svara_batch_render_all(mb);
+    assert_eq(samples_same(SvRenderOutput_samples(mbo), ref_batch(voice, SvPhonemeSequence_events(mx))), 1,
+      "a batch render is 3.8.2's, over the same nine events");
+    var fph = vec_new();
+    var fdu = vec_new();
+    var px = 0;
+    while (px < vec_len(SvPhonemeSequence_events(mx))) {
+        var fe = vec_get(SvPhonemeSequence_events(mx), px);
+        vec_push(fph, SvPhonemeEvent_phoneme(fe));
+        vec_push(fdu, SvPhonemeEvent_duration(fe));
+        px = px + 1;
+    }
+    var fpool = svara_pool_new(voice, SR);
+    assert_eq(samples_same(svara_pool_render_batch(fpool, fph, fdu, voice), ref_pool(voice, fph, fdu)), 1,
+      "a pool batch is 3.8.2's, over the same nine pairs");
 
     return assert_summary();
 }

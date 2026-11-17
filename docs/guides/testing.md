@@ -48,7 +48,7 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**26 suites, 1,303 assertions** at 3.8.2. One `.tcyr` per module, plus ten that
+**26 suites, 1,342 assertions** at 3.8.3. One `.tcyr` per module, plus ten that
 are not module ports:
 
 | Suite | What it is |
@@ -57,7 +57,7 @@ are not module ports:
 | `error` `rng` `smooth` `lod` `formant` `spectral` `glottal` `tract` `voice` `phoneme` `prosody` `trajectory` `sequence` `pool` `render` `bridge` | per-module ports of the Rust `#[test]` blocks |
 | `serde.tcyr` | JSON round-trips — 137 assertions |
 | `hardening.tcyr` | adversarial input for the [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md) hazard class |
-| `allocbudget.tcyr` | `_into`-variant equivalence, the per-sample arena budget, and a warmed context's zero bytes per phoneme |
+| `allocbudget.tcyr` | `_into`-variant equivalence, the per-sample arena budget, a warmed context's zero bytes per phoneme, and since 3.8.3 the bytes each render keeps against 3.8.2's, with its samples compared bit for bit against 3.8.2's code |
 | `allocrefused.tcyr` | replaces the stdlib `alloc` and refuses each naad allocation behind a glottal source or tract; the one test build that warns, `duplicate fn 'alloc'`, on purpose |
 | `concurrency.tcyr` | threads that share no object render at once, compared bit for bit with renders done alone; needs the `thread` stdlib leaf |
 | `stream.tcyr` | the streaming sequence render, bit for bit against `svara_seq_crossfade` over a second context's segments |
