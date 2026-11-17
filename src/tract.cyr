@@ -334,6 +334,38 @@ fn svara_tract_set_formants_from_target(self, target) {
     return svara_tract_set_formants(self, sc);
 }
 
+# retarget -- move the tract's formants to `target`, KEEPING every resonator's
+# state (ADR-0015, 3.12.0). The bank's coefficients are updated in place, as a
+# time-varying formant synthesizer moves them; svara_tract_set_formants_from_target
+# rebuilds the bank instead, which zeroes its state, as the Rust's set_formants does.
+# This is for a path that retargets as it goes: render_planned every sample, and a
+# diphthong's glide. A tract whose bank holds some other number of formants, as a
+# new tract's does, has no state worth keeping, so it gets set_formants_from_target.
+# The target is validated first, and a rejected one leaves the tract alone.
+#must_use
+fn svara_tract_retarget(self, target) {
+    var rec = SvVocalTract_formants(self);
+    var filt = SvVocalTract_filter(self);
+    if ((filt != 0) & (vec_len(rec) == SVARA_VOWEL_FORMANT_COUNT)) {
+        var bank = SvFormantFilter_bank(filt);
+        if (SvFormantBank_count(bank) == SVARA_VOWEL_FORMANT_COUNT) {
+            var sr = SvFormantFilter_sample_rate(filt);
+            var v = svara_formant_validate_target(target, sr);
+            if (svara_is_err(v) == 1) { return v; }
+            svara_vowel_target_to_formants_into(target, rec);
+            var k = 0;
+            while (k < SVARA_VOWEL_FORMANT_COUNT) {
+                var f = vec_get(rec, k);
+                var ue = svara_formant_bank_update(bank, k, SvFormant_frequency(f), SvFormant_bandwidth(f),
+                  SvFormant_amplitude(f), sr);
+                k = k + 1;
+            }
+            return SVARA_ERR_NONE;
+        }
+    }
+    return svara_tract_set_formants_from_target(self, target);
+}
+
 # set_vowel -- retarget the tract at `vowel`. Returns what
 # svara_tract_set_formants_from_target returns: 0, or a neg error.
 #must_use

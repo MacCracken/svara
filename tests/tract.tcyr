@@ -137,5 +137,81 @@ if (load64(pin_vt + SV_VT_QFLAGS) != 1015) { pin_vt_bad = pin_vt_bad + 1; }
 assert_eq(pin_vt_bad, 0, "the 11 offsets read the fields their accessors write");
 assert_eq(load64(pin_vt + SV_VT_FILTER + 8) != 1000, 1, "control: the next word holds another field");
 
+# ================================================================
+test_group("3.12.0: a retarget keeps the resonators' state (ADR-0015)");
+# ================================================================
+# Two tracts on /a/, each driven by its own identical glottal source. Retargeting one
+# to the /a/ it already holds must change nothing, bit for bit; the resetting setter
+# must. Then a retarget to /i/ must give each slot fresh coefficients while the
+# resonators keep ringing.
+#must_use
+fn rt_tract(target) {
+    var t = svara_tract_new(SR);
+    var e = svara_tract_set_formants_from_target(t, target);
+    return t;
+}
+# Samples of two tracts, each fed its own glottal source, that differ in any bit over n.
+#must_use
+fn rt_pair(ta, ga, tb, gb, n) {
+    var bad = 0;
+    var i = 0;
+    while (i < n) {
+        var a = svara_tract_process_sample(ta, svara_glottal_next_sample(ga));
+        var b = svara_tract_process_sample(tb, svara_glottal_next_sample(gb));
+        if (a != b) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+var rt_a = svara_vowel_target_from_vowel(SVARA_VOWEL_A);
+var rt_i = svara_vowel_target_from_vowel(SVARA_VOWEL_I);
+var rta = rt_tract(rt_a);
+var rtb = rt_tract(rt_a);
+var rga = svara_glottal_new(f64_from(120), SR);
+var rgb = svara_glottal_new(f64_from(120), SR);
+var rt_warm = rt_pair(rta, rga, rtb, rgb, 500);
+assert_eq(svara_tract_retarget(rtb, rt_a), SVARA_ERR_NONE, "control: the retarget is accepted");
+assert_eq(rt_pair(rta, rga, rtb, rgb, 500), 0, "retargeting to the same /a/ changes nothing, bit for bit");
+var rtc = rt_tract(rt_a);
+var rtd = rt_tract(rt_a);
+var rgc = svara_glottal_new(f64_from(120), SR);
+var rgd = svara_glottal_new(f64_from(120), SR);
+rt_warm = rt_pair(rtc, rgc, rtd, rgd, 500);
+var rt_rs = svara_tract_set_formants_from_target(rtd, rt_a);
+assert_eq(rt_pair(rtc, rgc, rtd, rgd, 500) > 0, 1, "control: the resetting setter, to the same /a/, does change it");
+
+var rt_bank = SvFormantFilter_bank(SvVocalTract_filter(rta));
+var rt_y1_before = load64(svara_formant_bank_slot(rt_bank, 0) + SV_FSLOT_Y1);
+assert_eq(svara_tract_retarget(rta, rt_i), SVARA_ERR_NONE, "a retarget to /i/ is accepted");
+var rt_cbuf = alloc(32);
+var rt_cbad = 0;
+var rt_fi = svara_vowel_target_to_formants(rt_i);
+var rk = 0;
+while (rk < 5) {
+    var rf = vec_get(rt_fi, rk);
+    svara_formant_biquad_coeffs(SvFormant_frequency(rf), SvFormant_bandwidth(rf), SR, rt_cbuf);
+    var rslot = svara_formant_bank_slot(rt_bank, rk);
+    if (load64(rslot + SV_FSLOT_B0) != load64(rt_cbuf)) { rt_cbad = rt_cbad + 1; }
+    if (load64(rslot + SV_FSLOT_A1) != load64(rt_cbuf + 16)) { rt_cbad = rt_cbad + 1; }
+    if (load64(rslot + SV_FSLOT_A2) != load64(rt_cbuf + 24)) { rt_cbad = rt_cbad + 1; }
+    rk = rk + 1;
+}
+assert_eq(rt_cbad, 0, "each of the five slots holds /i/'s fresh coefficients");
+assert_eq(load64(svara_formant_bank_slot(rt_bank, 0) + SV_FSLOT_Y1), rt_y1_before, "and slot 0's state is kept");
+assert_eq(rt_y1_before != 0, 1, "control: that state is not zero");
+
+var rt_bad = svara_vowel_target_new(f64_div(0, 0), f64_from(1000), f64_from(2500), f64_from(3500), f64_from(4500));
+var rt_b0 = load64(svara_formant_bank_slot(rt_bank, 1) + SV_FSLOT_B0);
+assert_eq(svara_is_err(svara_tract_retarget(rta, rt_bad)), 1, "a target with a NaN formant is refused");
+assert_eq(load64(svara_formant_bank_slot(rt_bank, 1) + SV_FSLOT_B0), rt_b0, "and leaves the coefficients alone");
+
+var rt_fresh = svara_tract_new(SR);
+var rt_set = svara_tract_new(SR);
+assert_eq(svara_tract_retarget(rt_fresh, rt_a), SVARA_ERR_NONE, "a fresh tract accepts a retarget");
+var rt_se = svara_tract_set_formants_from_target(rt_set, rt_a);
+var rgf = svara_glottal_new(f64_from(120), SR);
+var rgs = svara_glottal_new(f64_from(120), SR);
+assert_eq(rt_pair(rt_fresh, rgf, rt_set, rgs, 500), 0, "on a fresh tract a retarget builds, as the setter does");
+
 var rc = assert_summary();
 syscall(60, rc);

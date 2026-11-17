@@ -976,7 +976,7 @@ fn svara_ph_synth_diphthong(phoneme, voice, sample_rate, n, room) {
     while (i < n) {
         if (ctrl == 0) {
             svara_vowel_target_interpolate_into(start, endt, f64_div(f64_from(i), f64_from(n)), cur);
-            var e = svara_tract_set_formants_from_target(tract, cur);
+            var e = svara_tract_retarget(tract, cur);   # keeps state (ADR-0015)
             if (svara_is_err(e) == 1) { return e; }
             ctrl = 64;
         }
@@ -1244,7 +1244,7 @@ fn svara_ph_synth_vowel_nasalized(phoneme, voice, sample_rate, n, nasal, room) {
     while (i < n) {
         if (is_diph == 1) {
             svara_vowel_target_interpolate_into(target, endt, f64_div(f64_from(i), f64_from(n)), cur);
-            var e2 = svara_tract_set_formants_from_target(tract, cur);
+            var e2 = svara_tract_retarget(tract, cur);   # keeps state (ADR-0015)
             if (svara_is_err(e2) == 1) { return e2; }
         }
         if (i >= onset_sample) {
@@ -1628,7 +1628,7 @@ fn svara_synthctx_voiced(self, phoneme, voice, n, nasal) {
     while (i < n) {
         if (is_diph == 1) {
             svara_vowel_target_interpolate_into(target, endt, f64_div(f64_from(i), f64_from(n)), cur);
-            var e2 = svara_tract_set_formants_from_target(tract, cur);
+            var e2 = svara_tract_retarget(tract, cur);   # keeps state (ADR-0015)
             if (svara_is_err(e2) == 1) { return e2; }
         }
         if ((use_nasal == 1) & (i >= onset)) {

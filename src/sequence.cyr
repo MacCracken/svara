@@ -809,7 +809,7 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
             svara_tract_set_nasal_coupling(tract, 0);
         }
 
-        var sfe = svara_tract_set_formants_from_target(tract, target);
+        var sfe = svara_tract_retarget(tract, target);   # keeps state (ADR-0015)
         if (svara_is_err(sfe) == 1) { sfe = 0; }   # ignored, like Rust `let _`
 
         var effective_f0 = base_f0;

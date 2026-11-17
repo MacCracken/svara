@@ -793,8 +793,9 @@ assert_eq(ctx_loud > 500, 1, "control: most of them are not silence");
 
 # ---- 3.10.0: every vowel path applies its tilt (ADR-0013) ----------------------
 # The references below are 3.9.0's vowel synths and render_planned, verbatim but for
-# their names and ADR-0013's one line, which computes the TL here rather than through
-# svara_phoneme_tilt_tl.
+# their names, ADR-0013's one line, which computes the TL here rather than through
+# svara_phoneme_tilt_tl, and since 3.12.0 ADR-0015's retarget in their glide loops,
+# svara_tract_retarget where 3.9.0 rebuilt the bank (tests/tract.tcyr pins it).
 
 # 3.9.0's svara_ph_synth_vowel, plus ADR-0013's one tilt line, the TL computed here.
 #must_use
@@ -855,7 +856,7 @@ fn ref_diphthong_t(phoneme, voice, sample_rate, n, room) {
     while (i < n) {
         if (ctrl == 0) {
             svara_vowel_target_interpolate_into(start, endt, f64_div(f64_from(i), f64_from(n)), cur);
-            var e = svara_tract_set_formants_from_target(tract, cur);
+            var e = svara_tract_retarget(tract, cur);   # ADR-0015
             if (svara_is_err(e) == 1) { return e; }
             ctrl = 64;
         }
@@ -898,7 +899,7 @@ fn ref_vowel_nasalized_t(phoneme, voice, sample_rate, n, nasal, room) {
     while (i < n) {
         if (is_diph == 1) {
             svara_vowel_target_interpolate_into(target, endt, f64_div(f64_from(i), f64_from(n)), cur);
-            var e2 = svara_tract_set_formants_from_target(tract, cur);
+            var e2 = svara_tract_retarget(tract, cur);   # ADR-0015
             if (svara_is_err(e2) == 1) { return e2; }
         }
         if (i >= onset_sample) {
@@ -1035,7 +1036,7 @@ fn ref_render_planned_t(seq, voice, sample_rate) {
             svara_tract_set_nasal_coupling(tract, 0);
         }
 
-        var sfe = svara_tract_set_formants_from_target(tract, target);
+        var sfe = svara_tract_retarget(tract, target);   # ADR-0015
         if (svara_is_err(sfe) == 1) { sfe = 0; }   # ignored, like Rust `let _`
 
         var effective_f0 = base_f0;
@@ -1123,6 +1124,60 @@ fn ref_vowel_390(phoneme, voice, sample_rate, n, room) {
     return buf;
 }
 
+# 3.9.0's svara_synthctx_voiced, with ADR-0015's retarget in its glide loop. Its tilt is set by
+# sp_prep, as svara_synthctx_synthesize's preamble sets it since 3.10.0.
+#must_use
+fn ref_ctx_voiced_t(self, phoneme, voice, n, nasal) {
+    var buf = SvSynthCtx_buffer(self);
+    var tract = SvSynthCtx_tract(self);
+    var g = SvSynthCtx_glottal(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, 0);
+    var is_diph = 0;
+    if (svara_phoneme_class(phoneme) == SVARA_CLASS_DIPHTHONG) { is_diph = 1; }
+    var endt = 0;
+    if (is_diph == 1) {
+        var endraw = svara_ph_diphthong_end_target_into(phoneme, SvSynthCtx_vt_raw(self));
+        endt = svara_voice_apply_formant_scale_into(voice, endraw, SvSynthCtx_vt_end(self));
+    }
+
+    var use_nasal = 0;
+    var onset = 0;
+    var ramp = 1;
+    if (nasal != 0) {
+        use_nasal = 1;
+        svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
+        onset = svara_count_from_f64(f64_mul(SvNasalization_onset(nasal), f64_from(n)));   # saturating
+        ramp = n - onset;
+        if (ramp < 1) { ramp = 1; }
+    }
+
+    # fast path: plain vowel, no nasalization -> reuse synthesize_into
+    if ((is_diph == 0) & (use_nasal == 0)) {
+        svara_tract_synthesize_into(tract, g, buf, n);
+        return SVARA_ERR_NONE;
+    }
+
+    var cur = SvSynthCtx_vt_cur(self);
+    var i = 0;
+    while (i < n) {
+        if (is_diph == 1) {
+            svara_vowel_target_interpolate_into(target, endt, f64_div(f64_from(i), f64_from(n)), cur);
+            var e2 = svara_tract_retarget(tract, cur);   # ADR-0015
+            if (svara_is_err(e2) == 1) { return e2; }
+        }
+        if ((use_nasal == 1) & (i >= onset)) {
+            var nt = f64_div(f64_from(i - onset), f64_from(ramp));
+            svara_tract_set_nasal_coupling(tract, f64_mul(SvNasalization_peak_coupling(nasal), ease_in_out_smooth(nt)));
+        }
+        store64(buf + i * 8, svara_tract_process_sample(tract, svara_glottal_next_sample(g)));
+        i = i + 1;
+    }
+    return SVARA_ERR_NONE;
+}
+
 # Bits of two sample vecs that differ, or 1 + their length when either is an error
 # or their lengths differ.
 #must_use
@@ -1198,7 +1253,10 @@ assert_eq(fv_n > 300, 1, "control: over 300 renders were compared");
 var fv_nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
 var fv_nbad = sp_diff(svara_ph_synth_vowel_nasalized(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0),
   ref_vowel_nasalized_t(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0), 3528);
-assert_eq(fv_nbad, 0, "so does a nasalized /a/");
+var fv_nai = svara_ph_synth_vowel_nasalized(SVARA_PH_DIPH_AI, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0);
+var fv_rai = ref_vowel_nasalized_t(SVARA_PH_DIPH_AI, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0);
+fv_nbad = fv_nbad + sp_diff(fv_nai, fv_rai, 3528);
+assert_eq(fv_nbad, 0, "so do a nasalized /a/ and a nasalized /aɪ/, which glides");
 var fv_old = sp_diff(svara_ph_synth_vowel(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0),
   ref_vowel_390(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0), 3528);
 assert_eq(fv_old > 3000, 1, "control: /a/ no longer gives 3.9.0's untilted samples");
@@ -1252,6 +1310,45 @@ while (rqi < vec_len(rp_seqs)) {
     rqi = rqi + 1;
 }
 assert_eq(rp_bad, 0, "render_planned matches 3.9.0's with each event's tilt, bit for bit, on four sequences");
+
+# ================================================================
+test_group("3.12.0: the context voices vowels and glides with 3.9.0's code plus ADR-0015");
+# ================================================================
+# Two fresh contexts, one through svara_synthctx_voiced and one through the reference,
+# take every vowel and diphthong in turn, oral and then nasalized, at two lengths.
+var cv_bad = 0;
+var cv_n = 0;
+var cva = svara_synthctx_new(svara_voice_new_male(), sp_sr);
+var cvb = svara_synthctx_new(svara_voice_new_male(), sp_sr);
+var cv_voice = svara_voice_new_male();
+var cv_lens = vec_new(); vec_push(cv_lens, 7); vec_push(cv_lens, 2205);
+var cvl = 0;
+while (cvl < 2) {
+    var cvn = vec_get(cv_lens, cvl);
+    var cvp = 0;
+    while (cvp < 101) {
+        var cvc = svara_phoneme_class(cvp);
+        if ((cvc == SVARA_CLASS_VOWEL) | (cvc == SVARA_CLASS_DIPHTHONG)) {
+            var cvk = 0;
+            while (cvk < 2) {
+                var cvnas = 0;
+                if (cvk == 1) { cvnas = fv_nas; }
+                var cba = sp_prep(cva, cv_voice, cvn, cvp);
+                var cbb = sp_prep(cvb, cv_voice, cvn, cvp);
+                var cea = svara_synthctx_voiced(cva, cvp, cv_voice, cvn, cvnas);
+                var ceb = ref_ctx_voiced_t(cvb, cvp, cv_voice, cvn, cvnas);
+                if (cea != ceb) { cv_bad = cv_bad + 1; }
+                cv_bad = cv_bad + sp_diff(cba, cbb, cvn);
+                cv_n = cv_n + 1;
+                cvk = cvk + 1;
+            }
+        }
+        cvp = cvp + 1;
+    }
+    cvl = cvl + 1;
+}
+assert_eq(cv_bad, 0, "every vowel and diphthong, oral and nasalized, matches the reference bit for bit");
+assert_eq(cv_n > 100, 1, "control: over 100 context renders were compared");
 
 var rc = assert_summary();
 syscall(60, rc);

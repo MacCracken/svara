@@ -48,7 +48,7 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**27 suites, 1,411 assertions** at 3.11.0. One `.tcyr` per module, plus eleven that
+**27 suites, 1,424 assertions** at 3.12.0. One `.tcyr` per module, plus eleven that
 are not module ports:
 
 | Suite | What it is |
@@ -63,7 +63,7 @@ are not module ports:
 | `stream.tcyr` | the streaming sequence render, bit for bit against `svara_seq_crossfade` over a second context's segments |
 | `integration.tcyr` | the Rust integration tests, cross-module |
 | `oracle.tcyr` | scenarios the Rust asserted and the port did not — expectations re-derived from `rust-old/`, cited by line |
-| `synthpaths.tcyr` | both synthesis paths, free and context, bit for bit against 3.8.6's per-class code, rebuilt in the suite, for every phoneme of the eight classes whose runs 3.8.7 shared; since 3.10.0 also the vowel paths and `render_planned` against 3.9.0's code plus ADR-0013's tilt line |
+| `synthpaths.tcyr` | both synthesis paths, free and context, bit for bit against 3.8.6's per-class code, rebuilt in the suite, for every phoneme of the eight classes whose runs 3.8.7 shared; since 3.10.0 also the vowel paths, the context's voiced path and `render_planned` against 3.9.0's code plus ADR-0013's tilt line and ADR-0015's retarget |
 | `logging.tcyr` | the `-D LOGGING` contract; run **both ways** by `scripts/check-logging.sh`, since `cyrius test` does not forward `-D` |
 
 ⚠ Counts drift. `cyrius audit` prints the live figure; treat the numbers here as

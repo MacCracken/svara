@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.0] - 2026-11-16 — formants that move keep ringing
+
+Minor release: output changes, by decision
+([ADR-0015](docs/adr/0015-retarget-the-formant-bank-without-resetting-it.md)), the fourth 3.9.x item:
+the diphthong glide that ADR-0009 (RN-DIV) left open.
+
+**The cause was larger than the item.** Every retarget of the formant bank also rebuilt it, and a
+rebuild zeroes each resonator's state, as the Rust's `set_formants` does through
+`FormantFilter::new`. A resonator with a 50 to 100 Hz bandwidth needs milliseconds to ring up, and
+reset on every sample it never does. Through 3.11.0:
+- **`svara_sequence_render_planned`** retargets every sample, for every phoneme, so it produced no
+  formants at all. Its /a/, /i/ and /u/ peaked at the same harmonics of the voice, and the
+  trajectory planner it exists for was inaudible.
+- **The context's diphthong** retargets every sample, and had neither formants nor a glide.
+- **The free diphthong** reset every 64 samples (3.1.0's control rate). Its output was mostly the
+  transients of those resets: high-frequency energy 20 dB above /a/, and 3.11.0's Rosenberg gain
+  scaled them by a further 17.9 dB.
+
+The Rust does the same in all three. The maintainer chose to keep the resonators' state across
+every retarget, in every path.
+
+Measured (male voice, 0.4 s, the middle half, with peaks from `svara_spectrum_estimate_formants`):
+
+| Render | 3.11.0 peaks | 3.11.0 level | 3.12.0 peaks | 3.12.0 level |
+|---|---|---:|---|---:|
+| `render_planned` /a/ | 126, 253, 379 | −63.0 dB | 629, 756, 2522 | −50.6 dB |
+| `render_planned` /i/ | 126, 253, 379 | −64.1 dB | 253, 3028, 3657 | −58.2 dB |
+| `render_planned` /u/ | 126, 253, 379 | −66.3 dB | 379, 1009 | −37.3 dB |
+| free /aɪ/, start → end | 2756… → 2067… | −37.4 dB | 570, 678, 1496 → 344, 430, 2067 | −53.1 dB |
+| context /aɪ/, start → end | 118, 226, 344 | −63.8 dB | as the free path | −53.1 dB |
+
+**What moved.** 84,454 sweep values moved: phonemes 12,263 (the diphthongs), ctx 2,198,
+pool 2,391, seq 57,302 (`render_planned` and the diphthongs in sequences) and spectrum 10,300. Batch,
+glottal, tract, prosody, trajectory, bridge, misc and contours did not move, and the JSON is
+byte-identical. In the hostile cases, 11 stream hashes moved, with no exit code, length or
+non-finite count changed.
+
+`render_planned` retires 0.937x 3.11.0's instructions, since it no longer zeroes and rebuilds the
+bank every sample. **1,424 assertions / 27 suites.**
+
+### Changed
+
+- **`svara_tract_retarget(tract, target)`** moves a tract's formants and keeps every resonator's
+  state, and the DC blocker's. It validates the target, then updates the five slots' coefficients in
+  place. A tract whose bank holds some other number of formants gets the ordinary build.
+- **The four loops that retarget as they go use it:**
+  - `render_planned`, every sample;
+  - the context's diphthong, every sample;
+  - the free diphthong, every 64 samples;
+  - the free nasalized diphthong, every sample.
+- **`svara_tract_set_formants_from_target` keeps its reset**, for a one-off setting.
+
+### Added
+
+- **ADR-0015**, accepted. ADR-0009's RN-DIV now points to it as decided.
+- **`tests/tract.tcyr`: the retarget** (11 assertions):
+  - retargeting to the target a tract already holds changes nothing, bit for bit, where the
+    resetting setter does;
+  - a new target gives each slot fresh coefficients while slot 0 keeps its state;
+  - a NaN target is refused, and the coefficients stay;
+  - on a fresh tract a retarget builds, as the setter does.
+- **`tests/synthpaths.tcyr`** (2 more assertions):
+  - its references gain the retarget where 3.9.0 rebuilt;
+  - a new reference, 3.9.0's `svara_synthctx_voiced`, holds the context's every vowel and
+    diphthong, oral and nasalized, bit for bit;
+  - the nasalized check now includes /aɪ/, which glides.
+- **`docs/development/integration-guide.md`: "Moving formants (3.12.0)".**
+- **7 mutants, each failing an assertion:**
+  - a retarget that always resets;
+  - one that skips validation;
+  - one that skips slot 4;
+  - each of the four call sites put back to the resetting setter.
+
+### Not checked
+
+- **Zipper noise.** Coefficients that move every sample over kept state can in principle add a
+  slight zipper noise. The trajectory's targets move smoothly, and nothing in the measurements shows
+  it, but no one has listened to these renders yet.
+
 ## [3.11.0] - 2026-11-16 — the Rosenberg pulse closes
 
 Minor release: output changes, by decision

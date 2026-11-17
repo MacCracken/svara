@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.11.0"
+tag = "3.12.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -262,6 +262,20 @@ A gain keeps a default male /a/ at 3.10.0's loudness, but other phonemes move ag
 
 Voices built at an effort level use the LF model and do not change. The details are in
 [ADR-0014](../adr/0014-the-rosenberg-pulse-and-its-speed-quotient.md).
+
+## Moving formants (3.12.0)
+
+Through 3.11.0, as in the Rust, every retarget of the formant bank also reset it:
+- `svara_sequence_render_planned`, which retargets every sample, produced no formants at all. Its
+  /a/, /i/ and /u/ had the same spectrum.
+- The context's diphthongs had no formants either.
+- The free path's diphthongs were mostly the transients of a reset every 64 samples.
+
+Since 3.12.0 those paths retarget with `svara_tract_retarget`, which keeps the resonators' state.
+`render_planned`'s vowels carry their formants, and diphthongs glide in both paths, at about
+−53 dB for /aɪ/. `render_planned`'s levels move by vowel: /a/ +12 dB, /i/ +6 dB and /u/ +29 dB
+against 3.11.0. `svara_tract_set_formants_from_target` still resets, for a one-off setting. See
+[ADR-0015](../adr/0015-retarget-the-formant-bank-without-resetting-it.md).
 
 ## Quality scaling
 

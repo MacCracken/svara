@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.12.0** (2026-11-16) — **formants that move keep ringing.** The fourth 3.9.x item, decided
+by the maintainer in ADR-0015. Every retarget of the formant bank also reset it, as the Rust's
+does. So `render_planned`, which retargets every sample, produced no formants (/a/, /i/ and /u/
+had the same spectrum), the context's diphthong had none either, and the free diphthong was
+mostly 64-sample reset transients. `svara_tract_retarget` now keeps the resonators' state, and the
+four loops that retarget as they go use it. `render_planned`'s vowels carry their formants, both
+diphthong paths glide at about −53 dB, and `render_planned` costs 0.937x the instructions.
+**1,424 assertions / 27 suites**, `cyrius audit` exit 0.
+
 **3.11.0** (2026-11-16) — **the Rosenberg pulse closes.** The third 3.9.x quirk, decided
 by the maintainer in ADR-0014. The default glottal pulse had only Rosenberg B's opening phase
 and closed at once, as the Rust's does, so `set_speed_quotient` did nothing. It is now the full
@@ -421,7 +430,7 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L1 | formant.rs | src/formant.cyr | ✅ ported | 41 | svara's own 8× bandpass bank, one record per slot since 3.8.4 (NOT naad); golden coeffs+output verified |
 | L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
 | L2 | glottal.rs | src/glottal.cyr | ✅ ported | 62 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified; tilt read as Klatt's TL since 3.9.0 (ADR-0012) |
-| L2 | tract.rs | src/tract.cyr | ✅ ported | 16 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
+| L2 | tract.rs | src/tract.cyr | ✅ ported | 27 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
 | L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 36 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
@@ -439,7 +448,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,411 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
+1,424 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -522,8 +531,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (378 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,411 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (379 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,424 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

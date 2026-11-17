@@ -8,18 +8,18 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks) | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013), 3.11.0 gave the Rosenberg pulse its closing phase (ADR-0014), 3.12.0 kept the formant bank's state across retargets (ADR-0015). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
 ---
 
 ## 3.9.x — the preserved Rust quirks
 
-Behaviours svara keeps because the oracle has them, and one where svara left the oracle
-without a decision. Each needs a decision, recorded in an ADR. A fix changes output, so
-each one gets a minor of its own and its own test. The maintainer decides; the work
-before that is to measure the oracle's behaviour and lay out the options, as
-[ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md) did for 3.9.0.
+Behaviours svara keeps because the oracle has them. Each needs a decision, recorded in
+an ADR. A fix changes output, so each one gets a minor of its own and its own test. The
+maintainer decides; the work before that is to measure the oracle's behaviour and lay
+out the options, as [ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md)
+did for 3.9.0.
 
 The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run it with
 [ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
@@ -37,15 +37,6 @@ the Rust's output rather than its source.
       - `svara_ph_synth_trill` modulates its amplitude at 15 to 25 Hz, while the
         context renders a trill as an approximant. Both match the oracle too: at tag
         `3.6.5`, `rust-old/src/phoneme.rs:1033` and `:1468`.
-- [ ] **The diphthong glide is 7× to 69× louder than Rust's.** Since 3.1.0 svara
-      rebuilds the formant bank every 64 samples. Rust rebuilds it, and resets its
-      state, on every sample, so its resonance never builds. 3.1.0 called the change
-      perceptually identical without measuring the oracle. Matching Rust means a filter
-      reset per sample. See
-      [ADR-0009](../adr/0009-what-the-3-6-3-audit-leaves-open.md), RN-DIV.
-      Since 3.11.0 the free path's /aɪ/ is also 17.9 dB louder than in 3.10.0: its level
-      is dominated by the transient each bank rebuild leaves, which scales with the
-      Rosenberg pulse's new gain (ADR-0014).
 
 ---
 

@@ -54,6 +54,10 @@ quieter for every consumer. 3.6.3's bar is that audio on valid input does not mo
 so the decision goes to roadmap 3.9.x as the fifth item there, beside the four
 preserved Rust quirks.
 
+**Decided in 3.12.0** by [ADR-0015](0015-retarget-the-formant-bank-without-resetting-it.md). The
+cause was the rebuild's reset, which also left `render_planned` and the context's diphthong
+without formants. Every path that retargets as it goes now keeps the bank's state.
+
 ### Gaps that stay
 
 - **Decoding a document directly is outside the contract.** `restore` is the entry
