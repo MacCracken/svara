@@ -16,8 +16,8 @@ The attack surface, and what is and is not mitigated, is
 
 | Version | Supported | Notes |
 |---|---|---|
-| **3.8.6** | ✅ Yes | current; needs cyrius 6.7.2 or later |
-| 3.6.5 – 3.8.5 | ✅ Yes | later releases add the streaming render, speed and smaller renders, and change no output |
+| **3.8.7** | ✅ Yes | current; needs cyrius 6.7.2 or later |
+| 3.6.5 – 3.8.6 | ✅ Yes | later releases add the streaming render, speed and smaller renders, and change no output |
 | 3.6.4 | ⚠ Upgrade | concurrent renders and a huge finite bandwidth can give silent wrong answers, below |
 | 3.6.3 | ⚠ Upgrade | as 3.6.4, and do not link it with naad 2.3.4 or later, below |
 | 3.6.0 – 3.6.2 | ⚠ Upgrade | have the defects 3.6.3 fixed, below |

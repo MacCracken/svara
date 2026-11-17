@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.7] - 2026-11-16 — the per-class synthesis, written once
+
+Refactor release. Every consonant class was synthesized twice:
+- by the free path's `svara_ph_synth_*`, which builds fresh objects per call;
+- by the context's `svara_synthctx_*`, which reuses its own.
+
+Where the Rust's two paths write the same samples, svara's two copies are now one. **No output
+moves**: against 3.8.6, 558,721 values, the JSON and all 638 hostile cases are identical. The
+nine counter probes are unchanged to four places. Consonant renders retire 0.995x their
+instructions on the free path, which no longer zeroes a buffer it then overwrites, and 1.000x on
+the context's. `src/phoneme.cyr` is 44 lines shorter. **1,376 assertions / 27 suites.**
+
+### Changed
+
+- **The runs both paths write the same way are shared** (`src/phoneme.cyr`, "the runs both
+  synthesis paths share"):
+  - `svara_ph_noise_run`, `svara_ph_voiced_run` and `svara_ph_zero_run`, the burst, voicing and
+    silence spans every class is made of;
+  - `svara_ph_fricative_run`, `_affricate_run`, `_click_run`, `_ejective_run` and
+    `_implosive_run`, a whole class's samples once its objects exist;
+  - `svara_ph_nasal_place`, `svara_ph_ejective_is_fricative`, `svara_ph_approx_breathiness` and
+    `svara_ph_approx_gain`.
+
+  Each path now only gathers its objects. The free path builds them, the context fetches its own,
+  and each then calls the run. Every allocation is made in the same order as before, which
+  `tests/allocrefused.tcyr` depends on.
+- **What the Rust's two paths do differently stays apart**, for 3.9.x to decide:
+  - **The plosive.** The free path uses the VOT fractions and an aspiration segment; the context
+    uses fixed thirds. Both now call the shared bursts and tails.
+  - **The trill.** The free path modulates its amplitude; the context renders it as an
+    approximant.
+  - **The vowel and the diphthong.**
+
+  The roadmap's 3.9.x plosive item now names the trill too, citing both at tag `3.6.5`.
+
+### Added
+
+- **`tests/synthpaths.tcyr`, a 27th suite** (6 assertions). It rebuilds 3.8.6's sixteen class
+  functions, verbatim but for their names, and holds both paths to them bit for bit:
+  - every phoneme of the eight classes that share runs, at six lengths from 1 sample to 0.08 s,
+    for the male and female voices;
+  - the free path call by call, and the context path phoneme after phoneme on two fresh contexts,
+    so state one phoneme leaves is compared too.
+
+  Before it, no suite pinned a consonant's samples. Twelve mutants of the shared runs each passed
+  all 26 suites: a burst or voicing gain ignored, a silence one sample short, a fricative's
+  voicing dropped, an affricate's burst lengthened, a click's envelope not squared, an ejective
+  released through the wrong filter, an implosive's closure shortened, a nasal's place swapped, an
+  approximant's breathiness floor or gain changed, and /tʃ'/ treated as non-fricative.
+  Each now fails this suite. Eleven fail on both paths. The silence one sample short fails on the
+  context path only: the free path renders into fresh arena memory, which is already zero, while
+  the context reuses a buffer that still holds the last phoneme.
+
 ## [3.8.6] - 2026-11-16 — two roadmap items closed by measurement, and one `approx`
 
 No library code changes: `src/` is byte-identical to 3.8.5, and so is every output. The bundle

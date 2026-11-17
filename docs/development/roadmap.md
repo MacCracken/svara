@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors, 3.8.6 closed two items by measurement |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors, 3.8.6 closed two items by measurement, 3.8.7 shared the per-class synthesis |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -67,8 +67,6 @@ measured effect does not earn a place in the source. 3.8.6 closed two items this
 
 Each changes the shape of a hot path, so each needs the measurement above.
 
-- [ ] **Two copies of per-class synthesis.** `svara_ph_synth_*` and `svara_synthctx_*`
-      repeat each other. Share what is the same, and leave what differs to 3.9.x.
 - [ ] **The crossfade's reference.** Since 3.8.3 both sequence renders crossfade through
       `svara_seq_xf_segment`. `svara_seq_crossfade` is the Rust's shape, with its
       fade-out loop written twice, and only the tests call it: `tests/stream.tcyr` and
@@ -95,10 +93,17 @@ the Rust's output rather than its source.
 - [ ] **Unapplied per-vowel spectral tilt.**
 - [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**
 - [ ] **`tone` is honoured only by `render_planned`.**
-- [ ] **Plosive timing depends on the render path.** `svara_ph_synth_plosive` uses the
-      VOT fractions, and `svara_synthctx_plosive` uses a fixed n/3 and n/6. Both match
-      the oracle: `git show 3.5.2:rust-old/src/phoneme.rs`, `synthesize_plosive` and
-      `synthesize_plosive_ctx`.
+- [ ] **Plosives and trills depend on the render path.** Since 3.8.7 the two paths share
+      every run they write the same way (`svara_ph_*_run`), so what is left apart is
+      what the Rust itself does differently:
+      - `svara_ph_synth_plosive` uses the VOT fractions, an aspiration segment, a 0.30
+        breathiness and a 0.15 voiceless tail, while `svara_synthctx_plosive` uses a
+        fixed n/3 and n/6, no aspiration, 0.40 and 0.30. Both match the oracle:
+        `git show 3.5.2:rust-old/src/phoneme.rs`, `synthesize_plosive` and
+        `synthesize_plosive_ctx`.
+      - `svara_ph_synth_trill` modulates its amplitude at 15 to 25 Hz, while the
+        context renders a trill as an approximant. Both match the oracle too: at tag
+        `3.6.5`, `rust-old/src/phoneme.rs:1033` and `:1468`.
 - [ ] **The diphthong glide is 7× to 69× louder than Rust's.** Since 3.1.0 svara
       rebuilds the formant bank every 64 samples. Rust rebuilds it, and resets its
       state, on every sample, so its resonance never builds. 3.1.0 called the change

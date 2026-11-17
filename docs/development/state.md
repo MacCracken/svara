@@ -5,6 +5,16 @@
 
 ## Version
 
+**3.8.7** (2026-11-16) — **the per-class synthesis written once.** The free path's
+`svara_ph_synth_*` and the context's `svara_synthctx_*` repeated each other. Every run
+the two write the same way is now one `svara_ph_*_run` they both call: fricative,
+affricate, click, ejective and implosive, the burst and voiced runs, the nasal place
+and the approximant's breathiness and gain. What the Rust's two paths do differently,
+the plosive's timing and the trill, stays apart for 3.9.x. Every value is the same bits.
+No suite pinned a consonant's samples, and twelve mutants of the runs passed them all,
+so a new one, `tests/synthpaths.tcyr`, holds both paths to 3.8.6's code bit for bit.
+**1,376 assertions / 27 suites**, `cyrius audit` exit 0.
+
 **3.8.6** (2026-11-16) — **two roadmap items closed by measurement, and one `approx`.**
 `src/` is unchanged from 3.8.5.
 - **naad's block forms don't fit the tract.** Its feedback ties every stage to the last
@@ -394,11 +404,11 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,370 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,376 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
-**logging** (+ the `svara.tcyr` smoke) — all passing, all lint-clean. One build warning, on purpose:
+**synthpaths** / **logging** (+ the `svara.tcyr` smoke) — all passing, all lint-clean. One build warning, on purpose:
 `allocrefused.tcyr` redefines `alloc`, and cyrius reports the duplicate. Run one suite: `cyrius test tests/<mod>.tcyr`;
 the whole tree recursively: `cyrius test tests`. `tests/logging.tcyr` needs
 `./scripts/check-logging.sh` to be exercised with logging ON (51 more
@@ -477,8 +487,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (363 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,370 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (375 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,376 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

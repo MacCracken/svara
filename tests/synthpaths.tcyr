@@ -1,0 +1,790 @@
+# synthpaths.tcyr -- both synthesis paths against 3.8.6's per-class code (3.8.7).
+#
+# 3.8.7 moved every run the free svara_ph_synth_* functions and the context's
+# svara_synthctx_* methods wrote the same way into shared svara_ph_*_run functions.
+# No other suite pins a consonant class's samples: twelve mutants of those runs each
+# passed the whole suite. This one rebuilds 3.8.6's sixteen class functions below,
+# verbatim but for their names, and holds each path to them bit for bit, for every
+# phoneme of the eight classes that share runs.
+
+include "lib/hisab.cyr"
+include "lib/goonj.cyr"
+include "lib/naad.cyr"
+include "lib/hashmap.cyr"
+include "lib/bayan.cyr"
+include "src/error.cyr"
+include "src/rng.cyr"
+include "src/smooth.cyr"
+include "src/lod.cyr"
+include "src/formant.cyr"
+include "src/glottal.cyr"
+include "src/tract.cyr"
+include "src/voice.cyr"
+include "src/phoneme.cyr"
+
+alloc_init();
+
+# ---- 3.8.6's per-class code, the reference ----------------------------------
+
+# 3.8.6's svara_ph_synth_fricative, verbatim but for its name.
+#must_use
+fn ref_ph_fricative(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var noise = svara_rng_new(31);
+    var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), sample_rate);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    if (svara_phoneme_is_voiced(phoneme) == 1) {
+        var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+        if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+        var tract = svara_tract_new(sample_rate);
+        if (svara_is_err(tract) == 1) { return tract; }
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
+        var i = 0;
+        while (i < n) {
+            var friction = svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), F64_HALF));
+            var voicing = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), SV_PH_R04);
+            store64(buf + i * 8, f64_add(friction, voicing));
+            i = i + 1;
+        }
+    } else {
+        var i = 0;
+        while (i < n) {
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R06);
+            store64(buf + i * 8, svara_formant_filter_process_sample(filter, ns));
+            i = i + 1;
+        }
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_affricate, verbatim but for its name.
+#must_use
+fn ref_ph_affricate(phoneme, voice, sample_rate, n, room) {
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_formant_zero_buf(buf, n);
+    var noise = svara_rng_new(23);
+    var closure_end = n / 4;
+    var burst_extra = n / 8;
+    if (burst_extra < 1) { burst_extra = 1; }
+    var burst_end = closure_end + burst_extra;
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), sample_rate);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), SV_PH_08)));
+        i = i + 1;
+    }
+    if (svara_phoneme_is_voiced(phoneme) == 1) {
+        var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+        if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+        var tract = svara_tract_new(sample_rate);
+        if (svara_is_err(tract) == 1) { return tract; }
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
+        var m = burst_end;
+        while (m < n) {
+            var voiced = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
+            var fric = svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), F64_HALF));
+            store64(buf + m * 8, f64_add(f64_mul(voiced, F64_HALF), f64_mul(fric, F64_HALF)));
+            m = m + 1;
+        }
+    } else {
+        var m2 = burst_end;
+        while (m2 < n) {
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R06);
+            store64(buf + m2 * 8, svara_formant_filter_process_sample(filter, ns));
+            m2 = m2 + 1;
+        }
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_click, verbatim but for its name.
+#must_use
+fn ref_ph_click(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var noise = svara_rng_new(41);
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_formant_zero_buf(buf, n);
+    var burst_start = n * 6 / 10;
+    var burst_len = n - burst_start;
+    if (burst_len < 1) { burst_len = 1; }
+    var jj = 0;
+    var i = burst_start;
+    while (i < n) {
+        var env = f64_sub(F64_ONE, f64_div(f64_from(jj), f64_from(burst_len)));
+        var shaped = f64_mul(f64_mul(svara_rng_next_f32(noise), env), env);
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, shaped));
+        jj = jj + 1;
+        i = i + 1;
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_ejective, verbatim but for its name.
+#must_use
+fn ref_ph_ejective(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var noise = svara_rng_new(43);
+    var is_fric = 0;
+    if ((phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_EJECTIVE_CH)) { is_fric = 1; }
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_formant_zero_buf(buf, n);
+    var closure_end = n * 4 / 10;
+    var burst_end = closure_end + n * 2 / 10;
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, svara_rng_next_f32(noise)));
+        i = i + 1;
+    }
+    var release_len = n - burst_end;
+    if (release_len < 1) { release_len = 1; }
+    if (is_fric == 1) {
+        var fric_filter = svara_formant_filter_new(svara_ph_fricative_formants(phoneme), sample_rate);
+        if (svara_is_err(fric_filter) == 1) { return SVARA_ERR_ARTICULATION; }
+        var jj = 0;
+        var k = burst_end;
+        while (k < n) {
+            var t = f64_div(f64_from(jj), f64_from(release_len));
+            var decay = f64_sub(F64_ONE, f64_mul(t, F64_HALF));
+            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R06), decay);
+            store64(buf + k * 8, svara_formant_filter_process_sample(fric_filter, amp));
+            jj = jj + 1;
+            k = k + 1;
+        }
+    } else {
+        var j2 = 0;
+        var k2 = burst_end;
+        while (k2 < n) {
+            var t2 = f64_div(f64_from(j2), f64_from(release_len));
+            var decay2 = f64_max(f64_sub(F64_ONE, t2), 0);
+            var amp2 = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_030), decay2);
+            store64(buf + k2 * 8, svara_formant_filter_process_sample(filter, amp2));
+            j2 = j2 + 1;
+            k2 = k2 + 1;
+        }
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_implosive, verbatim but for its name.
+#must_use
+fn ref_ph_implosive(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    svara_glottal_set_creaky(glottal, F64_HALF);
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_formant_zero_buf(buf, n);
+    var closure_end = n / 3;
+    var i = closure_end;
+    while (i < n) {
+        var s = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), F64_HALF);
+        store64(buf + i * 8, s);
+        i = i + 1;
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_nasal, verbatim but for its name.
+#must_use
+fn ref_ph_nasal(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, SV_PH_08);
+    var place = SVARA_NASAL_NEUTRAL;
+    if (phoneme == SVARA_PH_NASAL_M) { place = SVARA_NASAL_BILABIAL; }
+    elif (phoneme == SVARA_PH_NASAL_N) { place = SVARA_NASAL_ALVEOLAR; }
+    elif (phoneme == SVARA_PH_NASAL_NG) { place = SVARA_NASAL_VELAR; }
+    svara_tract_set_nasal_place(tract, place);
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_tract_synthesize_into(tract, glottal, buf, n);
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_approximant, verbatim but for its name.
+#must_use
+fn ref_ph_approximant(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    svara_glottal_set_breathiness(glottal, f64_max(SvVoiceProfile_breathiness(voice), SV_PH_R01));
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_tract_synthesize_into(tract, glottal, buf, n);
+    var i = 0;
+    while (i < n) { store64(buf + i * 8, f64_mul(load64(buf + i * 8), SV_PH_R07)); i = i + 1; }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_ph_synth_plosive, verbatim but for its name.
+#must_use
+fn ref_ph_plosive(phoneme, voice, sample_rate, n, room) {
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_formant_zero_buf(buf, n);
+    var noise = svara_rng_new(17);
+    var vot = svara_vot_for_plosive(phoneme);
+    var nf = f64_from(n);
+    # Raw f64_to is safe here and only here: `vot` comes from svara_vot_for_plosive,
+    # whose fractions are in-tree constants in [0, 1], and `n` is already bounded by
+    # svara_count_from_f64 at the public entry. Nothing caller-supplied reaches this cast.
+    var closure_end = f64_to(f64_mul(SvVOT_closure_fraction(vot), nf));
+    var burst_end = closure_end + f64_to(f64_max(f64_mul(SvVOT_burst_fraction(vot), nf), F64_ONE));
+    var aspiration_end = burst_end + f64_to(f64_mul(SvVOT_aspiration_fraction(vot), nf));
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var filter = svara_formant_filter_new(svara_vowel_target_to_formants(target), sample_rate);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), SV_PH_08)));
+        i = i + 1;
+    }
+    if (aspiration_end > burst_end) {
+        var asp_len = aspiration_end - burst_end;
+        if (asp_len < 1) { asp_len = 1; }
+        var ae = aspiration_end;
+        if (ae > n) { ae = n; }
+        var jj = 0;
+        var k = burst_end;
+        while (k < ae) {
+            var decay = f64_sub(F64_ONE, f64_div(f64_from(jj), f64_from(asp_len)));
+            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R04), decay);
+            store64(buf + k * 8, svara_formant_filter_process_sample(filter, amp));
+            jj = jj + 1;
+            k = k + 1;
+        }
+    }
+    var voice_start = aspiration_end;
+    if (voice_start > n) { voice_start = n; }
+    if ((svara_phoneme_is_voiced(phoneme) == 1) | (voice_start < n)) {
+        if (svara_phoneme_is_voiced(phoneme) == 1) {
+            var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+            if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+            svara_glottal_set_breathiness(glottal, SV_PH_030);
+            var tract = svara_tract_new(sample_rate);
+            if (svara_is_err(tract) == 1) { return tract; }
+            var e = svara_tract_set_formants_from_target(tract, target);
+            if (svara_is_err(e) == 1) { return e; }
+            var m = voice_start;
+            while (m < n) {
+                var vs = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), F64_HALF);
+                store64(buf + m * 8, vs);
+                m = m + 1;
+            }
+        } else {
+            var m2 = voice_start;
+            while (m2 < n) {
+                var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R015);
+                store64(buf + m2 * 8, svara_formant_filter_process_sample(filter, ns));
+                m2 = m2 + 1;
+            }
+        }
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.8.6's svara_synthctx_fricative, verbatim but for its name.
+#must_use
+fn ref_ctx_fricative(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var noise = SvSynthCtx_noise(self);
+    var filter = svara_synthctx_fric_filter(self, phoneme);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    if (svara_phoneme_is_voiced(phoneme) == 1) {
+        var tract = SvSynthCtx_tract(self);
+        var g = SvSynthCtx_glottal(self);
+        var target = svara_synthctx_target(self, phoneme, voice);
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
+        svara_tract_set_nasal_coupling(tract, 0);
+        var i = 0;
+        while (i < n) {
+            var friction = svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), F64_HALF));
+            var voicing = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(g)), SV_PH_R04);
+            store64(buf + i * 8, f64_add(friction, voicing));
+            i = i + 1;
+        }
+    } else {
+        var i = 0;
+        while (i < n) {
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R06);
+            store64(buf + i * 8, svara_formant_filter_process_sample(filter, ns));
+            i = i + 1;
+        }
+    }
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_affricate, verbatim but for its name.
+#must_use
+fn ref_ctx_affricate(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var noise = SvSynthCtx_noise(self);
+    var closure_end = n / 4;
+    var burst_extra = n / 8;
+    if (burst_extra < 1) { burst_extra = 1; }
+    var burst_end = closure_end + burst_extra;
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_fric_filter(self, phoneme);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var z = 0;
+    while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), SV_PH_08)));
+        i = i + 1;
+    }
+    if (svara_phoneme_is_voiced(phoneme) == 1) {
+        var tract = SvSynthCtx_tract(self);
+        var g = SvSynthCtx_glottal(self);
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
+        svara_tract_set_nasal_coupling(tract, 0);
+        var m = burst_end;
+        while (m < n) {
+            var voiced = svara_tract_process_sample(tract, svara_glottal_next_sample(g));
+            var fric = svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), F64_HALF));
+            store64(buf + m * 8, f64_add(f64_mul(voiced, F64_HALF), f64_mul(fric, F64_HALF)));
+            m = m + 1;
+        }
+    } else {
+        var m2 = burst_end;
+        while (m2 < n) {
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_R06);
+            store64(buf + m2 * 8, svara_formant_filter_process_sample(filter, ns));
+            m2 = m2 + 1;
+        }
+    }
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_click, verbatim but for its name.
+#must_use
+fn ref_ctx_click(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var noise = SvSynthCtx_noise(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var burst_start = n * 6 / 10;
+    var span = n - burst_start;
+    if (span < 1) { span = 1; }
+    var z = 0;
+    while (z < burst_start) { store64(buf + z * 8, 0); z = z + 1; }
+    var i = burst_start;
+    while (i < n) {
+        var env = f64_sub(F64_ONE, f64_div(f64_from(i - burst_start), f64_from(span)));
+        var shaped = f64_mul(f64_mul(svara_rng_next_f32(noise), env), env);
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, shaped));
+        i = i + 1;
+    }
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_ejective, verbatim but for its name.
+#must_use
+fn ref_ctx_ejective(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var noise = SvSynthCtx_noise(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var is_fric = 0;
+    if ((phoneme == SVARA_PH_EJECTIVE_S) | (phoneme == SVARA_PH_EJECTIVE_CH)) { is_fric = 1; }
+    var closure_end = n * 4 / 10;
+    var burst_end = closure_end + n * 2 / 10;
+    var z = 0;
+    while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, svara_rng_next_f32(noise)));
+        i = i + 1;
+    }
+    var release_len = n - burst_end;
+    if (release_len < 1) { release_len = 1; }
+    if (is_fric == 1) {
+        var fric_filter = svara_synthctx_fric_filter(self, phoneme);
+        if (svara_is_err(fric_filter) == 1) { return SVARA_ERR_ARTICULATION; }
+        var jj = 0;
+        var k = burst_end;
+        while (k < n) {
+            var decay = f64_sub(F64_ONE, f64_mul(f64_div(f64_from(jj), f64_from(release_len)), F64_HALF));
+            var amp = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_R06), decay);
+            store64(buf + k * 8, svara_formant_filter_process_sample(fric_filter, amp));
+            jj = jj + 1;
+            k = k + 1;
+        }
+    } else {
+        var j2 = 0;
+        var k2 = burst_end;
+        while (k2 < n) {
+            var decay2 = f64_max(f64_sub(F64_ONE, f64_div(f64_from(j2), f64_from(release_len))), 0);
+            var amp2 = f64_mul(f64_mul(svara_rng_next_f32(noise), SV_PH_030), decay2);
+            store64(buf + k2 * 8, svara_formant_filter_process_sample(filter, amp2));
+            j2 = j2 + 1;
+            k2 = k2 + 1;
+        }
+    }
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_implosive, verbatim but for its name.
+#must_use
+fn ref_ctx_implosive(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var tract = SvSynthCtx_tract(self);
+    var g = SvSynthCtx_glottal(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, 0);
+    svara_glottal_set_creaky(g, F64_HALF);
+    var closure_end = n / 3;
+    var z = 0;
+    while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
+    var i = closure_end;
+    while (i < n) {
+        store64(buf + i * 8, f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(g)), F64_HALF));
+        i = i + 1;
+    }
+    svara_glottal_set_model(g, SVARA_GLOTTAL_ROSENBERG);
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_nasal, verbatim but for its name.
+#must_use
+fn ref_ctx_nasal(self, phoneme, voice, n) {
+    var tract = SvSynthCtx_tract(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, SV_PH_08);
+    var place = SVARA_NASAL_NEUTRAL;
+    if (phoneme == SVARA_PH_NASAL_M) { place = SVARA_NASAL_BILABIAL; }
+    elif (phoneme == SVARA_PH_NASAL_N) { place = SVARA_NASAL_ALVEOLAR; }
+    elif (phoneme == SVARA_PH_NASAL_NG) { place = SVARA_NASAL_VELAR; }
+    svara_tract_set_nasal_place(tract, place);
+    svara_tract_synthesize_into(tract, SvSynthCtx_glottal(self), SvSynthCtx_buffer(self), n);
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_approx, verbatim but for its name.
+#must_use
+fn ref_ctx_approx(self, phoneme, voice, n) {
+    var tract = SvSynthCtx_tract(self);
+    var g = SvSynthCtx_glottal(self);
+    var buf = SvSynthCtx_buffer(self);
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_coupling(tract, 0);
+    svara_glottal_set_breathiness(g, f64_max(SvVoiceProfile_breathiness(voice), SV_PH_R01));
+    svara_tract_synthesize_into(tract, g, buf, n);
+    var i = 0;
+    while (i < n) { store64(buf + i * 8, f64_mul(load64(buf + i * 8), SV_PH_R07)); i = i + 1; }
+    svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
+    return SVARA_ERR_NONE;
+}
+
+# 3.8.6's svara_synthctx_plosive, verbatim but for its name.
+#must_use
+fn ref_ctx_plosive(self, phoneme, voice, n) {
+    var buf = SvSynthCtx_buffer(self);
+    var noise = SvSynthCtx_noise(self);
+    var closure_end = n / 3;
+    var burst_extra = n / 6;
+    if (burst_extra < 1) { burst_extra = 1; }
+    var burst_end = closure_end + burst_extra;
+    var target = svara_synthctx_target(self, phoneme, voice);
+    var filter = svara_synthctx_burst_filter(self, target);
+    if (svara_is_err(filter) == 1) { return SVARA_ERR_ARTICULATION; }
+    var z = 0;
+    while (z < closure_end) { store64(buf + z * 8, 0); z = z + 1; }
+    var be = burst_end;
+    if (be > n) { be = n; }
+    var i = closure_end;
+    while (i < be) {
+        store64(buf + i * 8, svara_formant_filter_process_sample(filter, f64_mul(svara_rng_next_f32(noise), SV_PH_08)));
+        i = i + 1;
+    }
+    if (svara_phoneme_is_voiced(phoneme) == 1) {
+        var tract = SvSynthCtx_tract(self);
+        var g = SvSynthCtx_glottal(self);
+        var e = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(e) == 1) { return e; }
+        svara_tract_set_nasal_coupling(tract, 0);
+        svara_glottal_set_breathiness(g, SV_PH_R04);
+        var m = burst_end;
+        while (m < n) {
+            store64(buf + m * 8, f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(g)), F64_HALF));
+            m = m + 1;
+        }
+        svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
+    } else {
+        var m2 = burst_end;
+        while (m2 < n) {
+            var ns = f64_mul(svara_rng_next_f32(noise), SV_PH_030);
+            store64(buf + m2 * 8, svara_formant_filter_process_sample(filter, ns));
+            m2 = m2 + 1;
+        }
+    }
+    return SVARA_ERR_NONE;
+}
+
+# 1 if phoneme p's class is one of the eight whose runs 3.8.7 shared.
+#must_use
+fn sp_shared_class(p) {
+    var c = svara_phoneme_class(p);
+    if ((c == SVARA_CLASS_FRICATIVE) | (c == SVARA_CLASS_AFFRICATE) | (c == SVARA_CLASS_CLICK)) { return 1; }
+    if ((c == SVARA_CLASS_EJECTIVE) | (c == SVARA_CLASS_IMPLOSIVE) | (c == SVARA_CLASS_NASAL)) { return 1; }
+    if ((c == SVARA_CLASS_APPROXIMANT) | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_PLOSIVE)) { return 1; }
+    return 0;
+}
+
+# The free path's class function for p, or 3.8.6's when use_ref is 1.
+#must_use
+fn sp_free(use_ref, p, voice, sr, n) {
+    var c = svara_phoneme_class(p);
+    if (c == SVARA_CLASS_FRICATIVE) {
+        if (use_ref == 1) { return ref_ph_fricative(p, voice, sr, n, 0); }
+        return svara_ph_synth_fricative(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_AFFRICATE) {
+        if (use_ref == 1) { return ref_ph_affricate(p, voice, sr, n, 0); }
+        return svara_ph_synth_affricate(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_CLICK) {
+        if (use_ref == 1) { return ref_ph_click(p, voice, sr, n, 0); }
+        return svara_ph_synth_click(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_EJECTIVE) {
+        if (use_ref == 1) { return ref_ph_ejective(p, voice, sr, n, 0); }
+        return svara_ph_synth_ejective(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_IMPLOSIVE) {
+        if (use_ref == 1) { return ref_ph_implosive(p, voice, sr, n, 0); }
+        return svara_ph_synth_implosive(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_NASAL) {
+        if (use_ref == 1) { return ref_ph_nasal(p, voice, sr, n, 0); }
+        return svara_ph_synth_nasal(p, voice, sr, n, 0);
+    }
+    if (c == SVARA_CLASS_PLOSIVE) {
+        if (use_ref == 1) { return ref_ph_plosive(p, voice, sr, n, 0); }
+        return svara_ph_synth_plosive(p, voice, sr, n, 0);
+    }
+    if (use_ref == 1) { return ref_ph_approximant(p, voice, sr, n, 0); }
+    return svara_ph_synth_approximant(p, voice, sr, n, 0);
+}
+
+# The context's class method for p, or 3.8.6's when use_ref is 1. Its samples are
+# left in the context's buffer.
+#must_use
+fn sp_ctx(use_ref, ctx, p, voice, n) {
+    var c = svara_phoneme_class(p);
+    if (c == SVARA_CLASS_FRICATIVE) {
+        if (use_ref == 1) { return ref_ctx_fricative(ctx, p, voice, n); }
+        return svara_synthctx_fricative(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_AFFRICATE) {
+        if (use_ref == 1) { return ref_ctx_affricate(ctx, p, voice, n); }
+        return svara_synthctx_affricate(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_CLICK) {
+        if (use_ref == 1) { return ref_ctx_click(ctx, p, voice, n); }
+        return svara_synthctx_click(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_EJECTIVE) {
+        if (use_ref == 1) { return ref_ctx_ejective(ctx, p, voice, n); }
+        return svara_synthctx_ejective(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_IMPLOSIVE) {
+        if (use_ref == 1) { return ref_ctx_implosive(ctx, p, voice, n); }
+        return svara_synthctx_implosive(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_NASAL) {
+        if (use_ref == 1) { return ref_ctx_nasal(ctx, p, voice, n); }
+        return svara_synthctx_nasal(ctx, p, voice, n);
+    }
+    if (c == SVARA_CLASS_PLOSIVE) {
+        if (use_ref == 1) { return ref_ctx_plosive(ctx, p, voice, n); }
+        return svara_synthctx_plosive(ctx, p, voice, n);
+    }
+    if (use_ref == 1) { return ref_ctx_approx(ctx, p, voice, n); }
+    return svara_synthctx_approx(ctx, p, voice, n);
+}
+
+# What svara_synthctx_synthesize does before its class method: room for n samples,
+# a reset tract, and the voice's settings on the glottal source. 0 if refused.
+#must_use
+fn sp_prep(ctx, voice, n) {
+    var buf = svara_synthctx_ensure_buffer(ctx, n);
+    if (buf == 0) { return 0; }
+    svara_tract_reset(SvSynthCtx_tract(ctx));
+    var g = SvSynthCtx_glottal(ctx);
+    svara_glottal_set_model(g, SVARA_GLOTTAL_ROSENBERG);
+    var fe = svara_glottal_set_f0(g, SvVoiceProfile_base_f0(voice));
+    if (svara_is_err(fe) == 1) { return 0; }
+    svara_glottal_set_breathiness(g, SvVoiceProfile_breathiness(voice));
+    svara_glottal_set_jitter(g, SvVoiceProfile_jitter(voice));
+    svara_glottal_set_shimmer(g, SvVoiceProfile_shimmer(voice));
+    svara_glottal_set_vibrato(g, SvVoiceProfile_vibrato_rate(voice), SvVoiceProfile_vibrato_depth(voice));
+    return buf;
+}
+
+# Samples of two raw buffers of n that differ in any bit.
+#must_use
+fn sp_diff(a, b, n) {
+    var bad = 0;
+    var i = 0;
+    while (i < n) {
+        if (load64(a + i * 8) != load64(b + i * 8)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# 1 if any of a raw buffer's n samples is not +0.
+#must_use
+fn sp_sounds(a, n) {
+    var i = 0;
+    while (i < n) {
+        if (load64(a + i * 8) != 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+var sp_sr = f64_from(44100);
+var sp_voices = vec_new();
+vec_push(sp_voices, svara_voice_new_male());
+vec_push(sp_voices, svara_voice_new_female());
+var sp_lens = vec_new();
+vec_push(sp_lens, 1); vec_push(sp_lens, 2); vec_push(sp_lens, 5);
+vec_push(sp_lens, 7); vec_push(sp_lens, 11); vec_push(sp_lens, 3528);
+
+# ================================================================
+test_group("3.8.7: the free path gives 3.8.6's samples for every phoneme of the shared classes");
+# ================================================================
+var sp_bad = 0;
+var sp_renders = 0;
+var sp_loud = 0;
+var vi = 0;
+while (vi < vec_len(sp_voices)) {
+    var v = vec_get(sp_voices, vi);
+    var li = 0;
+    while (li < vec_len(sp_lens)) {
+        var n = vec_get(sp_lens, li);
+        var p = 0;
+        while (p < 101) {
+            if (sp_shared_class(p) == 1) {
+                var a = sp_free(0, p, v, sp_sr, n);
+                var b = sp_free(1, p, v, sp_sr, n);
+                if ((svara_is_err(a) == 1) | (svara_is_err(b) == 1)) {
+                    if (a != b) { sp_bad = sp_bad + 1; }
+                } else {
+                    if (sp_diff(a, b, n) != 0) { sp_bad = sp_bad + 1; }
+                    sp_loud = sp_loud + sp_sounds(a, n);
+                }
+                sp_renders = sp_renders + 1;
+            }
+            p = p + 1;
+        }
+        li = li + 1;
+    }
+    vi = vi + 1;
+}
+assert_eq(sp_bad, 0, "every free-path render matches 3.8.6's bit for bit");
+assert_eq(sp_renders > 600, 1, "control: over 600 renders were compared");
+assert_eq(sp_loud > 500, 1, "control: most of them are not silence");
+
+# ================================================================
+test_group("3.8.7: the context path gives 3.8.6's samples, one phoneme after another");
+# ================================================================
+# Two fresh contexts, one through svara's methods and one through 3.8.6's, take the
+# same phonemes in the same order, so state one phoneme leaves is compared too.
+var ctx_bad = 0;
+var ctx_renders = 0;
+var ctx_loud = 0;
+vi = 0;
+while (vi < vec_len(sp_voices)) {
+    var cv = vec_get(sp_voices, vi);
+    var ca = svara_synthctx_new(cv, sp_sr);
+    var cb = svara_synthctx_new(cv, sp_sr);
+    var cli = 0;
+    while (cli < vec_len(sp_lens)) {
+        var cn = vec_get(sp_lens, cli);
+        var cp = 0;
+        while (cp < 101) {
+            if (sp_shared_class(cp) == 1) {
+                var ba = sp_prep(ca, cv, cn);
+                var bb = sp_prep(cb, cv, cn);
+                var ea = sp_ctx(0, ca, cp, cv, cn);
+                var eb = sp_ctx(1, cb, cp, cv, cn);
+                if (ea != eb) { ctx_bad = ctx_bad + 1; }
+                if ((ba != 0) & (bb != 0)) {
+                    if (sp_diff(ba, bb, cn) != 0) { ctx_bad = ctx_bad + 1; }
+                    ctx_loud = ctx_loud + sp_sounds(ba, cn);
+                } else {
+                    ctx_bad = ctx_bad + 1;
+                }
+                ctx_renders = ctx_renders + 1;
+            }
+            cp = cp + 1;
+        }
+        cli = cli + 1;
+    }
+    vi = vi + 1;
+}
+assert_eq(ctx_bad, 0, "every context render matches 3.8.6's bit for bit");
+assert_eq(ctx_renders > 600, 1, "control: over 600 renders were compared");
+assert_eq(ctx_loud > 500, 1, "control: most of them are not silence");
+
+var rc = assert_summary();
+syscall(60, rc);
