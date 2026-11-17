@@ -68,5 +68,19 @@ while (j < 256) {
 }
 assert_eq(u_in_range, 1, "256 next_f32_unsigned draws all in [0.0, 1.0)");
 
+# ================================================================
+test_group("3.8.5: each SV_RNG_* offset is the SvRng field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_rng = alloc(sizeof(SvRng));
+SvRng_set_state(pin_rng, 1000);
+SvRng_set_inc(pin_rng, 1001);
+var pin_rng_bad = 0;
+if (load64(pin_rng + SV_RNG_STATE) != 1000) { pin_rng_bad = pin_rng_bad + 1; }
+if (load64(pin_rng + SV_RNG_INC) != 1001) { pin_rng_bad = pin_rng_bad + 1; }
+assert_eq(pin_rng_bad, 0, "the 2 offsets read the fields their accessors write");
+assert_eq(load64(pin_rng + SV_RNG_STATE + 8) != 1000, 1, "control: the next word holds another field");
+
 var rc = assert_summary();
 syscall(60, rc);

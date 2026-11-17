@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.8.5** (2026-11-16) — **the per-sample path without derived accessors.** The 84
+accessor uses left on the per-sample path, glottal source to DC blocker, read and write
+at `const` offsets declared beside each struct, which keeps its derived accessors for
+everything else. A test per struct pins each offset to its field. Against 3.8.4 the
+chain (`synthesize_into`) retires 0.952x the instructions in 0.924x the cycles, a phoneme
+0.956x in 0.929x; `render_planned`, whose cost is its retargeting, 0.992x. Every value
+is the same bits. The mutation run found that nothing held jitter and shimmer apart,
+and a new group does. **1,370 assertions / 26 suites**, `cyrius audit` exit 0.
+
 **3.8.4** (2026-11-16) — **the formant bank, one record per slot.** The bank kept its
 eight slots as the Rust's structure of arrays, seven parallel buffers. Each slot is now
 one 56-byte record, read and written at `const` offsets, and a slot's coefficients are
@@ -347,13 +356,13 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | # | Rust module | Cyrius | Status | Tests | Notes |
 |---|-------------|--------|--------|-------|-------|
 | L0 | error.rs + dsp.rs | src/error.cyr | ✅ ported | 25 | enum→codes; validators + tolerances folded in |
-| L0 | rng.rs | src/rng.cyr | ✅ ported | 17 | PCG32, golden-value verified |
-| L0 | smooth.rs | src/smooth.cyr | ✅ ported | 6 | one-pole; exp via ganita builtin |
+| L0 | rng.rs | src/rng.cyr | ✅ ported | 19 | PCG32, golden-value verified |
+| L0 | smooth.rs | src/smooth.cyr | ✅ ported | 8 | one-pole; exp via ganita builtin |
 | L0 | math.rs | — | ✅ n/a | — | libm/std shim → maps to ganita/f64 builtins; no module needed |
-| L1 | formant.rs | src/formant.cyr | ✅ ported | 35 | svara's own 8× bandpass bank, one record per slot since 3.8.4 (NOT naad); golden coeffs+output verified |
+| L1 | formant.rs | src/formant.cyr | ✅ ported | 41 | svara's own 8× bandpass bank, one record per slot since 3.8.4 (NOT naad); golden coeffs+output verified |
 | L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
-| L2 | glottal.rs | src/glottal.cyr | ✅ ported | 35 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
-| L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
+| L2 | glottal.rs | src/glottal.cyr | ✅ ported | 41 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
+| L2 | tract.rs | src/tract.cyr | ✅ ported | 16 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
 | L4 | lod.rs | src/lod.cyr | ✅ ported | 15 | Quality predicates (pulled early — tract needs it) |
 | L3 | phoneme.rs | src/phoneme.cyr | ✅ ported | 299 | FULLY ported: inventory + classification + data tables + free synthesis + SynthesisContext. The crate's largest module (2,636 LOC) |
 | L3 | voice.rs | src/voice.cyr | ✅ ported | 33 | VoiceProfile / VocalEffort / EffortParams; presets, builders, formant scaling, effort→glottal |
@@ -371,7 +380,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,352 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,370 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -455,7 +464,7 @@ All green on the 6.7.18 pin:
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
 | docs | `cyrdoc --check <f>` | 0 undocumented (363 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,352 assertions |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,370 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

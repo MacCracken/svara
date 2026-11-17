@@ -81,7 +81,7 @@ collide silently.
    interpolates a target (Catmull-Rom between interior keypoints, resistance-
    weighted against linear; eased linear at the edges) and re-targets the tract.
 
-## Two constraints that shape the code
+## Constraints that shape the code
 
 **The bump allocator never frees.** Memory returns to the OS at process exit,
 nowhere else. An allocation in a per-sample loop is not a performance nuisance —
@@ -105,6 +105,12 @@ per-slot input delay line: all eight biquads share one input, so `x1`/`x2` held
 identical values in every slot. naad has since measured `f64v256_*` over a
 structure-of-arrays bank at 3.3× on cyrius 6.7.18, so this is worth measuring again.
 See [`../development/roadmap.md`](../development/roadmap.md).
+
+Nor is an accessor free. A `#derive(accessors)` getter retires 2 instructions more than
+the `load64` it stands for, and a setter 6 more than its `store64`, so the per-sample
+path reads and writes fields at `const` offsets declared beside each struct (`SV_GS_*`,
+`SV_VT_*`, `SV_FSLOT_*` …): the bank since 3.8.4, the rest of the chain since 3.8.5.
+Everything else keeps the accessors, and a test pins each offset to its field.
 
 ## Precision and performance
 

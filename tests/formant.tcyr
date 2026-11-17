@@ -234,5 +234,59 @@ rbad = ref_bank_pair(rbank, rref3, F64_ONE, 0, 200);
 rbad = rbad + ref_bank_pair(rbank, rref3, 0x3FD3333333333333, rneg, 50);
 assert_eq(rbad, 0, "the rebuilt bank gives a fresh three-formant bank's bits");
 
+# ================================================================
+test_group("3.8.5: each SV_DC_* offset is the SvDcBlocker field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_dc = alloc(sizeof(SvDcBlocker));
+SvDcBlocker_set_alpha(pin_dc, 1000);
+SvDcBlocker_set_x_prev(pin_dc, 1001);
+SvDcBlocker_set_y_prev(pin_dc, 1002);
+var pin_dc_bad = 0;
+if (load64(pin_dc + SV_DC_ALPHA) != 1000) { pin_dc_bad = pin_dc_bad + 1; }
+if (load64(pin_dc + SV_DC_X_PREV) != 1001) { pin_dc_bad = pin_dc_bad + 1; }
+if (load64(pin_dc + SV_DC_Y_PREV) != 1002) { pin_dc_bad = pin_dc_bad + 1; }
+assert_eq(pin_dc_bad, 0, "the 3 offsets read the fields their accessors write");
+assert_eq(load64(pin_dc + SV_DC_ALPHA + 8) != 1000, 1, "control: the next word holds another field");
+
+# ================================================================
+test_group("3.8.5: each SV_FF_* offset is the SvFormantFilter field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_ff = alloc(sizeof(SvFormantFilter));
+SvFormantFilter_set_bank(pin_ff, 1000);
+SvFormantFilter_set_dc(pin_ff, 1001);
+SvFormantFilter_set_sample_rate(pin_ff, 1002);
+var pin_ff_bad = 0;
+if (load64(pin_ff + SV_FF_BANK) != 1000) { pin_ff_bad = pin_ff_bad + 1; }
+if (load64(pin_ff + SV_FF_DC) != 1001) { pin_ff_bad = pin_ff_bad + 1; }
+assert_eq(pin_ff_bad, 0, "the 2 offsets read the fields their accessors write");
+assert_eq(load64(pin_ff + SV_FF_BANK + 8) != 1000, 1, "control: the next word holds another field");
+
+# ================================================================
+test_group("3.8.5: each SV_FB_* offset is the SvFormantBank field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_fb = alloc(sizeof(SvFormantBank));
+SvFormantBank_set_slot(pin_fb, 1000);
+SvFormantBank_set_xin1(pin_fb, 1001);
+SvFormantBank_set_xin2(pin_fb, 1002);
+SvFormantBank_set_count(pin_fb, 1003);
+SvFormantBank_set_trig(pin_fb, 1004);
+SvFormantBank_set_out_coef(pin_fb, 1005);
+SvFormantBank_set_out_dirty(pin_fb, 1006);
+var pin_fb_bad = 0;
+if (load64(pin_fb + SV_FB_SLOT) != 1000) { pin_fb_bad = pin_fb_bad + 1; }
+if (load64(pin_fb + SV_FB_XIN1) != 1001) { pin_fb_bad = pin_fb_bad + 1; }
+if (load64(pin_fb + SV_FB_XIN2) != 1002) { pin_fb_bad = pin_fb_bad + 1; }
+if (load64(pin_fb + SV_FB_COUNT) != 1003) { pin_fb_bad = pin_fb_bad + 1; }
+if (load64(pin_fb + SV_FB_OUT_COEF) != 1005) { pin_fb_bad = pin_fb_bad + 1; }
+if (load64(pin_fb + SV_FB_OUT_DIRTY) != 1006) { pin_fb_bad = pin_fb_bad + 1; }
+assert_eq(pin_fb_bad, 0, "the 6 offsets read the fields their accessors write");
+assert_eq(load64(pin_fb + SV_FB_SLOT + 8) != 1000, 1, "control: the next word holds another field");
+
 var rc = assert_summary();
 syscall(60, rc);

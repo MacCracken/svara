@@ -50,6 +50,22 @@ struct SvVocalTract {
     target_scratch; qflags;
 }
 
+# The offsets of the SvVocalTract fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_VT_FILTER = 0;
+const SV_VT_NASAL_COUPLING = 8;
+const SV_VT_NASAL_ANTIFORMANT = 16;
+const SV_VT_LIP_PREV = 24;
+const SV_VT_LIP_RADIATION = 32;
+const SV_VT_INTERACTION_STRENGTH = 40;
+const SV_VT_INTERACTION_FEEDBACK = 48;
+const SV_VT_SUBGLOTTAL_COUPLING = 56;
+const SV_VT_SUBGLOTTAL_FILTER = 64;
+const SV_VT_GAIN = 72;
+const SV_VT_QFLAGS = 120;
+
 # Bits of `qflags`, the four svara_quality_use_* answers for the tract's quality,
 # kept beside it so process_sample reads one field instead of making four calls
 # (3.8.2). svara_tract_store_quality is the only writer of either field.
@@ -394,40 +410,40 @@ fn svara_tract_sample_rate(self) { return SvVocalTract_sample_rate(self); }
 # ---- processing -----------------------------------------------------------
 # process_sample -- one excitation sample through the full (LOD-gated) pipeline.
 fn svara_tract_process_sample(self, input) {
-    var qf = SvVocalTract_qflags(self);
+    var qf = load64(self + SV_VT_QFLAGS);
 
     # source-filter interaction: feed a fraction of last output back
     var excitation = input;
     if ((qf & SV_T_Q_INTERACTION) != 0) {
         excitation = f64_sub(input,
-          f64_mul(SvVocalTract_interaction_strength(self), SvVocalTract_interaction_feedback(self)));
+          f64_mul(load64(self + SV_VT_INTERACTION_STRENGTH), load64(self + SV_VT_INTERACTION_FEEDBACK)));
     }
 
-    var formant_out = svara_formant_filter_process_sample(SvVocalTract_filter(self), excitation);
+    var formant_out = svara_formant_filter_process_sample(load64(self + SV_VT_FILTER), excitation);
 
     # nasal coupling: blend oral vs nasalized (smoother always advances)
-    var nc = svara_smooth_next(SvVocalTract_nasal_coupling(self));
+    var nc = svara_smooth_next(load64(self + SV_VT_NASAL_COUPLING));
     var output = formant_out;
     if (((qf & SV_T_Q_NASAL) != 0) & (f64_gt(nc, 0) == 1)) {
-        var nasal = filter_biquad_process_sample(SvVocalTract_nasal_antiformant(self), formant_out);
+        var nasal = filter_biquad_process_sample(load64(self + SV_VT_NASAL_ANTIFORMANT), formant_out);
         output = f64_add(f64_mul(formant_out, f64_sub(F64_ONE, nc)), f64_mul(nasal, nc));
     }
 
     # subglottal resonance coupling
-    if (((qf & SV_T_Q_SUBGLOTTAL) != 0) & (f64_gt(SvVocalTract_subglottal_coupling(self), 0) == 1)) {
-        var sg_out = filter_biquad_process_sample(SvVocalTract_subglottal_filter(self), output);
-        output = f64_add(output, f64_mul(sg_out, SvVocalTract_subglottal_coupling(self)));
+    if (((qf & SV_T_Q_SUBGLOTTAL) != 0) & (f64_gt(load64(self + SV_VT_SUBGLOTTAL_COUPLING), 0) == 1)) {
+        var sg_out = filter_biquad_process_sample(load64(self + SV_VT_SUBGLOTTAL_FILTER), output);
+        output = f64_add(output, f64_mul(sg_out, load64(self + SV_VT_SUBGLOTTAL_COUPLING)));
     }
 
     # lip radiation: first-order high-pass difference
     var radiated = output;
     if ((qf & SV_T_Q_LIP) != 0) {
-        radiated = f64_sub(output, f64_mul(SvVocalTract_lip_radiation(self), SvVocalTract_lip_prev(self)));
-        SvVocalTract_set_lip_prev(self, output);
+        radiated = f64_sub(output, f64_mul(load64(self + SV_VT_LIP_RADIATION), load64(self + SV_VT_LIP_PREV)));
+        store64(self + SV_VT_LIP_PREV, output);
     }
 
-    SvVocalTract_set_interaction_feedback(self, radiated);
-    return f64_mul(radiated, svara_smooth_next(SvVocalTract_gain(self)));
+    store64(self + SV_VT_INTERACTION_FEEDBACK, radiated);
+    return f64_mul(radiated, svara_smooth_next(load64(self + SV_VT_GAIN)));
 }
 
 # synthesize_into -- fill an n-slot f64 buffer from a glottal source.

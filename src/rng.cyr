@@ -30,13 +30,20 @@ var SVARA_INV_U32MAX = 0x3DF0000000000000;        # 2^-32 = 1.0 / (u32::MAX as f
 #derive(Serialize)
 struct SvRng { state: i64; inc: i64; }
 
+# The offsets of the SvRng fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_RNG_STATE = 0;
+const SV_RNG_INC = 8;
+
 # next_u32 -- PCG32 output function. Defined before its callers (single-pass).
 # NOT #must_use: it advances internal state, and svara_rng_new intentionally
 # discards two warm-up draws during seeding.
 fn svara_rng_next_u32(self) {
-    var old_state = SvRng_state(self);
+    var old_state = load64(self + SV_RNG_STATE);
     # state = old * MULT + inc  (u64 wrapping via i64 wrap)
-    SvRng_set_state(self, old_state * SVARA_PCG_MULT + SvRng_inc(self));
+    store64(self + SV_RNG_STATE, old_state * SVARA_PCG_MULT + load64(self + SV_RNG_INC));
     # xor_shifted = (((old >> 18) ^ old) >> 27) as u32
     var xor_shifted = (((old_state >> 18) ^ old_state) >> 27) & SVARA_U32_MASK;
     # rot = (old >> 59) as u32   (top 5 bits -> 0..31)

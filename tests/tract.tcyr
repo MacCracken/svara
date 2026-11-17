@@ -105,5 +105,42 @@ while (i < 256) {
 }
 assert_eq(identical, 1, "identical config + seed -> bit-identical output");
 
+# ================================================================
+test_group("3.8.5: each SV_VT_* offset is the SvVocalTract field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_vt = alloc(sizeof(SvVocalTract));
+SvVocalTract_set_filter(pin_vt, 1000);
+SvVocalTract_set_nasal_coupling(pin_vt, 1001);
+SvVocalTract_set_nasal_antiformant(pin_vt, 1002);
+SvVocalTract_set_lip_prev(pin_vt, 1003);
+SvVocalTract_set_lip_radiation(pin_vt, 1004);
+SvVocalTract_set_interaction_strength(pin_vt, 1005);
+SvVocalTract_set_interaction_feedback(pin_vt, 1006);
+SvVocalTract_set_subglottal_coupling(pin_vt, 1007);
+SvVocalTract_set_subglottal_filter(pin_vt, 1008);
+SvVocalTract_set_gain(pin_vt, 1009);
+SvVocalTract_set_quality(pin_vt, 1010);
+SvVocalTract_set_sample_rate(pin_vt, 1011);
+SvVocalTract_set_formants(pin_vt, 1012);
+SvVocalTract_set_nasal_place(pin_vt, 1013);
+SvVocalTract_set_target_scratch(pin_vt, 1014);
+SvVocalTract_set_qflags(pin_vt, 1015);
+var pin_vt_bad = 0;
+if (load64(pin_vt + SV_VT_FILTER) != 1000) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_NASAL_COUPLING) != 1001) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_NASAL_ANTIFORMANT) != 1002) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_LIP_PREV) != 1003) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_LIP_RADIATION) != 1004) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_INTERACTION_STRENGTH) != 1005) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_INTERACTION_FEEDBACK) != 1006) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_SUBGLOTTAL_COUPLING) != 1007) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_SUBGLOTTAL_FILTER) != 1008) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_GAIN) != 1009) { pin_vt_bad = pin_vt_bad + 1; }
+if (load64(pin_vt + SV_VT_QFLAGS) != 1015) { pin_vt_bad = pin_vt_bad + 1; }
+assert_eq(pin_vt_bad, 0, "the 11 offsets read the fields their accessors write");
+assert_eq(load64(pin_vt + SV_VT_FILTER + 8) != 1000, 1, "control: the next word holds another field");
+
 var rc = assert_summary();
 syscall(60, rc);

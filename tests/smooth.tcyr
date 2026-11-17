@@ -47,5 +47,21 @@ var v = svara_smooth_new(F64_HALF, f64_from(44100));
 assert_eq(svara_smooth_value(v), F64_HALF, "value() returns current");
 assert_eq(svara_smooth_value(v), F64_HALF, "value() does not advance state");
 
+# ================================================================
+test_group("3.8.5: each SV_SP_* offset is the SvSmoothedParam field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_sp = alloc(sizeof(SvSmoothedParam));
+SvSmoothedParam_set_current(pin_sp, 1000);
+SvSmoothedParam_set_target(pin_sp, 1001);
+SvSmoothedParam_set_alpha(pin_sp, 1002);
+var pin_sp_bad = 0;
+if (load64(pin_sp + SV_SP_CURRENT) != 1000) { pin_sp_bad = pin_sp_bad + 1; }
+if (load64(pin_sp + SV_SP_TARGET) != 1001) { pin_sp_bad = pin_sp_bad + 1; }
+if (load64(pin_sp + SV_SP_ALPHA) != 1002) { pin_sp_bad = pin_sp_bad + 1; }
+assert_eq(pin_sp_bad, 0, "the 3 offsets read the fields their accessors write");
+assert_eq(load64(pin_sp + SV_SP_CURRENT + 8) != 1000, 1, "control: the next word holds another field");
+
 var rc = assert_summary();
 syscall(60, rc);

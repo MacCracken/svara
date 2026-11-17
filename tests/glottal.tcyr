@@ -166,5 +166,99 @@ svara_glottal_set_jitter(gp, 0);
 var exp_period = f64_div(f64_from(44100), f64_from(120));
 assert_eq(approx(svara_glottal_period_samples(gp), exp_period, F64_ONE), 1, "period ~ 367.5");
 
+# ================================================================
+test_group("jitter moves only the period, shimmer only the amplitude");
+# ================================================================
+# Rust's new_period (glottal.rs at tag 3.6.5): jitter scales the period's offset,
+# shimmer the amplitude's. Each source first runs past the period new() drew with
+# the default jitter and shimmer, then is read at every sample of ten more.
+var gjit = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_jitter(gjit, SV_G_0_05);
+svara_glottal_set_shimmer(gjit, 0);
+var gshim = svara_glottal_new(f64_from(120), SR);
+svara_glottal_set_jitter(gshim, 0);
+svara_glottal_set_shimmer(gshim, SV_G_0_1);
+var gk = 0;
+var gdump = 0;
+while (gk < 400) {
+    gdump = svara_glottal_next_sample(gjit);
+    gdump = svara_glottal_next_sample(gshim);
+    gk = gk + 1;
+}
+var jit_amp_moved = 0;
+var jit_period_moved = 0;
+var shim_amp_moved = 0;
+var shim_period_moved = 0;
+gk = 0;
+while (gk < 3700) {
+    gdump = svara_glottal_next_sample(gjit);
+    gdump = svara_glottal_next_sample(gshim);
+    if (SvGlottalSource_current_amplitude(gjit) != F64_ONE) { jit_amp_moved = jit_amp_moved + 1; }
+    if (svara_glottal_period_samples(gjit) != exp_period) { jit_period_moved = jit_period_moved + 1; }
+    if (SvGlottalSource_current_amplitude(gshim) != F64_ONE) { shim_amp_moved = shim_amp_moved + 1; }
+    if (svara_glottal_period_samples(gshim) != exp_period) { shim_period_moved = shim_period_moved + 1; }
+    gk = gk + 1;
+}
+assert_eq(jit_amp_moved, 0, "with shimmer 0, jitter leaves the amplitude at exactly 1.0");
+assert_eq(shim_period_moved, 0, "with jitter 0, shimmer leaves the period at exactly sr / f0");
+assert_eq(jit_period_moved > 0, 1, "control: jitter 0.05 moves the period");
+assert_eq(shim_amp_moved > 0, 1, "control: shimmer 0.1 moves the amplitude");
+
+# ================================================================
+test_group("3.8.5: each SV_GS_* offset is the SvGlottalSource field its accessor names");
+# ================================================================
+# Every field gets a distinct value through its derived setter; each offset the
+# per-sample code uses must then read its own field's value.
+var pin_gs = alloc(sizeof(SvGlottalSource));
+SvGlottalSource_set_model(pin_gs, 1000);
+SvGlottalSource_set_rd(pin_gs, 1001);
+SvGlottalSource_set_lf_ta(pin_gs, 1002);
+SvGlottalSource_set_lf_te(pin_gs, 1003);
+SvGlottalSource_set_lf_ee(pin_gs, 1004);
+SvGlottalSource_set_f0(pin_gs, 1005);
+SvGlottalSource_set_sample_rate(pin_gs, 1006);
+SvGlottalSource_set_open_quotient(pin_gs, 1007);
+SvGlottalSource_set_speed_quotient(pin_gs, 1008);
+SvGlottalSource_set_spectral_tilt(pin_gs, 1009);
+SvGlottalSource_set_jitter(pin_gs, 1010);
+SvGlottalSource_set_shimmer(pin_gs, 1011);
+SvGlottalSource_set_breathiness(pin_gs, 1012);
+SvGlottalSource_set_diplophonia(pin_gs, 1013);
+SvGlottalSource_set_diplo_phase(pin_gs, 1014);
+SvGlottalSource_set_vibrato_rate(pin_gs, 1015);
+SvGlottalSource_set_vibrato_depth(pin_gs, 1016);
+SvGlottalSource_set_tilt_state(pin_gs, 1017);
+SvGlottalSource_set_phase(pin_gs, 1018);
+SvGlottalSource_set_current_period(pin_gs, 1019);
+SvGlottalSource_set_current_amplitude(pin_gs, 1020);
+SvGlottalSource_set_rng(pin_gs, 1021);
+SvGlottalSource_set_aspiration_noise(pin_gs, 1022);
+SvGlottalSource_set_vibrato_lfo(pin_gs, 1023);
+var pin_gs_bad = 0;
+if (load64(pin_gs + SV_GS_MODEL) != 1000) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_LF_TA) != 1002) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_LF_TE) != 1003) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_LF_EE) != 1004) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_F0) != 1005) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_SAMPLE_RATE) != 1006) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_OPEN_QUOTIENT) != 1007) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_SPECTRAL_TILT) != 1009) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_JITTER) != 1010) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_SHIMMER) != 1011) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_BREATHINESS) != 1012) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_DIPLOPHONIA) != 1013) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_DIPLO_PHASE) != 1014) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_VIBRATO_RATE) != 1015) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_VIBRATO_DEPTH) != 1016) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_TILT_STATE) != 1017) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_PHASE) != 1018) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_CURRENT_PERIOD) != 1019) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_CURRENT_AMPLITUDE) != 1020) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_RNG) != 1021) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_ASPIRATION_NOISE) != 1022) { pin_gs_bad = pin_gs_bad + 1; }
+if (load64(pin_gs + SV_GS_VIBRATO_LFO) != 1023) { pin_gs_bad = pin_gs_bad + 1; }
+assert_eq(pin_gs_bad, 0, "the 22 offsets read the fields their accessors write");
+assert_eq(load64(pin_gs + SV_GS_MODEL + 8) != 1000, 1, "control: the next word holds another field");
+
 var rc = assert_summary();
 syscall(60, rc);

@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -42,21 +42,17 @@ bits read once: 3.3% of the tract's instructions but 8.6% of its cycles. On cyri
 ⚠ **An inlined accessor is not free.** A derived getter retires 2 instructions more
 than a `load64`, a setter 6 more than a `store64`, and each keeps a jump. 3.8.4 wrote
 the bank's slot record as `const` offsets and the bank went to 0.951x its instructions
-and 0.897x its cycles. The cyrius issue is
-`docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`
-in the cyrius repo.
+and 0.897x its cycles. 3.8.5 did the same for the 84 accessor uses left on the per-sample
+path, glottal source to DC blocker, and the chain went to 0.952x its instructions. `render_planned` moved
+only to 0.992x: its loop's cost is the retargeting, which still reads through accessors
+and is not worth rewriting for under 1% unless a profile says otherwise. The cyrius issue
+is `docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`
+in the cyrius repo; its fix would make the offsets unnecessary, not wrong.
 
 ⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
 predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
 measured effect does not earn a place in the source.
 
-- [ ] **The accessors left in the per-sample paths.** By a static count,
-      `svara_glottal_next_sample` has 15 getters and 4 setters, `svara_tract_process_sample`
-      12 and 2, `svara_dc_blocker_process` 3 and 2, and the bank's own header in
-      `svara_formant_bank_process` 6 and 2, before their callees. At 3.8.4's
-      rates that is about 130 instructions a sample of the chain's 2,660. Either
-      wait for the cyrius fix, or give each per-sample record `const` offsets as the bank
-      has. Measure each with the counters first.
 - [ ] **Call naad's block forms** where the tract's feedback allows it.
       `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
       2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a

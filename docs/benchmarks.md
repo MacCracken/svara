@@ -65,8 +65,25 @@ Rust's own inputs; their Rust medians are in
 | `render_planned` (3 phonemes) | ~10.6 ms | ~13.5 ms | per-sample formant interpolation + tract re-target |
 | `render_planned` toned | ~13.2 ms | ~16.6 ms | as above, plus a per-sample prosody contour lookup |
 
+**3.8.5 took the rest of the per-sample path off derived accessors**, 84 uses from the
+glottal source to the DC blocker, and the table above still stands at 3.8.2. Against
+3.8.4, min of 9 interleaved runs on an otherwise idle host, bit-identical:
+
+| Probe | instructions | cycles |
+|---|---:|---:|
+| glottal source, 2M | 0.947x | 0.982x |
+| formant filter, 1M | 0.960x | 0.959x |
+| tract `process_sample`, 1M | 0.954x | 0.955x |
+| `synthesize_into` 500 × 1024 | 0.952x | 0.924x |
+| phoneme /a/ × 100 | 0.956x | 0.929x |
+| `render_planned`, toned, × 20 | 0.992x, 0.993x | 0.990x, 0.992x |
+
+⚠ **Check the host before trusting cycles.** Two earlier runs of the same pair, made
+while another job held a load of 12 to 15, put the toned render at 1.144x and then 0.796x
+its cycles. The instruction counts did not move in any of the three.
+
 **3.8.4 laid the formant bank out one record per slot, at `const` offsets**, and the
-table above still stands at 3.8.2. Three `cyrius bench` runs on 3.8.4, at a load near 5,
+table above still stood at 3.8.2. Three `cyrius bench` runs on 3.8.4, at a load near 5,
 had the unchanged glottal source 10% slower than the 3.8.2 rows, so no timer here
 resolves the change. Retired instructions and cycles against 3.8.3, min of 9
 interleaved runs, bit-identical:

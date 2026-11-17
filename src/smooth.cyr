@@ -17,6 +17,14 @@ var SV_SMOOTH_EXP_BITS        = 0x7FF0000000000000;   # exponent field: all ones
 #derive(Serialize)
 struct SvSmoothedParam { current: f64; target: f64; alpha: f64; }
 
+# The offsets of the SvSmoothedParam fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_SP_CURRENT = 0;
+const SV_SP_TARGET = 8;
+const SV_SP_ALPHA = 16;
+
 # alpha_from_time -- exp(-1/(time_secs*sample_rate)); 0.0 (instant) if either
 # input is non-positive. Defined before its callers (single-pass). `0` == +0.0.
 #must_use
@@ -51,22 +59,21 @@ fn svara_smooth_set_target(self, target) {
 
 # next -- return current smoothed value and advance one sample.
 fn svara_smooth_next(self) {
-    var current = SvSmoothedParam_current(self);
-    var target = SvSmoothedParam_target(self);
+    var current = load64(self + SV_SP_CURRENT);
+    var target = load64(self + SV_SP_TARGET);
     # Converged (3.8.2): the branch below would store `target` over the same bits.
     # Only for a finite value -- for inf or NaN the arithmetic below can differ.
     if (current == target) {
         if ((current & SV_SMOOTH_EXP_BITS) != SV_SMOOTH_EXP_BITS) { return current; }
     }
     if (f64_lt(f64_abs(f64_sub(current, target)), SVARA_SMOOTH_CONVERGED) == 1) {
-        SvSmoothedParam_set_current(self, target);
+        store64(self + SV_SP_CURRENT, target);
     } else {
-        var alpha = SvSmoothedParam_alpha(self);
+        var alpha = load64(self + SV_SP_ALPHA);
         # current = alpha*current + (1-alpha)*target
-        SvSmoothedParam_set_current(self,
-          f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
+        store64(self + SV_SP_CURRENT, f64_add(f64_mul(alpha, current), f64_mul(f64_sub(F64_ONE, alpha), target)));
     }
-    return SvSmoothedParam_current(self);
+    return load64(self + SV_SP_CURRENT);
 }
 
 # value -- current value without advancing.

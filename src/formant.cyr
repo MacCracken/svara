@@ -324,6 +324,17 @@ const SV_FSLOT_BYTES = 56;
 # as before. A rebuild clears both, a reset clears `out_dirty`.
 struct SvFormantBank { slot; xin1; xin2; count; trig; out_coef; out_dirty; }
 
+# The offsets of the SvFormantBank fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_FB_SLOT = 0;
+const SV_FB_XIN1 = 8;
+const SV_FB_XIN2 = 16;
+const SV_FB_COUNT = 24;
+const SV_FB_OUT_COEF = 40;
+const SV_FB_OUT_DIRTY = 48;
+
 # zero a buffer of `n` f64 slots (bump alloc is not zeroed).
 fn svara_formant_zero_buf(buf, n) {
     var i = 0;
@@ -417,18 +428,18 @@ fn svara_formant_bank_process(self, input) {
     # The input delay is shared by all eight biquads, so it is read once here
     # rather than re-loaded per slot, and advanced once after the loop. Same
     # arithmetic as the per-slot form -- x2i was identical in every slot.
-    var x2v = SvFormantBank_xin2(self);
+    var x2v = load64(self + SV_FB_XIN2);
     # Run only the active slots while the rest provably add nothing: no
     # coefficients past `count` and no state there, and a finite input. A
     # non-finite input runs all eight, as Rust does, and marks the unused slots'
     # state. The test is on the exponent bits, all ones for inf and NaN.
     var lim = SVARA_MAX_FORMANTS;
-    if ((SvFormantBank_out_coef(self) | SvFormantBank_out_dirty(self)) == 0) {
-        if ((input & SV_F_EXP_BITS) != SV_F_EXP_BITS) { lim = SvFormantBank_count(self); }
-        else { SvFormantBank_set_out_dirty(self, 1); }
+    if ((load64(self + SV_FB_OUT_COEF) | load64(self + SV_FB_OUT_DIRTY)) == 0) {
+        if ((input & SV_F_EXP_BITS) != SV_F_EXP_BITS) { lim = load64(self + SV_FB_COUNT); }
+        else { store64(self + SV_FB_OUT_DIRTY, 1); }
     }
     var sum = 0;
-    var r = SvFormantBank_slot(self);
+    var r = load64(self + SV_FB_SLOT);
     var end = r + lim * SV_FSLOT_BYTES;
     while (r < end) {
         var y1i = load64(r + SV_FSLOT_Y1); var y2i = load64(r + SV_FSLOT_Y2);
@@ -442,8 +453,8 @@ fn svara_formant_bank_process(self, input) {
         sum = f64_add(sum, f64_mul(y, load64(r + SV_FSLOT_AMP)));
         r = r + SV_FSLOT_BYTES;
     }
-    SvFormantBank_set_xin2(self, SvFormantBank_xin1(self));
-    SvFormantBank_set_xin1(self, input);
+    store64(self + SV_FB_XIN2, load64(self + SV_FB_XIN1));
+    store64(self + SV_FB_XIN1, input);
     return sum;
 }
 
@@ -468,6 +479,14 @@ fn svara_formant_bank_reset(self) {
 #derive(accessors)
 struct SvDcBlocker { alpha; x_prev; y_prev; }
 
+# The offsets of the SvDcBlocker fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_DC_ALPHA = 0;
+const SV_DC_X_PREV = 8;
+const SV_DC_Y_PREV = 16;
+
 # dc_blocker_new -- one-pole DC blocker with its corner near 20 Hz at `sample_rate`.
 #must_use
 fn svara_dc_blocker_new(sample_rate) {
@@ -482,10 +501,10 @@ fn svara_dc_blocker_new(sample_rate) {
 # Process one sample through the DC blocker (removes the 0 Hz offset); returns the filtered sample.
 fn svara_dc_blocker_process(self, input) {
     # output = input - x_prev + alpha * y_prev
-    var output = f64_add(f64_sub(input, SvDcBlocker_x_prev(self)),
-      f64_mul(SvDcBlocker_alpha(self), SvDcBlocker_y_prev(self)));
-    SvDcBlocker_set_x_prev(self, input);
-    SvDcBlocker_set_y_prev(self, output);
+    var output = f64_add(f64_sub(input, load64(self + SV_DC_X_PREV)),
+      f64_mul(load64(self + SV_DC_ALPHA), load64(self + SV_DC_Y_PREV)));
+    store64(self + SV_DC_X_PREV, input);
+    store64(self + SV_DC_Y_PREV, output);
     return output;
 }
 
@@ -501,6 +520,13 @@ fn svara_dc_blocker_reset(self) {
 # ================================================================
 #derive(accessors)
 struct SvFormantFilter { bank; dc; sample_rate; }
+
+# The offsets of the SvFormantFilter fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_FF_BANK = 0;
+const SV_FF_DC = 8;
 
 # The coefficients take sinh(pi * bw / sr), as svara_formant_biquad_coeffs forms
 # it. sinh overflows f64 a little above 710.47, and from there every coefficient is
@@ -691,8 +717,8 @@ fn svara_formant_filter_update(self, formants) {
 # DC blocker; reading the blocker's pointer first has no effect on the bank.
 #inline
 fn svara_formant_filter_process_sample(self, input) {
-    return svara_dc_blocker_process(SvFormantFilter_dc(self),
-      svara_formant_bank_process(SvFormantFilter_bank(self), input));
+    return svara_dc_blocker_process(load64(self + SV_FF_DC),
+      svara_formant_bank_process(load64(self + SV_FF_BANK), input));
 }
 
 # process_block -- n samples from input buffer into output buffer (f64 slots).

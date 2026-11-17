@@ -48,13 +48,13 @@ That is a substring test, not a check that the roadmap says anything.
 
 ## The suites
 
-**26 suites, 1,352 assertions** at 3.8.4. One `.tcyr` per module, plus ten that
+**26 suites, 1,370 assertions** at 3.8.5. One `.tcyr` per module, plus ten that
 are not module ports:
 
 | Suite | What it is |
 |---|---|
 | `svara.tcyr` | smoke |
-| `error` `rng` `smooth` `lod` `formant` `spectral` `glottal` `tract` `voice` `phoneme` `prosody` `trajectory` `sequence` `pool` `render` `bridge` | per-module ports of the Rust `#[test]` blocks; since 3.8.4 `formant` also holds the bank to 3.8.3's seven-buffer bank, bit for bit |
+| `error` `rng` `smooth` `lod` `formant` `spectral` `glottal` `tract` `voice` `phoneme` `prosody` `trajectory` `sequence` `pool` `render` `bridge` | per-module ports of the Rust `#[test]` blocks; since 3.8.4 `formant` also holds the bank to 3.8.3's seven-buffer bank, bit for bit, and since 3.8.5 `glottal`, `tract`, `smooth`, `rng` and `formant` pin each `const` offset the per-sample code uses to the field its derived accessor names |
 | `serde.tcyr` | JSON round-trips — 137 assertions |
 | `hardening.tcyr` | adversarial input for the [ADR-0001](../adr/0001-signed-index-and-float-conversion-hazards.md) hazard class |
 | `allocbudget.tcyr` | `_into`-variant equivalence, the per-sample arena budget, a warmed context's zero bytes per phoneme, and since 3.8.3 the bytes each render keeps against 3.8.2's, with its samples compared bit for bit against 3.8.2's code |

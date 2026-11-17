@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.5] - 2026-11-16 — the per-sample path without derived accessors
+
+Performance release. 3.8.4 measured that a `#derive(accessors)` accessor costs more than the
+`load64` / `store64` it stands for: on cyrius 6.7.18 a getter retires 2 instructions more, a setter
+6 more, and each keeps a jump. **The 84 accessor uses left on the per-sample path now read and
+write at `const` offsets** — 66 getters and 18 setters, from the glottal source and its random
+numbers through the tract, the smoothers, the formant bank's header and the DC blocker.
+Against 3.8.4 (min of 9 interleaved runs):
+
+| Probe | instructions | cycles |
+|---|---:|---:|
+| glottal source, 2M samples | 0.947x | 0.982x |
+| formant filter, 1M | 0.960x | 0.959x |
+| tract `process_sample`, 1M | 0.954x | 0.955x |
+| tract, Reduced and Minimal | 0.948x, 0.952x | 0.952x, 0.963x |
+| `synthesize_into`, 500 × 1024 | 0.952x | 0.924x |
+| phoneme /a/ × 100 | 0.956x | 0.929x |
+| `render_planned` and the toned render, × 20 | 0.992x, 0.993x | 0.990x, 0.992x |
+
+The cycle geomean is 0.960. The instruction counts were the same in all three sweeps. The cycles
+are from the one run made while the host was otherwise idle: two earlier runs, under a load of 12
+to 15 from other work, swung the same binaries between 0.80x and 1.26x. **No output moves**: against 3.8.4, 558,721 values, the JSON and all 638 hostile cases are
+identical. **1,370 assertions / 26 suites.**
+
+### Changed
+
+- **The per-sample functions use `const` offsets.** `svara_glottal_next_sample` and the pulse,
+  whisper and new-period functions under it, `svara_rng_next_u32` / `_next_f32` /
+  `_next_f32_unsigned`, `svara_tract_process_sample`, `svara_smooth_next`,
+  `svara_formant_filter_process_sample`, `svara_formant_bank_process` and
+  `svara_dc_blocker_process`. The rewrite is mechanical: each `T_f(p)` became
+  `load64(p + SV_X_F)`, each `T_set_f(p, v)` became `store64(p + SV_X_F, v)`, and nothing else
+  changed.
+- **The structs keep their derived accessors.** Everything off the per-sample path still uses
+  them, and they stay the API. The offsets are declared beside each struct, only for the fields
+  the per-sample code touches: `SV_GS_*` (SvGlottalSource), `SV_VT_*` (SvVocalTract), `SV_SP_*`
+  (SvSmoothedParam), `SV_RNG_*`, `SV_FB_*`, `SV_DC_*` and `SV_FF_*`.
+- **Not taken: `render_planned`'s retargeting.** Its per-sample loop spends most of its
+  instructions in the trajectory and the bank rebuild, which still read through accessors, and
+  the path moved only to 0.992x. Not rewritten for under 1%.
+
+### Added
+
+- **Offset pins, one group per struct** (14 assertions, in `tests/glottal.tcyr`, `tract.tcyr`,
+  `smooth.tcyr`, `rng.tcyr` and `formant.tcyr`). Every field gets a distinct value through its
+  derived setter, and each offset must read its own field's value, so a reordered struct fails a
+  test instead of reading a neighbour.
+
+- **`tests/glottal.tcyr`: jitter moves only the period, shimmer only the amplitude** (4
+  assertions). A source with shimmer 0 keeps its amplitude at exactly 1.0 through ten periods,
+  and one with jitter 0 keeps its period at exactly `sr / f0`, as Rust's `new_period` does. The
+  mutation run found the gap: `new_period` reading jitter where it reads shimmer passed the whole
+  suite.
+
+  8 mutants, each failing at least one assertion:
+  - six offsets moved onto a neighbouring field: the tract's lip delay, the glottal phase, a
+    smoother's target, the generator's increment, the DC blocker's output delay, and the bank's
+    second input delay;
+  - the tract's gain read from its nasal coupling;
+  - `new_period`'s shimmer read from its jitter, caught only by the new jitter / shimmer group.
+
 ## [3.8.4] - 2026-11-16 — the formant bank, one record per slot
 
 Performance release. The formant bank kept its eight slots as the Rust's structure of

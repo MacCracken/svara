@@ -51,6 +51,33 @@ struct SvGlottalSource {
     rng; aspiration_noise; vibrato_lfo;
 }
 
+# The offsets of the SvGlottalSource fields the per-sample code reads and writes (3.8.5).
+# On cyrius 6.7.18 a derived accessor retires 2 instructions more than load64, or 6
+# more than store64, so the per-sample code uses these; everything else keeps the
+# accessors. A test pins each offset to the accessor it stands for.
+const SV_GS_MODEL = 0;
+const SV_GS_LF_TA = 16;
+const SV_GS_LF_TE = 24;
+const SV_GS_LF_EE = 32;
+const SV_GS_F0 = 40;
+const SV_GS_SAMPLE_RATE = 48;
+const SV_GS_OPEN_QUOTIENT = 56;
+const SV_GS_SPECTRAL_TILT = 72;
+const SV_GS_JITTER = 80;
+const SV_GS_SHIMMER = 88;
+const SV_GS_BREATHINESS = 96;
+const SV_GS_DIPLOPHONIA = 104;
+const SV_GS_DIPLO_PHASE = 112;
+const SV_GS_VIBRATO_RATE = 120;
+const SV_GS_VIBRATO_DEPTH = 128;
+const SV_GS_TILT_STATE = 136;
+const SV_GS_PHASE = 144;
+const SV_GS_CURRENT_PERIOD = 152;
+const SV_GS_CURRENT_AMPLITUDE = 160;
+const SV_GS_RNG = 168;
+const SV_GS_ASPIRATION_NOISE = 176;
+const SV_GS_VIBRATO_LFO = 184;
+
 # lf_params_from_rd -- derive LF (ta, te, ee) from Rd; writes 3 f64 slots.
 # rd clamped to [0.3, 2.7]. Fant (1995) simplified mapping.
 fn svara_lf_params_from_rd(rd, out) {
@@ -377,7 +404,7 @@ fn svara_glottal_period_samples(self) { return SvGlottalSource_current_period(se
 # rosenberg_pulse -- 3t'^2 - 2t'^3 over the open phase (t < open_quotient), else 0.
 #must_use
 fn svara_glottal_rosenberg_pulse(self, t) {
-    var oq = SvGlottalSource_open_quotient(self);
+    var oq = load64(self + SV_GS_OPEN_QUOTIENT);
     if (f64_lt(t, oq) == 1) {
         var tn = f64_div(t, oq);
         var tn2 = f64_mul(tn, tn);
@@ -392,9 +419,9 @@ fn svara_glottal_rosenberg_pulse(self, t) {
 # exponential return over ta, then closed (0).
 #must_use
 fn svara_glottal_lf_pulse(self, t) {
-    var te = SvGlottalSource_lf_te(self);
-    var ta = SvGlottalSource_lf_ta(self);
-    var ee = SvGlottalSource_lf_ee(self);
+    var te = load64(self + SV_GS_LF_TE);
+    var ta = load64(self + SV_GS_LF_TA);
+    var ee = load64(self + SV_GS_LF_EE);
     if (f64_lt(t, te) == 1) {
         # -ee * sin(pi * t / te)
         var phase = f64_div(f64_mul(F64_PI, t), te);
@@ -411,13 +438,13 @@ fn svara_glottal_lf_pulse(self, t) {
 
 # whisper_sample -- noise-only with a steep (>=12 dB/oct) spectral tilt.
 fn svara_glottal_whisper_sample(self) {
-    var noise = noise_next_sample(SvGlottalSource_aspiration_noise(self));
-    var tilt = f64_max(SvGlottalSource_spectral_tilt(self), f64_from(12));
-    var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, tilt)), SvGlottalSource_sample_rate(self)));
+    var noise = noise_next_sample(load64(self + SV_GS_ASPIRATION_NOISE));
+    var tilt = f64_max(load64(self + SV_GS_SPECTRAL_TILT), f64_from(12));
+    var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, tilt)), load64(self + SV_GS_SAMPLE_RATE)));
     # filtered = (1-alpha)*noise*0.15 + alpha*tilt_state
     var filtered = f64_add(f64_mul(f64_mul(f64_sub(F64_ONE, alpha), noise), SV_G_0_15),
-      f64_mul(alpha, SvGlottalSource_tilt_state(self)));
-    SvGlottalSource_set_tilt_state(self, filtered);
+      f64_mul(alpha, load64(self + SV_GS_TILT_STATE)));
+    store64(self + SV_GS_TILT_STATE, filtered);
     return filtered;
 }
 
@@ -425,20 +452,20 @@ fn svara_glottal_whisper_sample(self) {
 # multiplication -> shimmer -> diplophonia. rng draw ORDER is load-bearing.
 fn svara_glottal_new_period(self) {
     var vibrato_mod = F64_ONE;
-    if (f64_gt(SvGlottalSource_vibrato_rate(self), 0) == 1) {
-        var lfo_val = modulation_lfo_next_value(SvGlottalSource_vibrato_lfo(self));
+    if (f64_gt(load64(self + SV_GS_VIBRATO_RATE), 0) == 1) {
+        var lfo_val = modulation_lfo_next_value(load64(self + SV_GS_VIBRATO_LFO));
         # 1 + depth * (lfo_val*2 - 1)
         vibrato_mod = f64_add(F64_ONE,
-          f64_mul(SvGlottalSource_vibrato_depth(self), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
+          f64_mul(load64(self + SV_GS_VIBRATO_DEPTH), f64_sub(f64_mul(lfo_val, F64_TWO), F64_ONE)));
     }
-    var effective_f0 = f64_mul(SvGlottalSource_f0(self), vibrato_mod);
+    var effective_f0 = f64_mul(load64(self + SV_GS_F0), vibrato_mod);
 
-    var rng = SvGlottalSource_rng(self);
-    var base_period = f64_div(SvGlottalSource_sample_rate(self), effective_f0);
-    var jitter_offset = f64_mul(f64_mul(svara_rng_next_f32(rng), SvGlottalSource_jitter(self)), base_period);
+    var rng = load64(self + SV_GS_RNG);
+    var base_period = f64_div(load64(self + SV_GS_SAMPLE_RATE), effective_f0);
+    var jitter_offset = f64_mul(f64_mul(svara_rng_next_f32(rng), load64(self + SV_GS_JITTER)), base_period);
     var period = f64_max(f64_add(base_period, jitter_offset), F64_ONE);
 
-    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_CREAKY) {
+    if (load64(self + SV_GS_MODEL) == SVARA_GLOTTAL_CREAKY) {
         var r = f64_abs(svara_rng_next_f32(rng));
         if (f64_lt(r, SV_G_0_1) == 1) {
             period = f64_mul(period, f64_from(3));
@@ -446,69 +473,69 @@ fn svara_glottal_new_period(self) {
             period = f64_mul(period, F64_TWO);
         }
     }
-    SvGlottalSource_set_current_period(self, period);
+    store64(self + SV_GS_CURRENT_PERIOD, period);
 
-    var shimmer_scale = SvGlottalSource_shimmer(self);
-    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_CREAKY) {
+    var shimmer_scale = load64(self + SV_GS_SHIMMER);
+    if (load64(self + SV_GS_MODEL) == SVARA_GLOTTAL_CREAKY) {
         shimmer_scale = f64_mul(shimmer_scale, f64_from(3));
     }
     var shimmer_offset = f64_mul(svara_rng_next_f32(rng), shimmer_scale);
     var amp = f64_max(f64_add(F64_ONE, shimmer_offset), SV_G_0_01);
 
-    if (f64_gt(SvGlottalSource_diplophonia(self), 0) == 1) {
-        SvGlottalSource_set_diplo_phase(self, 1 - SvGlottalSource_diplo_phase(self));
-        if (SvGlottalSource_diplo_phase(self) == 1) {
-            amp = f64_mul(amp, f64_sub(F64_ONE, f64_mul(SvGlottalSource_diplophonia(self), SV_G_0_8)));
+    if (f64_gt(load64(self + SV_GS_DIPLOPHONIA), 0) == 1) {
+        store64(self + SV_GS_DIPLO_PHASE, 1 - load64(self + SV_GS_DIPLO_PHASE));
+        if (load64(self + SV_GS_DIPLO_PHASE) == 1) {
+            amp = f64_mul(amp, f64_sub(F64_ONE, f64_mul(load64(self + SV_GS_DIPLOPHONIA), SV_G_0_8)));
         }
     }
-    SvGlottalSource_set_current_amplitude(self, amp);
+    store64(self + SV_GS_CURRENT_AMPLITUDE, amp);
 }
 
 # next_sample -- one glottal-source sample. Whisper is pure noise; otherwise a
 # model pulse with spectral tilt, shimmer, and gated aspiration-noise mix.
 fn svara_glottal_next_sample(self) {
-    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_WHISPER) {
+    if (load64(self + SV_GS_MODEL) == SVARA_GLOTTAL_WHISPER) {
         return svara_glottal_whisper_sample(self);
     }
 
-    var t = f64_div(SvGlottalSource_phase(self), SvGlottalSource_current_period(self));
+    var t = f64_div(load64(self + SV_GS_PHASE), load64(self + SV_GS_CURRENT_PERIOD));
 
     var pulse = 0;
-    if (SvGlottalSource_model(self) == SVARA_GLOTTAL_ROSENBERG) {
+    if (load64(self + SV_GS_MODEL) == SVARA_GLOTTAL_ROSENBERG) {
         pulse = svara_glottal_rosenberg_pulse(self, t);
     } else {
         pulse = svara_glottal_lf_pulse(self, t);
     }
 
     # spectral tilt one-pole low-pass
-    if (f64_gt(SvGlottalSource_spectral_tilt(self), 0) == 1) {
-        var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, SvGlottalSource_spectral_tilt(self))),
-            SvGlottalSource_sample_rate(self)));
+    if (f64_gt(load64(self + SV_GS_SPECTRAL_TILT), 0) == 1) {
+        var alpha = f64_exp(f64_div(f64_neg(f64_mul(F64_TAU, load64(self + SV_GS_SPECTRAL_TILT))),
+            load64(self + SV_GS_SAMPLE_RATE)));
         var filtered = f64_add(f64_mul(f64_sub(F64_ONE, alpha), pulse),
-          f64_mul(alpha, SvGlottalSource_tilt_state(self)));
-        SvGlottalSource_set_tilt_state(self, filtered);
+          f64_mul(alpha, load64(self + SV_GS_TILT_STATE)));
+        store64(self + SV_GS_TILT_STATE, filtered);
         pulse = filtered;
     } else {
-        SvGlottalSource_set_tilt_state(self, pulse);
+        store64(self + SV_GS_TILT_STATE, pulse);
     }
 
-    pulse = f64_mul(pulse, SvGlottalSource_current_amplitude(self));
+    pulse = f64_mul(pulse, load64(self + SV_GS_CURRENT_AMPLITUDE));
 
-    var noise = noise_next_sample(SvGlottalSource_aspiration_noise(self));
+    var noise = noise_next_sample(load64(self + SV_GS_ASPIRATION_NOISE));
     var noise_gate = SV_G_0_1;
-    if (f64_lt(t, SvGlottalSource_open_quotient(self)) == 1) { noise_gate = F64_ONE; }
-    var breath = SvGlottalSource_breathiness(self);
+    if (f64_lt(t, load64(self + SV_GS_OPEN_QUOTIENT)) == 1) { noise_gate = F64_ONE; }
+    var breath = load64(self + SV_GS_BREATHINESS);
     # sample = pulse*(1-breath) + noise*breath*0.3*gate
     var sample = f64_add(f64_mul(pulse, f64_sub(F64_ONE, breath)),
       f64_mul(f64_mul(f64_mul(noise, breath), SV_G_0_3), noise_gate));
 
-    var phase = f64_add(SvGlottalSource_phase(self), F64_ONE);
-    if (f64_ge(phase, SvGlottalSource_current_period(self)) == 1) {
-        phase = f64_sub(phase, SvGlottalSource_current_period(self));
-        SvGlottalSource_set_phase(self, phase);
+    var phase = f64_add(load64(self + SV_GS_PHASE), F64_ONE);
+    if (f64_ge(phase, load64(self + SV_GS_CURRENT_PERIOD)) == 1) {
+        phase = f64_sub(phase, load64(self + SV_GS_CURRENT_PERIOD));
+        store64(self + SV_GS_PHASE, phase);
         svara_glottal_new_period(self);
     } else {
-        SvGlottalSource_set_phase(self, phase);
+        store64(self + SV_GS_PHASE, phase);
     }
     return sample;
 }
