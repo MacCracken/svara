@@ -103,7 +103,7 @@ the *memory traffic*: (a) collapse the redundant per-slot input delay line — `
 `x2` are identical across all 8 slots since the input is shared, so two scalars
 replace two 8-wide buffers (~16 fewer mem ops/sample); (b) register-resident block
 SIMD, once the codegen keeps `f64v4` state in registers across the sample loop.
-Tracked in the roadmap's performance lane.
+Tracked in the roadmap's SIMD section (3.x.x).
 
 ### The diphthong: a shared algorithmic cost — fixed in 3.1.0
 

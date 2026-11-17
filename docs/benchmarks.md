@@ -37,37 +37,43 @@ The batch-timed figures themselves did not move when the instrument changed,
 because they never depended on the per-call floor — which is exactly why a stale
 comment here was harmless in effect and still worth deleting.
 
-## Results (x86_64, single core, 2026-11-16, cyrius 6.7.18, svara 3.8.2)
+## Results (x86_64, single core, 2026-11-16, cyrius 6.7.18, svara 3.8.8)
 
-Each figure is the lowest of three `cyrius bench` runs, with load near 3.6 on 16 cores.
-The 3.6.3 column is the previous table, measured the same way on 2026-11-07. Rows
-marked ★ are the four Rust benches svara had no counterpart for until 3.8.2, on the
-Rust's own inputs; their Rust medians are in
-[`benchmarks-rust-v-cyrius.md`](benchmarks-rust-v-cyrius.md).
+The 3.8.x performance lane closed at 3.8.8, so this table is measured across it. Each
+figure is the lowest of three `cyrius bench` runs, with 3.8.2's benches built from its
+tag and run in turn with 3.8.8's, so host load lands on both columns alike. The load was
+near 3 on 16 cores. The 3.8.2 column reproduces 3.8.2's own published table to within a
+nanosecond or two a row, so the two columns are comparable. Rows marked ★ are the four
+Rust benches svara had no counterpart for until 3.8.2, on the Rust's own inputs; their
+Rust medians are in [`benchmarks-rust-v-cyrius.md`](benchmarks-rust-v-cyrius.md).
 
-| Benchmark | 3.8.2 | 3.6.3 | Notes |
-|---|---|---|---|
-| glottal `next_sample` (Rosenberg) | ~48 ns | ~46 ns | periodic pulse + jitter/shimmer |
-| glottal `next_sample` (whisper) | ~72 ns | ~70 ns | noise-only excitation |
-| glottal `next_sample` (creaky) | ~64 ns | ~62 ns | LF + irregular period timing |
-| formant filter `process_sample` | ~86 ns | ~130 ns | SOA bandpass bank, active slots only, + DC blocker |
-| tract `process_sample` (Full) | ~135 ns | ~197 ns | **includes the formant bank**, + nasal + subglottal + lip + feedback |
-| formant filter `process_block` 1024 | ~110 µs | ~152 µs | ~107 ns/sample amortized |
-| tract `synthesize_into` 1024 | ~185 µs | ~254 µs | **the full chain** — glottal → tract, ~181 ns/sample |
-| ★ tract `synthesize_into` 1024 (Reduced) | ~159 µs | — | no subglottal, no interaction (Rust: 13.27 µs) |
-| ★ tract `synthesize_into` 1024 (Minimal) | ~155 µs | — | no nasal, subglottal, interaction or lip (Rust: 13.17 µs) |
-| phoneme synth /a/ (vowel) | ~447 µs | ~591 µs | 0.05 s render (~2205 samples) + alloc |
-| ★ phoneme synth /a/ female, 0.1 s | ~875 µs | — | 4410 samples (Rust: 84.68 µs) |
-| phoneme synth /s/ (fricative) | ~168 µs | ~343 µs | noise excitation path |
-| phoneme synth /ai/ (diphthong) | ~484 µs | ~628 µs | control-rate formant coefficients (3.1.0) |
-| sequence render (3 phonemes) | ~1.88 ms | ~2.38 ms | per-phoneme synth + variable crossfade |
-| ★ sequence render (10 phonemes) | ~5.05 ms | — | the Rust's ten events (Rust: 443.2 µs) |
-| `render_planned` (3 phonemes) | ~10.6 ms | ~13.5 ms | per-sample formant interpolation + tract re-target |
-| `render_planned` toned | ~13.2 ms | ~16.6 ms | as above, plus a per-sample prosody contour lookup |
+| Benchmark | 3.8.8 | 3.8.2 | ratio | Notes |
+|---|---|---|---:|---|
+| glottal `next_sample` (Rosenberg) | ~43 ns | ~48 ns | 0.90 | periodic pulse + jitter/shimmer |
+| glottal `next_sample` (whisper) | ~70 ns | ~72 ns | 0.97 | noise-only excitation |
+| glottal `next_sample` (creaky) | ~58 ns | ~63 ns | 0.92 | LF + irregular period timing |
+| formant filter `process_sample` | ~73 ns | ~85 ns | 0.86 | bandpass bank, one record per slot, active slots only, + DC blocker |
+| tract `process_sample` (Full) | ~114 ns | ~134 ns | 0.85 | **includes the formant bank**, + nasal + subglottal + lip + feedback |
+| formant filter `process_block` 1024 | ~88.8 µs | ~106 µs | 0.84 | ~87 ns/sample amortized |
+| tract `synthesize_into` 1024 | ~154 µs | ~184 µs | 0.84 | **the full chain** — glottal → tract, ~150 ns/sample |
+| ★ tract `synthesize_into` 1024 (Reduced) | ~128 µs | ~158 µs | 0.81 | no subglottal, no interaction (Rust: 13.27 µs) |
+| ★ tract `synthesize_into` 1024 (Minimal) | ~126 µs | ~155 µs | 0.81 | no nasal, subglottal, interaction or lip (Rust: 13.17 µs) |
+| phoneme synth /a/ (vowel) | ~368 µs | ~445 µs | 0.83 | 0.05 s render (~2205 samples) + alloc |
+| ★ phoneme synth /a/ female, 0.1 s | ~728 µs | ~876 µs | 0.83 | 4410 samples (Rust: 84.68 µs) |
+| phoneme synth /s/ (fricative) | ~133 µs | ~167 µs | 0.80 | noise excitation path |
+| phoneme synth /ai/ (diphthong) | ~424 µs | ~482 µs | 0.88 | control-rate formant coefficients (3.1.0) |
+| sequence render (3 phonemes) | ~1.45 ms | ~1.88 ms | 0.77 | per-phoneme synth + variable crossfade |
+| ★ sequence render (10 phonemes) | ~3.81 ms | ~5.04 ms | 0.76 | the Rust's ten events (Rust: 443.2 µs) |
+| `render_planned` (3 phonemes) | ~9.75 ms | ~10.6 ms | 0.92 | per-sample formant interpolation + tract re-target |
+| `render_planned` toned | ~12.2 ms | ~13.1 ms | 0.93 | as above, plus a per-sample prosody contour lookup |
+
+The entries below say what each release of the lane changed, with retired-instruction
+and cycle counts against the release before it. Those counts are what this host
+resolves; a single timer run does not.
 
 **3.8.5 took the rest of the per-sample path off derived accessors**, 84 uses from the
-glottal source to the DC blocker, and the table above still stands at 3.8.2. Against
-3.8.4, min of 9 interleaved runs on an otherwise idle host, bit-identical:
+glottal source to the DC blocker. Against 3.8.4, min of 9 interleaved runs on an
+otherwise idle host, bit-identical:
 
 | Probe | instructions | cycles |
 |---|---:|---:|
@@ -82,10 +88,9 @@ glottal source to the DC blocker, and the table above still stands at 3.8.2. Aga
 while another job held a load of 12 to 15, put the toned render at 1.144x and then 0.796x
 its cycles. The instruction counts did not move in any of the three.
 
-**3.8.4 laid the formant bank out one record per slot, at `const` offsets**, and the
-table above still stood at 3.8.2. Three `cyrius bench` runs on 3.8.4, at a load near 5,
-had the unchanged glottal source 10% slower than the 3.8.2 rows, so no timer here
-resolves the change. Retired instructions and cycles against 3.8.3, min of 9
+**3.8.4 laid the formant bank out one record per slot, at `const` offsets.** Three
+`cyrius bench` runs on 3.8.4, at a load near 5 and not interleaved, had the unchanged
+glottal source 10% slower than the 3.8.2 rows, so no timer run resolved the change. Retired instructions and cycles against 3.8.3, min of 9
 interleaved runs, bit-identical:
 
 | Probe | instructions | cycles |
@@ -102,7 +107,7 @@ The layout alone, through `#derive(accessors)`, retired 5.4% *more* instructions
 than a `load64` and a setter 6 more than a `store64`. The 3.8.4 CHANGELOG entry has
 the four forms of the slot loop measured.
 
-**3.8.3 changed memory, not time**, so the table above stands for it. Its retired
+**3.8.3 changed memory, not time.** Its retired
 instructions are within 0.3% of 3.8.2's on every probe but phoneme /a/, at 0.984x,
 which no timer here resolves. What moved is the arena each render keeps, which no
 row above can see. Bytes kept per output sample, male voice at 44.1 kHz:
@@ -172,18 +177,19 @@ this host is not trustworthy on its own: an unrelated run showed
 by building both trees and interleaving the runs**, taking the minimum of each;
 that is how 3.5.0's −6% was established.
 
-A full glottal → tract per-sample chain is **≈ 0.18 µs/sample**, i.e. roughly
-**125× real-time** at 44.1 kHz on one core — measured end to end by
-`tract synthesize_into 1024`, not derived (the table's ~181 ns/sample at 3.8.2;
-3.6.3 measured 0.25 µs and 3.5.3 0.35 µs).
+A full glottal → tract per-sample chain is **≈ 0.15 µs/sample**, i.e. roughly
+**150× real-time** at 44.1 kHz on one core — measured end to end by
+`tract synthesize_into 1024`, not derived (the table's ~150 ns/sample at 3.8.8;
+3.8.2 measured 0.18 µs, 3.6.3 0.25 µs and 3.5.3 0.35 µs).
 
 ⚠ **Do not add the per-unit rows together to get the chain cost.** `tract
 process_sample` **already contains** `formant filter process_sample` — the tract
 calls the formant filter (`src/tract.cyr`). Summing glottal + formant + tract
 double-counts the bank and was how this figure was computed until 3.5.3, which
 understated svara by ~1.6×. The chain is measured directly by
-`tract synthesize_into 1024` (glottal → tract, per sample); the sum
-glottal + tract agrees with it to within 1 ns.
+`tract synthesize_into 1024` (glottal → tract, per sample). The sum glottal + tract
+came within 1 ns of it at 3.8.2; at 3.8.8 it is 157 ns against 150, since one loop over
+both runs a little better than the two benches apart.
 
 Every row is within a few percent of the 3.1.0 run — host noise, not a toolchain
 effect. The 6.4.13 → 6.5.35 bump changed the *instrument* (measured timer floor,
@@ -201,7 +207,7 @@ per-sample benches already batch-timed.
   glottal 15×, vowel 10×) — NOT the "~3–5×" earlier estimated here. Cyrius emits
   scalar code (no auto-vectorization) and the SOA bank loop LLVM vectorized runs
   scalar `load64`/`store64` + f64-op overhead here. Addressable via SIMD + FMA —
-  see the roadmap's performance lane. Still comfortably real-time in absolute terms.
+  see the roadmap's SIMD section (3.x.x). Still comfortably real-time in absolute terms.
 
 ⚠ **The two `render_planned` rows are the ones a timer measures badly.** 3.1.3
 took that path from 1,121 to 33 bytes of never-freed arena per output sample
@@ -209,6 +215,60 @@ took that path from 1,121 to 33 bytes of never-freed arena per output sample
 add. The metric that mattered is pinned in `tests/allocbudget.tcyr` as marginal
 arena bytes per sample, not here. Anything that trades memory for time needs the
 same treatment.
+
+## Changing a hot path
+
+The 3.8.x performance lane (3.8.0 to 3.8.8) worked to the notes below, and they hold
+for the next change to a per-sample path. The lane's results are in the table above and
+in each release's entry.
+
+prani measured its port 15.7× slower than its Rust oracle, and float width is not the
+cause ([ADR-0008](adr/0008-the-synthesis-core-stays-f64.md)). naad found the same
+arithmetic costs 22.7 ns through accessors and one call per sample, and 9.5 ns in one
+loop in locals. Shape is the lever svara still has.
+
+⚠ **Measure the right thing.** A bump allocation is a pointer add, so removing 1.1 KB
+of it per sample moved `render_planned` only 20.6 → 18.6 ms. The cost that mattered
+was arena bytes, which no timer can see. Anything trading memory for time needs the
+`tests/allocbudget.tcyr` treatment, and a timing gap needs checking against retired
+instructions.
+
+**Profile by component first.** 3.8.1 counted retired instructions per call for
+each piece of `render_planned`'s loop and found 57% in the bank rebuild's trig, where
+the roadmap had pointed at a 4.3% copy. The 3.8.1 entry above has the table, and the
+method is a scratch probe that replays each component the number of times a render
+does, timed with `scripts/sweep/compare.py`'s `counters`.
+`svara_trajectory_formants_at_into` is the largest piece left there, at about a
+quarter of the loop now, and has no exact shortcut.
+
+**Call overhead counts in cycles.** 3.8.2 replaced four predicate calls a sample with
+bits read once: 3.3% of the tract's instructions but 8.6% of its cycles. On cyrius
+6.7.18 `#inline` takes a body under 32 tokens with no `var` or control flow.
+
+⚠ **An inlined accessor is not free.** A derived getter retires 2 instructions more
+than a `load64`, a setter 6 more than a `store64`, and each keeps a jump. 3.8.4 wrote
+the bank's slot record as `const` offsets and the bank went to 0.951x its instructions
+and 0.897x its cycles. 3.8.5 did the same for the 84 accessor uses left on the per-sample
+path, glottal source to DC blocker, and the chain went to 0.952x its instructions. `render_planned` moved
+only to 0.992x: its loop's cost is the retargeting, which still reads through accessors
+and is not worth rewriting for under 1% unless a profile says otherwise. The cyrius issue
+is `docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`
+in the cyrius repo; its fix would make the offsets unnecessary, not wrong.
+
+⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
+predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
+measured effect does not earn a place in the source. 3.8.6 closed two items this way:
+- **naad's block forms do not fit the tract.** Its interaction feedback ties every
+  stage to the last output, so the subglottal resonator and the nasal notch run inside
+  the loop. Noise filled ahead would put the generator past the samples consumed, which
+  the glottal save / restore reads. What a block form would save is in naad's
+  per-sample functions, so the item is blocked upstream, in the
+  [roadmap](development/roadmap.md).
+- **The glottal source and tract `svara_sequence_render` builds per phoneme** cost
+  41,310 instructions and 2,272 bytes: 0.43% of a 0.08 s /a/, and under a byte a sample
+  against the render's 24. A reset that gives a fresh object's bits would be a second
+  constructor to keep in step for that. Not taken; `svara_sequence_render_into` already
+  avoids them.
 
 ## History
 

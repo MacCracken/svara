@@ -40,7 +40,7 @@ call, which is more work than doing nothing.
   speed, and prani's roadmap is no longer blocked on this.
 - **Positive** — the effort goes where the measurement points. naad found the same
   arithmetic costs 22.7 ns through accessors and one call per sample, and 9.5 ns in
-  one loop in locals. That is the roadmap's performance lane.
+  one loop in locals. That was the roadmap's 3.8.x performance lane, closed at 3.8.8.
 - **Negative** — ported tests keep tolerances where the oracle is f32. Bit-exact
   parity with the oracle is real and is given up. This is the tolerance parity the
   port already chose.

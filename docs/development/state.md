@@ -5,6 +5,14 @@
 
 ## Version
 
+**3.8.8** (2026-11-16) — **the performance lane closed.** `svara_seq_crossfade` stays
+public in `src/`: hoosh's suite calls it as the reference for its own streamed crossfade.
+`docs/benchmarks.md`'s table is now measured across the lane, 3.8.2's benches run in turn
+with 3.8.8's. The full chain went from 184 to 154 µs per 1,024 samples, about 150x real
+time, and a 10-phoneme sequence render from 5.04 to 3.81 ms. The roadmap's 3.8.x section is
+gone, and its method notes are in `benchmarks.md`. `src/` differs from 3.8.7 only in a
+comment. **1,376 assertions / 27 suites**, `cyrius audit` exit 0.
+
 **3.8.7** (2026-11-16) — **the per-class synthesis written once.** The free path's
 `svara_ph_synth_*` and the context's `svara_synthctx_*` repeated each other. Every run
 the two write the same way is now one `svara_ph_*_run` they both call: fricative,
@@ -465,11 +473,11 @@ Five of them are not plain parity ports and exist for reasons worth knowing:
 17 hot-path benches in `benches/hotpath.bcyr` (auto-discovered by `cyrius bench`),
 results in [`../benchmarks.md`](../benchmarks.md), history in `benches/history.csv`
 (via `./scripts/bench-history.sh`). Per-sample loops are batch-timed to remove
-per-call clock overhead: glottal ~48 ns, formant ~86 ns, tract ~135 ns/sample —
-the full glottal → tract chain **≈ 0.18 µs/sample (~125× real-time at 44.1 kHz)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
-~447 µs, `/s/` ~168 µs, `/ai/` ~484 µs, 3-phoneme sequence ~1.88 ms,
-`render_planned` ~10.6 ms (~13.2 ms toned) (x86_64, 2026-11-16, cyrius 6.7.18,
-svara 3.8.2, lowest of three runs). The four Rust benches with no counterpart
+per-call clock overhead: glottal ~43 ns, formant ~73 ns, tract ~114 ns/sample —
+the full glottal → tract chain **≈ 0.15 µs/sample (~150× real-time at 44.1 kHz, 3.8.8)**, measured end to end by `tract synthesize_into` rather than summed — ⚠ `tract process_sample` already contains the formant bank, and summing them double-counted it until 3.5.3. Renders: `/a/`
+~368 µs, `/s/` ~133 µs, `/ai/` ~424 µs, 3-phoneme sequence ~1.45 ms,
+`render_planned` ~9.75 ms (~12.2 ms toned) (x86_64, 2026-11-16, cyrius 6.7.18,
+svara 3.8.8, lowest of three runs interleaved with 3.8.2's). The four Rust benches with no counterpart
 until 3.8.2 are in: the tract at Reduced and Minimal quality, a female /a/ and a
 10-phoneme sequence.
 

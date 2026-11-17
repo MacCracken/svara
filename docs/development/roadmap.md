@@ -8,75 +8,8 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records, 3.8.5 the per-sample accessors, 3.8.6 closed two items by measurement, 3.8.7 shared the per-class synthesis |
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | next; needs a decision per item. The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
-
----
-
-## 3.8.x — performance
-
-prani measured its port 15.7× slower than its Rust oracle, and float width is not the
-cause ([ADR-0008](../adr/0008-the-synthesis-core-stays-f64.md)). naad found the same
-arithmetic costs 22.7 ns through accessors and one call per sample, and 9.5 ns in one
-loop in locals. Shape is the lever svara still has.
-
-⚠ **Measure the right thing.** A bump allocation is a pointer add, so removing 1.1 KB
-of it per sample moved `render_planned` only 20.6 → 18.6 ms. The cost that mattered
-was arena bytes, which no timer can see. Anything trading memory for time needs the
-`tests/allocbudget.tcyr` treatment, and a timing gap needs checking against retired
-instructions.
-
-**Profile by component first.** 3.8.1 counted retired instructions per call for
-each piece of `render_planned`'s loop and found 57% in the bank rebuild's trig, where
-the roadmap had pointed at a 4.3% copy. `docs/benchmarks.md` has the table, and the
-method is a scratch probe that replays each component the number of times a render
-does, timed with `scripts/sweep/compare.py`'s `counters`.
-`svara_trajectory_formants_at_into` is the largest piece left there, at about a
-quarter of the loop now, and has no exact shortcut.
-
-**Call overhead counts in cycles.** 3.8.2 replaced four predicate calls a sample with
-bits read once: 3.3% of the tract's instructions but 8.6% of its cycles. On cyrius
-6.7.18 `#inline` takes a body under 32 tokens with no `var` or control flow.
-
-⚠ **An inlined accessor is not free.** A derived getter retires 2 instructions more
-than a `load64`, a setter 6 more than a `store64`, and each keeps a jump. 3.8.4 wrote
-the bank's slot record as `const` offsets and the bank went to 0.951x its instructions
-and 0.897x its cycles. 3.8.5 did the same for the 84 accessor uses left on the per-sample
-path, glottal source to DC blocker, and the chain went to 0.952x its instructions. `render_planned` moved
-only to 0.992x: its loop's cost is the retargeting, which still reads through accessors
-and is not worth rewriting for under 1% unless a profile says otherwise. The cyrius issue
-is `docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`
-in the cyrius repo; its fix would make the offsets unnecessary, not wrong.
-
-⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
-predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
-measured effect does not earn a place in the source. 3.8.6 closed two items this way:
-- **naad's block forms do not fit the tract.** Its interaction feedback ties every
-  stage to the last output, so the subglottal resonator and the nasal notch run inside
-  the loop. Noise filled ahead would put the generator past the samples consumed, which
-  the glottal save / restore reads. What a block form would save is in naad's
-  per-sample functions, so the item is blocked upstream, below.
-- **The glottal source and tract `svara_sequence_render` builds per phoneme** cost
-  41,310 instructions and 2,272 bytes: 0.43% of a 0.08 s /a/, and under a byte a sample
-  against the render's 24. A reset that gives a fresh object's bits would be a second
-  constructor to keep in step for that. Not taken; `svara_sequence_render_into` already
-  avoids them.
-
-### Refactors the 3.6.3 sweep left
-
-Each changes the shape of a hot path, so each needs the measurement above.
-
-- [ ] **The crossfade's reference.** Since 3.8.3 both sequence renders crossfade through
-      `svara_seq_xf_segment`. `svara_seq_crossfade` is the Rust's shape, with its
-      fade-out loop written twice, and only the tests call it: `tests/stream.tcyr` and
-      `tests/allocbudget.tcyr` hold the step to it bit for bit. Either move it into a
-      test include, or keep it in `src/` as the port's record of the Rust. The stress
-      table is down to `svara_seq_stress_f0` and `svara_seq_event_duration`, which the
-      batch render uses too since 3.8.3.
-
-**Gate:** `scripts/sweep/compare.py` shows no moved value, and `tests/allocbudget.tcyr`
-holds.
 
 ---
 

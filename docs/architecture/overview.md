@@ -123,9 +123,9 @@ Everything else keeps the accessors, and a test pins each offset to its field.
   slots were the Rust's structure of arrays, seven parallel buffers. Since 3.8.4 each
   slot is one 56-byte record read at `const` offsets (`SV_FSLOT_*`), not through
   derived accessors, which cost a jump and 2 to 6 instructions each on cyrius 6.7.18.
-- **Measured**: glottal ~48 ns/sample, formant ~86 ns, tract ~135 ns; the full
-  glottal → tract chain **≈ 0.18 µs/sample**, about **125× real-time** at 44.1 kHz
-  on one core (x86_64, cyrius 6.7.18, svara 3.8.2).
+- **Measured**: glottal ~43 ns/sample, formant ~73 ns, tract ~114 ns; the full
+  glottal → tract chain **≈ 0.15 µs/sample**, about **150× real-time** at 44.1 kHz
+  on one core (x86_64, cyrius 6.7.18, svara 3.8.8; 3.8.2 measured 0.18 µs).
 
   ⚠ **The chain is measured end to end, not summed.** `tract process_sample`
   already contains the formant bank, so adding the three per-unit rows

@@ -43,7 +43,7 @@ interaction feedback.
 - **Performance**: SOA biquad bank with fixed MAX_FORMANTS=8 enables SIMD
   auto-vectorization. (Rust-era figure. The Cyrius port emits scalar code, and since
   3.8.4 keeps one record per slot, which its scalar loop reads faster; a SIMD bank
-  would choose its own layout. It measured ~125x real-time at 3.8.2; see
+  would choose its own layout. It measured ~150x real-time at 3.8.8; see
   ../benchmarks.md.)
 - **LF model**: Widely used in speech research, single Rd parameter captures the
   entire pressed-to-breathy voice quality dimension.

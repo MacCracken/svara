@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.8] - 2026-11-16 — the performance lane closed
+
+The last 3.8.x item is decided, and the lane is measured end to end. `src/` differs from 3.8.7
+only in one comment, so no output moves. **1,376 assertions / 27 suites.**
+
+### Decided
+
+- **`svara_seq_crossfade` stays public, in `src/`.** Since 3.8.3 no svara render calls it: both
+  sequence renders crossfade through `svara_seq_xf_segment`, which `tests/stream.tcyr` holds to it
+  bit for bit. The roadmap offered to move it into a test include. It stays because hoosh's suite
+  calls it from `dist/svara.cyr`, as the reference for hoosh's own streamed crossfade (hoosh ADR
+  016), so moving it would break hoosh at its next bump. Its comment now says so. Its fade-out
+  loop, written twice as in the Rust, keeps the Rust's shape.
+
+### Changed
+
+- **`docs/benchmarks.md`'s table is measured across the lane.** 3.8.2's benches, built from its tag,
+  ran in turn with 3.8.8's, three runs each, lowest of each. The 3.8.2 column reproduces 3.8.2's own
+  published table to within a nanosecond or two a row.
+
+  | Bench | 3.8.2 | 3.8.8 | ratio |
+  |---|---:|---:|---:|
+  | the full chain, `tract synthesize_into` 1024 | 184 µs | 154 µs | 0.84 |
+  | tract `process_sample` | 134 ns | 114 ns | 0.85 |
+  | formant filter `process_sample` | 85 ns | 73 ns | 0.86 |
+  | phoneme /a/, 0.05 s | 445 µs | 368 µs | 0.83 |
+  | sequence render, 10 phonemes | 5.04 ms | 3.81 ms | 0.76 |
+  | `render_planned`, 3 phonemes | 10.6 ms | 9.75 ms | 0.92 |
+
+  The chain is now ≈ 0.15 µs a sample, about 150x real time at 44.1 kHz on one core, up from
+  125x. The README, `docs/architecture/overview.md`, ADR-0003 and `state.md` quote the new figures.
+- **The roadmap's 3.8.x section is gone**, since nothing in it is left to do. Its method notes moved
+  to `docs/benchmarks.md`'s new "Changing a hot path":
+  - measure the right thing;
+  - profile by component;
+  - an inlined accessor is not free;
+  - record negative results.
+
+  3.9.x, the preserved Rust quirks, is next. Each of its items needs a decision.
+
 ## [3.8.7] - 2026-11-16 — the per-class synthesis, written once
 
 Refactor release. Every consonant class was synthesized twice:
