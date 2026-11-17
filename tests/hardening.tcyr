@@ -323,18 +323,28 @@ fn main() {
     # ================================================================
     test_group("bank_update refuses a slot outside the bank");
     # ================================================================
-    # Rust indexes [f32; 8] and panics. Unchecked, slot 8 landed on b2's slot 0.
+    # Rust indexes [f32; 8] and panics. Unchecked, slot 8 is the record past the
+    # eighth, where the bank keeps slot 0's trig memo.
     var bk = svara_formant_bank_new(svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A)), SR);
-    var b2_before = load64(SvFormantBank_b2(bk));
-    var a1_before = load64(SvFormantBank_a1(bk));
+    var past = svara_formant_bank_slot(bk, SVARA_MAX_FORMANTS);
+    var past_before[56];
+    var pw = 0;
+    while (pw < 7) { store64(&past_before + pw * 8, load64(past + pw * 8)); pw = pw + 1; }
+    var a1_before = load64(svara_formant_bank_slot(bk, 0) + SV_FSLOT_A1);
     assert_eq(svara_formant_bank_update(bk, SVARA_MAX_FORMANTS, f64_from(1000), f64_from(100), F64_ONE, SR),
       SVARA_ERR_INVALID_FORMANT, "slot 8 is refused");
-    assert_eq(load64(SvFormantBank_b2(bk)), b2_before, "slot 8 leaves b2 alone");
+    var past_moved = 0;
+    pw = 0;
+    while (pw < 7) {
+        if (load64(past + pw * 8) != load64(&past_before + pw * 8)) { past_moved = past_moved + 1; }
+        pw = pw + 1;
+    }
+    assert_eq(past_moved, 0, "slot 8 leaves the words past the bank's slots alone");
     assert_eq(svara_formant_bank_update(bk, 0 - 1, f64_from(1000), f64_from(100), F64_ONE, SR),
       SVARA_ERR_INVALID_FORMANT, "slot -1 is refused");
     assert_eq(svara_formant_bank_update(bk, 0, f64_from(1000), f64_from(100), F64_ONE, SR), SVARA_ERR_NONE,
       "control: slot 0 is accepted");
-    assert_eq(load64(SvFormantBank_a1(bk)) != a1_before, 1, "control: slot 0 really changed");
+    assert_eq(load64(svara_formant_bank_slot(bk, 0) + SV_FSLOT_A1) != a1_before, 1, "control: slot 0 really changed");
 
     # ================================================================
     test_group("parallel phoneme and duration vecs must match");

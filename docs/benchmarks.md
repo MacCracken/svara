@@ -65,6 +65,26 @@ Rust's own inputs; their Rust medians are in
 | `render_planned` (3 phonemes) | ~10.6 ms | ~13.5 ms | per-sample formant interpolation + tract re-target |
 | `render_planned` toned | ~13.2 ms | ~16.6 ms | as above, plus a per-sample prosody contour lookup |
 
+**3.8.4 laid the formant bank out one record per slot, at `const` offsets**, and the
+table above still stands at 3.8.2. Three `cyrius bench` runs on 3.8.4, at a load near 5,
+had the unchanged glottal source 10% slower than the 3.8.2 rows, so no timer here
+resolves the change. Retired instructions and cycles against 3.8.3, min of 9
+interleaved runs, bit-identical:
+
+| Probe | instructions | cycles |
+|---|---:|---:|
+| formant filter, 1M samples | 0.951x | 0.897x |
+| tract `process_sample`, 1M | 0.970x | 0.895x |
+| tract Reduced, Minimal | 0.963x, 0.962x | 0.897x, 0.902x |
+| `synthesize_into` 500 × 1024 | 0.977x | 0.937x |
+| phoneme /a/ × 100 | 0.979x | 0.943x |
+| `render_planned`, toned, × 20 | 0.965x, 0.971x | 0.948x, 0.956x |
+
+The layout alone, through `#derive(accessors)`, retired 5.4% *more* instructions than
+3.8.3, in 3.1% fewer cycles. On cyrius 6.7.18 a derived getter costs 2 instructions more
+than a `load64` and a setter 6 more than a `store64`. The 3.8.4 CHANGELOG entry has
+the four forms of the slot loop measured.
+
 **3.8.3 changed memory, not time**, so the table above stands for it. Its retired
 instructions are within 0.3% of 3.8.2's on every probe but phoneme /a/, at 0.984x,
 which no timer here resolves. What moved is the arena each render keeps, which no

@@ -24,7 +24,7 @@
      |                     |
      | next_sample()       | process_sample()
      v                     v
-  Pulse model         SvFormantFilter (SOA bank, 8 slots)
+  Pulse model         SvFormantFilter (bank, 8 slot records)
   + spectral tilt     + nasal antiformant   [naad Notch]
   + jitter / shimmer  + subglottal ~600 Hz  [naad BandPass]
   + vibrato   [naad Lfo]                    + lip radiation (1st-order HPF)
@@ -111,9 +111,12 @@ See [`../development/roadmap.md`](../development/roadmap.md).
 - **f64 throughout.** The Rust was f32 with f64 biquad coefficients; the port is
   f64 everywhere, because hisab and naad are f64-only. `SV_EPSILON` preserves the
   f32 tolerance the Rust tests used.
-- **SOA bank**, `SVARA_MAX_FORMANTS = 8` fixed slots; unused slots hold zeroed
-  coefficients and contribute nothing, so since 3.8.2 the bank skips them while
-  that is provably exact (no coefficients there, and finite input).
+- **A bank of slot records**, `SVARA_MAX_FORMANTS = 8` fixed slots; unused slots hold
+  zeroed coefficients and contribute nothing, so since 3.8.2 the bank skips them while
+  that is provably exact (no coefficients there, and finite input). Through 3.8.3 the
+  slots were the Rust's structure of arrays, seven parallel buffers. Since 3.8.4 each
+  slot is one 56-byte record read at `const` offsets (`SV_FSLOT_*`), not through
+  derived accessors, which cost a jump and 2 to 6 instructions each on cyrius 6.7.18.
 - **Measured**: glottal ~48 ns/sample, formant ~86 ns, tract ~135 ns; the full
   glottal → tract chain **≈ 0.18 µs/sample**, about **125× real-time** at 44.1 kHz
   on one core (x86_64, cyrius 6.7.18, svara 3.8.2).

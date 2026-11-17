@@ -143,10 +143,11 @@ fn f0_at_bytes(contour) {
 #must_use
 fn ab_slot_fresh(bank, i, freq, bw, sr, buf) {
     svara_formant_biquad_coeffs(freq, bw, sr, buf);
-    if (load64(SvFormantBank_b0(bank) + i * 8) != load64(buf)) { return 0; }
-    if (load64(SvFormantBank_b2(bank) + i * 8) != load64(buf + 8)) { return 0; }
-    if (load64(SvFormantBank_a1(bank) + i * 8) != load64(buf + 16)) { return 0; }
-    if (load64(SvFormantBank_a2(bank) + i * 8) != load64(buf + 24)) { return 0; }
+    var r = svara_formant_bank_slot(bank, i);
+    if (load64(r + SV_FSLOT_B0) != load64(buf)) { return 0; }
+    if (load64(r + SV_FSLOT_B2) != load64(buf + 8)) { return 0; }
+    if (load64(r + SV_FSLOT_A1) != load64(buf + 16)) { return 0; }
+    if (load64(r + SV_FSLOT_A2) != load64(buf + 24)) { return 0; }
     return 1;
 }
 

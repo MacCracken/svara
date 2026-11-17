@@ -268,13 +268,32 @@ fn svara_formant_biquad_from_trig(cos_omega, sin_omega, sinh_half, out) {
 }
 
 # ================================================================
-# BiquadBankSoa -- SOA bank of MAX_FORMANTS bandpass biquads. Nine f64 buffers
-# (b0/b2/a1/a2/amp = coeffs+weight, x1/x2/y1/y2 = delay lines) + active count.
+# BiquadBankSoa -- a bank of MAX_FORMANTS bandpass biquads, one record per slot,
+# plus the shared input delay and the active count.
 # ================================================================
+# A slot's record (3.8.4): coefficients b0/b2/a1/a2, weight amp, then the output
+# delays y1/y2, one f64 each. Until 3.8.4 these were seven parallel buffers, the
+# Rust's structure of arrays, and every slot's loads went through seven base
+# pointers. A record puts them behind one, and lets a slot's coefficients be
+# written in place: b0..a2 are in svara_formant_biquad_from_trig's order.
+#
+# ⚠ The record is offsets, not a `#derive(accessors)` struct, on purpose. On
+# cyrius 6.7.18 an accessor is inlined but keeps a jump: a derived setter retires
+# 6 instructions more than a store64, a getter 2 more than a load64. In the bank's
+# loop that was 130 instructions a sample. A const offset costs what a literal does.
+const SV_FSLOT_B0 = 0;
+const SV_FSLOT_B2 = 8;
+const SV_FSLOT_A1 = 16;
+const SV_FSLOT_A2 = 24;
+const SV_FSLOT_AMP = 32;
+const SV_FSLOT_Y1 = 40;
+const SV_FSLOT_Y2 = 48;
+const SV_FSLOT_BYTES = 56;
+
 #derive(accessors)
-# `coeff` is a 4-slot scratch owned by the bank: svara_formant_biquad_coeffs
-# writes through a pointer, and allocating those 32 bytes per call leaked into
-# a bump arena that never frees (see the note on svara_tract_set_formants).
+# `slot` is the eight slot records, back to back. Until 3.8.4 the bank
+# also kept `coeff`, a 32-byte scratch the coefficients went through on their way
+# to the slot buffers. They now go straight into the slot's record.
 #
 # `xin1`/`xin2` are SCALARS, not per-slot buffers, and that is the point. All
 # eight biquads are driven by the SAME input sample, so `x1[i] = input` and
@@ -303,7 +322,7 @@ fn svara_formant_biquad_from_trig(cos_omega, sin_omega, sinh_half, out) {
 # `out_dirty` once a non-finite input has run through the unused slots, where
 # 0 x inf is NaN and stays in their delay lines. While either is 1, all eight run,
 # as before. A rebuild clears both, a reset clears `out_dirty`.
-struct SvFormantBank { b0; b2; a1; a2; amp; xin1; xin2; y1; y2; count; coeff; trig; out_coef; out_dirty; }
+struct SvFormantBank { slot; xin1; xin2; count; trig; out_coef; out_dirty; }
 
 # zero a buffer of `n` f64 slots (bump alloc is not zeroed).
 fn svara_formant_zero_buf(buf, n) {
@@ -311,30 +330,25 @@ fn svara_formant_zero_buf(buf, n) {
     while (i < n) { store64(buf + i * 8, 0); i = i + 1; }
 }
 
+# slot -- slot i's record. `i` must be inside the bank.
+#inline
+fn svara_formant_bank_slot(self, i) {
+    return SvFormantBank_slot(self) + i * SV_FSLOT_BYTES;
+}
+
 # bank_new -- build from a vec of Formant pointers.
 #must_use
 fn svara_formant_bank_new(formants, sample_rate) {
     var self = alloc(sizeof(SvFormantBank));
-    var nbytes = SVARA_MAX_FORMANTS * 8;
-    var b0 = alloc(nbytes); var b2 = alloc(nbytes); var a1 = alloc(nbytes);
-    var a2 = alloc(nbytes); var amp = alloc(nbytes);
-    var y1 = alloc(nbytes); var y2 = alloc(nbytes);
-    svara_formant_zero_buf(b0, SVARA_MAX_FORMANTS); svara_formant_zero_buf(b2, SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(a1, SVARA_MAX_FORMANTS); svara_formant_zero_buf(a2, SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(amp, SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(y1, SVARA_MAX_FORMANTS); svara_formant_zero_buf(y2, SVARA_MAX_FORMANTS);
-    SvFormantBank_set_b0(self, b0); SvFormantBank_set_b2(self, b2);
-    SvFormantBank_set_a1(self, a1); SvFormantBank_set_a2(self, a2);
-    SvFormantBank_set_amp(self, amp);
+    var slot = alloc(SVARA_MAX_FORMANTS * SV_FSLOT_BYTES);
+    svara_formant_zero_buf(slot, SVARA_MAX_FORMANTS * SV_FSLOT_BYTES / 8);
+    SvFormantBank_set_slot(self, slot);
     SvFormantBank_set_xin1(self, 0); SvFormantBank_set_xin2(self, 0);
-    SvFormantBank_set_y1(self, y1); SvFormantBank_set_y2(self, y2);
 
     var n = vec_len(formants);
     if (n > SVARA_MAX_FORMANTS) { n = SVARA_MAX_FORMANTS; }
     SvFormantBank_set_count(self, n);
 
-    var coeff = alloc(32);
-    SvFormantBank_set_coeff(self, coeff);
     var trig = alloc(SVARA_MAX_FORMANTS * 64);
     svara_formant_zero_buf(trig, SVARA_MAX_FORMANTS * 8);
     SvFormantBank_set_trig(self, trig);
@@ -343,12 +357,9 @@ fn svara_formant_bank_new(formants, sample_rate) {
     var i = 0;
     while (i < n) {
         var f = vec_get(formants, i);
-        svara_formant_bank_coeffs(self, i, SvFormant_frequency(f), SvFormant_bandwidth(f), sample_rate, coeff);
-        store64(b0 + i * 8, load64(coeff));
-        store64(b2 + i * 8, load64(coeff + 8));
-        store64(a1 + i * 8, load64(coeff + 16));
-        store64(a2 + i * 8, load64(coeff + 24));
-        store64(amp + i * 8, SvFormant_amplitude(f));
+        var r = svara_formant_bank_slot(self, i);
+        svara_formant_bank_coeffs(self, i, SvFormant_frequency(f), SvFormant_bandwidth(f), sample_rate, r);
+        store64(r + SV_FSLOT_AMP, SvFormant_amplitude(f));
         i = i + 1;
     }
     return self;
@@ -394,24 +405,15 @@ fn svara_formant_bank_coeffs(self, i, frequency, bandwidth, sample_rate, out) {
 fn svara_formant_bank_update(self, i, frequency, bandwidth, amplitude, sample_rate) {
     if ((i < 0) | (i >= SVARA_MAX_FORMANTS)) { return SVARA_ERR_INVALID_FORMANT; }
     if (i >= SvFormantBank_count(self)) { SvFormantBank_set_out_coef(self, 1); }
-    var coeff = SvFormantBank_coeff(self);
-    svara_formant_bank_coeffs(self, i, frequency, bandwidth, sample_rate, coeff);
-    var off = i * 8;
-    store64(SvFormantBank_b0(self) + off, load64(coeff));
-    store64(SvFormantBank_b2(self) + off, load64(coeff + 8));
-    store64(SvFormantBank_a1(self) + off, load64(coeff + 16));
-    store64(SvFormantBank_a2(self) + off, load64(coeff + 24));
-    store64(SvFormantBank_amp(self) + off, amplitude);
+    var r = svara_formant_bank_slot(self, i);
+    svara_formant_bank_coeffs(self, i, frequency, bandwidth, sample_rate, r);
+    store64(r + SV_FSLOT_AMP, amplitude);
     return SVARA_ERR_NONE;
 }
 
 # bank_process -- one input sample through all MAX_FORMANTS slots -> weighted sum.
 # Unused slots (count..MAX) have zeroed coeffs -> contribute nothing.
 fn svara_formant_bank_process(self, input) {
-    var b0 = SvFormantBank_b0(self); var b2 = SvFormantBank_b2(self);
-    var a1 = SvFormantBank_a1(self); var a2 = SvFormantBank_a2(self);
-    var amp = SvFormantBank_amp(self);
-    var y1 = SvFormantBank_y1(self); var y2 = SvFormantBank_y2(self);
     # The input delay is shared by all eight biquads, so it is read once here
     # rather than re-loaded per slot, and advanced once after the loop. Same
     # arithmetic as the per-slot form -- x2i was identical in every slot.
@@ -426,18 +428,19 @@ fn svara_formant_bank_process(self, input) {
         else { SvFormantBank_set_out_dirty(self, 1); }
     }
     var sum = 0;
-    var i = 0;
-    while (i < lim) {
-        var off = i * 8;
-        var y1i = load64(y1 + off); var y2i = load64(y2 + off);
+    var r = SvFormantBank_slot(self);
+    var end = r + lim * SV_FSLOT_BYTES;
+    while (r < end) {
+        var y1i = load64(r + SV_FSLOT_Y1); var y2i = load64(r + SV_FSLOT_Y2);
         # y = b0*input + b2*x2 - a1*y1 - a2*y2
-        var y = f64_sub(f64_sub(f64_add(f64_mul(load64(b0 + off), input), f64_mul(load64(b2 + off), x2v)),
-            f64_mul(load64(a1 + off), y1i)),
-          f64_mul(load64(a2 + off), y2i));
-        store64(y2 + off, y1i);
-        store64(y1 + off, y);
-        sum = f64_add(sum, f64_mul(y, load64(amp + off)));
-        i = i + 1;
+        var y = f64_sub(f64_sub(f64_add(f64_mul(load64(r + SV_FSLOT_B0), input),
+              f64_mul(load64(r + SV_FSLOT_B2), x2v)),
+            f64_mul(load64(r + SV_FSLOT_A1), y1i)),
+          f64_mul(load64(r + SV_FSLOT_A2), y2i));
+        store64(r + SV_FSLOT_Y2, y1i);
+        store64(r + SV_FSLOT_Y1, y);
+        sum = f64_add(sum, f64_mul(y, load64(r + SV_FSLOT_AMP)));
+        r = r + SV_FSLOT_BYTES;
     }
     SvFormantBank_set_xin2(self, SvFormantBank_xin1(self));
     SvFormantBank_set_xin1(self, input);
@@ -448,8 +451,13 @@ fn svara_formant_bank_process(self, input) {
 fn svara_formant_bank_reset(self) {
     SvFormantBank_set_xin1(self, 0);
     SvFormantBank_set_xin2(self, 0);
-    svara_formant_zero_buf(SvFormantBank_y1(self), SVARA_MAX_FORMANTS);
-    svara_formant_zero_buf(SvFormantBank_y2(self), SVARA_MAX_FORMANTS);
+    var r = SvFormantBank_slot(self);
+    var end = r + SVARA_MAX_FORMANTS * SV_FSLOT_BYTES;
+    while (r < end) {
+        store64(r + SV_FSLOT_Y1, 0);
+        store64(r + SV_FSLOT_Y2, 0);
+        r = r + SV_FSLOT_BYTES;
+    }
     SvFormantBank_set_out_dirty(self, 0);
 }
 
@@ -631,14 +639,10 @@ fn svara_formant_filter_rebuild_valid(self, formants) {
     var n = vec_len(formants);
     # Zero only the slots the update loop below does not write. It runs once per
     # sample on the trajectory path, and zeroing all eight cost 5n stores for
-    # values overwritten straight after.
-    var z = n * 8;
-    var rest = SVARA_MAX_FORMANTS - n;
-    svara_formant_zero_buf(SvFormantBank_b0(bank) + z, rest);
-    svara_formant_zero_buf(SvFormantBank_b2(bank) + z, rest);
-    svara_formant_zero_buf(SvFormantBank_a1(bank) + z, rest);
-    svara_formant_zero_buf(SvFormantBank_a2(bank) + z, rest);
-    svara_formant_zero_buf(SvFormantBank_amp(bank) + z, rest);
+    # values overwritten straight after. The records past n are zeroed whole,
+    # delays too, which the reset after does again.
+    svara_formant_zero_buf(svara_formant_bank_slot(bank, n),
+      (SVARA_MAX_FORMANTS - n) * SV_FSLOT_BYTES / 8);
     svara_formant_bank_reset(bank);
     SvFormantBank_set_count(bank, n);
     SvFormantBank_set_out_coef(bank, 0);   # every slot past n was zeroed above

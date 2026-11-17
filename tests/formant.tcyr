@@ -105,5 +105,134 @@ svara_formant_filter_reset(ff2);
 var pr = svara_formant_filter_process_sample(ff2, F64_ONE);
 assert_eq(approx(pr, 0x3F77A8C7BC46D43A, TOL_1EM6), 1, "post-reset impulse == out[0]");
 
+# 3.8.3's bank, for the group below: seven parallel buffers of eight slots (b0, b2,
+# a1, a2, amp, y1, y2), then the input delay pair. It runs all eight slots on every
+# sample, as Rust does and svara did through 3.8.1.
+#must_use
+fn ref_bank_new(formants, sr) {
+    var b = alloc(58 * 8);
+    var w = 0;
+    while (w < 58) { store64(b + w * 8, 0); w = w + 1; }
+    var n = vec_len(formants);
+    var i = 0;
+    while (i < n) {
+        var f = vec_get(formants, i);
+        ref_bank_update(b, i, SvFormant_frequency(f), SvFormant_bandwidth(f), SvFormant_amplitude(f), sr);
+        i = i + 1;
+    }
+    return b;
+}
+
+# Slot i's coefficients and weight, computed afresh.
+fn ref_bank_update(b, i, freq, bw, amp, sr) {
+    var c[32];
+    svara_formant_biquad_coeffs(freq, bw, sr, &c);
+    store64(b + i * 8, load64(&c));
+    store64(b + 64 + i * 8, load64(&c + 8));
+    store64(b + 128 + i * 8, load64(&c + 16));
+    store64(b + 192 + i * 8, load64(&c + 24));
+    store64(b + 256 + i * 8, amp);
+    return 0;
+}
+
+# One sample through all eight slots -> the weighted sum.
+#must_use
+fn ref_bank_process(b, input) {
+    var x2v = load64(b + 456);
+    var sum = 0;
+    var i = 0;
+    while (i < 8) {
+        var off = i * 8;
+        var y1i = load64(b + 320 + off); var y2i = load64(b + 384 + off);
+        var y = f64_sub(f64_sub(f64_add(f64_mul(load64(b + off), input), f64_mul(load64(b + 64 + off), x2v)),
+            f64_mul(load64(b + 128 + off), y1i)),
+          f64_mul(load64(b + 192 + off), y2i));
+        store64(b + 384 + off, y1i);
+        store64(b + 320 + off, y);
+        sum = f64_add(sum, f64_mul(y, load64(b + 256 + off)));
+        i = i + 1;
+    }
+    store64(b + 456, load64(b + 448));
+    store64(b + 448, input);
+    return sum;
+}
+
+# Clear the delays and the input pair, keeping the coefficients.
+fn ref_bank_reset(b) {
+    var w = 40;
+    while (w < 58) { store64(b + w * 8, 0); w = w + 1; }
+    return 0;
+}
+
+# Feed `count` samples to both banks, starting at x and multiplying it by m after
+# each, and return how many outputs differ in their bits.
+#must_use
+fn ref_bank_pair(bank, rb, x, m, count) {
+    var bad = 0;
+    var i = 0;
+    while (i < count) {
+        if (svara_formant_bank_process(bank, x) != ref_bank_process(rb, x)) { bad = bad + 1; }
+        x = f64_mul(x, m);
+        i = i + 1;
+    }
+    return bad;
+}
+
+# Nonzero words in slot records first..7.
+#must_use
+fn ref_slot_words(bank, first) {
+    var nz = 0;
+    var p = svara_formant_bank_slot(bank, first);
+    var end = svara_formant_bank_slot(bank, SVARA_MAX_FORMANTS);
+    while (p < end) {
+        if (load64(p) != 0) { nz = nz + 1; }
+        p = p + 8;
+    }
+    return nz;
+}
+
+# ================================================================
+test_group("3.8.4: the slot records give 3.8.3's parallel buffers' bits");
+# ================================================================
+var rsr = f64_from(44100);
+var rfa = svara_vowel_target_to_formants(svara_vowel_target_from_vowel(SVARA_VOWEL_A));
+var rfilt = svara_formant_filter_new(rfa, rsr);
+var rbank = SvFormantFilter_bank(rfilt);
+var rref = ref_bank_new(rfa, rsr);
+var rpinf = 0x7FF0000000000000;
+var rneg = f64_neg(F64_ONE);
+assert_eq(svara_formant_bank_process(rbank, F64_ONE) != 0, 1, "control: the impulse rings");
+var rdump = ref_bank_process(rref, F64_ONE);
+var rbad = ref_bank_pair(rbank, rref, 0, 0, 300);
+rbad = rbad + ref_bank_pair(rbank, rref, F64_HALF, F64_ONE, 100);
+rbad = rbad + ref_bank_pair(rbank, rref, 0x3FD3333333333333, rneg, 100);
+assert_eq(rbad, 0, "an impulse, a step and an alternating input give the same bits");
+var ru1 = svara_formant_bank_update(rbank, 2, f64_from(1900), f64_from(150), 0x3FE3333333333333, rsr);
+ref_bank_update(rref, 2, f64_from(1900), f64_from(150), 0x3FE3333333333333, rsr);
+rbad = ref_bank_pair(rbank, rref, 0x3FD3333333333333, rneg, 100);
+assert_eq(rbad, 0, "so does an update of an active slot, its state kept");
+var ru2 = svara_formant_bank_update(rbank, 6, f64_from(4100), f64_from(200), F64_HALF, rsr);
+ref_bank_update(rref, 6, f64_from(4100), f64_from(200), F64_HALF, rsr);
+rbad = ref_bank_pair(rbank, rref, 0x3FD0000000000000, rneg, 100);
+assert_eq(rbad, 0, "and of a slot past count, which runs all eight");
+rbad = ref_bank_pair(rbank, rref, rpinf, F64_ONE, 1);
+rbad = rbad + ref_bank_pair(rbank, rref, F64_HALF, F64_ONE, 20);
+assert_eq(rbad, 0, "+inf, and the NaN it leaves, give the same bits");
+svara_formant_bank_reset(rbank);
+ref_bank_reset(rref);
+rbad = ref_bank_pair(rbank, rref, F64_ONE, 0, 50);
+assert_eq(rbad, 0, "a reset clears every slot's delays");
+assert_eq(ref_slot_words(rbank, 5) > 0, 1, "control: slot 6 holds coefficients before the rebuild");
+var rthree = vec_new();
+vec_push(rthree, svara_formant_new(f64_from(700), f64_from(130), F64_ONE));
+vec_push(rthree, svara_formant_new(f64_from(1220), f64_from(70), 0x3FE999999999999A));
+vec_push(rthree, svara_formant_new(f64_from(2600), f64_from(160), F64_HALF));
+assert_eq(svara_formant_filter_rebuild(rfilt, rthree), SVARA_ERR_NONE, "control: the rebuild is accepted");
+assert_eq(ref_slot_words(rbank, 3), 0, "a rebuild to three formants zeroes records 3..7 whole");
+var rref3 = ref_bank_new(rthree, rsr);
+rbad = ref_bank_pair(rbank, rref3, F64_ONE, 0, 200);
+rbad = rbad + ref_bank_pair(rbank, rref3, 0x3FD3333333333333, rneg, 50);
+assert_eq(rbad, 0, "the rebuilt bank gives a fresh three-formant bank's bits");
+
 var rc = assert_summary();
 syscall(60, rc);

@@ -5,6 +5,17 @@
 
 ## Version
 
+**3.8.4** (2026-11-16) — **the formant bank, one record per slot.** The bank kept its
+eight slots as the Rust's structure of arrays, seven parallel buffers. Each slot is now
+one 56-byte record, read and written at `const` offsets, and a slot's coefficients are
+computed straight into it. Derived accessors were tried first and cost 5.4% more
+instructions than 3.8.3: on cyrius 6.7.18 each keeps a jump, and a getter costs 2
+instructions more than a `load64`, a setter 6 more than a `store64`. At `const` offsets the
+formant filter retires 0.951x of 3.8.3's instructions in 0.897x the cycles, the tract
+0.970x in 0.895x, `render_planned` 0.965x in 0.948x. Every value is the same bits. A
+bank keeps 1,016 bytes instead of 1,104. The accessor cost is filed upstream. **1,352
+assertions / 26 suites**, `cyrius audit` exit 0.
+
 **3.8.3** (2026-11-16) — **each render keeps its samples about once.** A cyrius vec
 cannot be sized up front, and doubling from 16 slots in an arena that never frees kept
 every render's output about four times over. `svara_vec_adopt` hands the vec the buffer
@@ -339,7 +350,7 @@ Order: foundation → DSP primitives → excitation/tract → speech-science →
 | L0 | rng.rs | src/rng.cyr | ✅ ported | 17 | PCG32, golden-value verified |
 | L0 | smooth.rs | src/smooth.cyr | ✅ ported | 6 | one-pole; exp via ganita builtin |
 | L0 | math.rs | — | ✅ n/a | — | libm/std shim → maps to ganita/f64 builtins; no module needed |
-| L1 | formant.rs | src/formant.cyr | ✅ ported | 25 | svara's own SOA 8× bandpass bank (NOT naad); golden coeffs+output verified |
+| L1 | formant.rs | src/formant.cyr | ✅ ported | 35 | svara's own 8× bandpass bank, one record per slot since 3.8.4 (NOT naad); golden coeffs+output verified |
 | L1 | spectral.rs | src/spectral.cyr | ✅ ported | 14 | hisab num_fft interleaved-buffer idiom + Neumaier energy |
 | L2 | glottal.rs | src/glottal.cyr | ✅ ported | 35 | naad-backend (NoiseGenerator + Lfo); golden Rosenberg + from_rd verified |
 | L2 | tract.rs | src/tract.cyr | ✅ ported | 14 | naad Notch + BandPass biquads; source-filter feedback; CFG collapsed to naad-backend |
@@ -360,7 +371,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,342 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
+1,352 `.tcyr` assertions across 26 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -443,8 +454,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (362 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,342 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (363 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 26/26 suites, 1,352 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |

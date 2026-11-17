@@ -3,7 +3,7 @@
 **svara** (Sanskrit: स्वर — voice / tone / musical note) — Formant and vocal synthesis for Cyrius.
 
 Complete formant-based vocal synthesis pipeline: dual glottal source models (Rosenberg B + LF),
-an SOA formant filter bank, a 101-phoneme inventory, prosodic control, look-ahead coarticulation,
+a parallel formant filter bank, a 101-phoneme inventory, prosodic control, look-ahead coarticulation,
 and spectral analysis. Built on [hisab](https://github.com/MacCracken/hisab) for math and
 [naad](https://github.com/MacCracken/naad) for DSP primitives.
 
@@ -15,8 +15,8 @@ readable at tag `3.6.5` ([ADR-0011](docs/adr/0011-retire-rust-old-keep-its-bar.m
 
 - **Dual glottal models**: Rosenberg B polynomial + Liljencrants-Fant (LF) with Rd voice quality
   parameter, plus whisper (noise-only) and creaky (irregular LF) variants
-- **SOA formant filter**: structure-of-arrays biquad bank, fixed `SVARA_MAX_FORMANTS = 8` slots,
-  svara's own topology (not naad's `BiquadFilter`)
+- **Formant filter**: a parallel bandpass biquad bank, fixed `SVARA_MAX_FORMANTS = 8` slots of one
+  record each, svara's own topology (not naad's `BiquadFilter`)
 - **101 phonemes**: 22 vowels, 5 diphthongs, 10 plosives, 22 fricatives, 8 affricates, 6 nasals,
   7 approximants/laterals, 3 trills, 3 taps/flaps, 5 clicks, 5 ejectives, 3 implosives, glottal
   stop, silence — `SVARA_PH_*` constants `0..100`, in Rust variant order
@@ -113,7 +113,7 @@ carry them:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.8.3"
+tag = "3.8.4"
 modules = ["dist/svara.cyr"]
 
 # svara's bundle references these; they resolve from the CONSUMER's manifest.
@@ -173,8 +173,8 @@ GlottalSource (Rosenberg/LF) → VocalTract → Output
                     ┌─────────────┼──────────────┐
                     │             │              │
               FormantFilter   Nasal         Lip Radiation
-              (SOA biquad     Coupling       + Subglottal
-               bank, 8-wide)  (place-dep)    + Interaction
+              (biquad bank,   Coupling       + Subglottal
+               8 slots)       (place-dep)    + Interaction
               svara_formant_*
 ```
 

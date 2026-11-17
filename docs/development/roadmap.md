@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs |
+| **3.8.x** | [Performance](#38x--performance): loop shape, block forms, per-note memory, the refactors 3.6.3 left | next; 3.8.0 shipped the streaming render, 3.8.1 `render_planned`, 3.8.2 the tract chain, 3.8.3 the sample vecs, 3.8.4 the formant bank's records |
 | **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | needs a decision per item |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
@@ -37,17 +37,26 @@ quarter of the loop now, and has no exact shortcut.
 
 **Call overhead counts in cycles.** 3.8.2 replaced four predicate calls a sample with
 bits read once: 3.3% of the tract's instructions but 8.6% of its cycles. On cyrius
-6.7.18 `#inline` takes a body under 32 tokens with no `var` or control flow, and
-derived accessors are already inlined, so reading fields into locals buys nothing.
+6.7.18 `#inline` takes a body under 32 tokens with no `var` or control flow.
+
+⚠ **An inlined accessor is not free.** A derived getter retires 2 instructions more
+than a `load64`, a setter 6 more than a `store64`, and each keeps a jump. 3.8.4 wrote
+the bank's slot record as `const` offsets and the bank went to 0.951x its instructions
+and 0.897x its cycles. The cyrius issue is
+`docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`
+in the cyrius repo.
 
 ⚠ **Record negative results.** 3.5.0 measured `#inline` on the four per-sample quality
 predicates at +0.7% and reverted it, and `src/lod.cyr` says so. A change with no
 measured effect does not earn a place in the source.
 
-- [ ] **Lay the formant bank out one record per slot** instead of seven parallel
-      arrays, so a slot's loads share one base pointer. 3.8.2 estimated about 4% of
-      the bank, which is now about half of `tract process_sample`. Every bank user
-      changes, `allocbudget.tcyr`'s slot checks with them.
+- [ ] **The accessors left in the per-sample paths.** By a static count,
+      `svara_glottal_next_sample` has 15 getters and 4 setters, `svara_tract_process_sample`
+      12 and 2, `svara_dc_blocker_process` 3 and 2, and the bank's own header in
+      `svara_formant_bank_process` 6 and 2, before their callees. At 3.8.4's
+      rates that is about 130 instructions a sample of the chain's 2,660. Either
+      wait for the cyrius fix, or give each per-sample record `const` offsets as the bank
+      has. Measure each with the counters first.
 - [ ] **Call naad's block forms** where the tract's feedback allows it.
       `filter_biquad_process_buffer` and `noise_fill_buffer` are real loops since naad
       2.3.3, and a per-sample caller gets none of that. naad's ADR-0009 says what a
@@ -114,7 +123,10 @@ bank going from 10.5 to 3.2 ns per filter with `f64v256_*` in structure-of-array
 `f64v4` API, and 3.5.0 then got 6% with no SIMD at all. Measure before planning.
 
 - [ ] **SIMD the formant bank**, structure-of-arrays over `f64v256_*`. naad leaves SIMD
-      dispatch to dhvani, so agree that first.
+      dispatch to dhvani, so agree that first. Since 3.8.4 the scalar bank keeps one
+      record per slot, which suits a scalar loop. A SIMD bank needs four slots'
+      coefficients side by side, so it brings its own layout, such as records of four
+      slots, and is measured against this one.
 - [ ] **Register-resident block SIMD**, holding the 8-slot state in vector registers
       across the sample loop.
 - [ ] **FMA and block audit**: `f64v4_fmadd` in the biquad and mix loops, and the

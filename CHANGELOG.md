@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.4] - 2026-11-16 — the formant bank, one record per slot
+
+Performance release. The formant bank kept its eight slots as the Rust's structure of
+arrays: seven parallel buffers for b0, b2, a1, a2, amp, y1 and y2. **Each slot is now one
+56-byte record, read and written at `const` offsets**, and the bank and every path through it
+retire fewer instructions in fewer cycles (min of 9 interleaved runs against 3.8.3):
+
+| Probe | instructions | cycles |
+|---|---:|---:|
+| formant filter, 1M samples | 0.951x | 0.897x |
+| tract `process_sample`, 1M | 0.970x | 0.895x |
+| tract, Reduced and Minimal | 0.963x, 0.962x | 0.897x, 0.902x |
+| `synthesize_into`, 500 × 1024 | 0.977x | 0.937x |
+| phoneme /a/ × 100 | 0.979x | 0.943x |
+| `render_planned` and the toned render, × 20 | 0.965x, 0.971x | 0.948x, 0.956x |
+
+The cycle geomean over all nine probes is 0.934, with the glottal source's unchanged code at
+1.042, host noise. **No output moves**: against 3.8.3, 558,721 values, the JSON and all 638
+hostile cases are identical. **1,352 assertions / 26 suites.**
+
+### Changed
+
+- **The bank's slots are records** (`src/formant.cyr`). A slot is b0, b2, a1, a2, amp, y1 and y2,
+  one f64 each, at `SV_FSLOT_B0` .. `SV_FSLOT_Y2`, and `svara_formant_bank_slot(bank, i)` gives
+  slot i's record. The per-sample loop steps one pointer through the active records instead of
+  indexing seven buffers.
+- **A slot's coefficients are computed straight into its record.** b0 .. a2 sit in the order
+  `svara_formant_biquad_from_trig` writes them, so the bank's 32-byte `coeff` scratch and its four
+  copies per update are gone. A bank keeps 1,016 bytes instead of 1,104, and a formant filter 1,064
+  instead of 1,152.
+- **The record is `const` offsets, not a `#derive(accessors)` struct.** The layout alone, through
+  derived accessors, retired 5.4% *more* instructions than 3.8.3. On cyrius 6.7.18 an accessor is
+  inlined but keeps a jump: a getter retires 2 instructions more than a `load64`, a setter 6 more
+  than a `store64`. Formant filter instructions per million samples:
+
+  | The slot loop | M instructions |
+  |---|---:|
+  | 3.8.3: seven buffers, `load64` / `store64` | 1,272 |
+  | records through derived getters and setters | 1,340 |
+  | records through derived getters, `store64` | 1,280 |
+  | records at `const` offsets | 1,210 |
+
+  A `const` offset costs what a literal one does.
+- **A rebuild zeroes the records past the new count whole**, delays included, where it zeroed five
+  buffers' tails. The reset after it zeroes every slot's delays, as before.
+
+### Added
+
+- **`tests/formant.tcyr`: the bank against 3.8.3's, bit for bit** (10 assertions). The test
+  rebuilds 3.8.3's bank of seven buffers, which runs all eight slots, and feeds both banks the
+  same inputs:
+  - an impulse, a step and an alternating input;
+  - an update of an active slot, and of a slot past `count`;
+  - +inf and the NaN it leaves, and a reset;
+  - a rebuild to three formants, which must zero records 3 .. 7 whole and give a fresh
+    three-formant bank's bits.
+- **`tests/hardening.tcyr`**: slot 8 is refused and leaves the 56 bytes past the eighth record
+  alone. Unchecked, it would land on slot 0's trig memo.
+
+  9 mutants each fail at least one assertion:
+  - the y2 offset aliasing y1, and records overlapping;
+  - a reset that keeps y2;
+  - a rebuild that skips slot n, or zeroes two records short;
+  - the loop ignoring the unused-slot limit;
+  - the weight stored over a2, and the coefficients written 8 bytes in;
+  - `svara_formant_bank_update` without its slot check.
+
+  Three also end a suite on a fault, after the failed assertions: the overlapping records, the
+  rebuild that skips slot n, and the unchecked update.
+- **Upstream: cyrius
+  `docs/development/issues/2026-11-16-derived-accessor-costs-more-than-load-store.md`**, with a
+  repro that counts retired instructions and branches. It asks that an inlined accessor cost what
+  its `load64` / `store64` does.
+- `svara_formant_bank_slot` and the `SV_FSLOT_*` offsets.
+
+### Removed
+
+- ⚠ **`SvFormantBank_b0`, `_b2`, `_a1`, `_a2`, `_amp`, `_y1`, `_y2` and `_coeff`**, with their
+  setters. They were derived accessors on the bank's internal buffers, and only svara's tests read
+  them. A slot's values are at `svara_formant_bank_slot(bank, i) + SV_FSLOT_*`.
+
 ## [3.8.3] - 2026-11-16 — each render keeps its samples about once
 
 Performance release, in memory rather than time. A cyrius `vec` cannot be sized up front:
