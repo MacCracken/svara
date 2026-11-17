@@ -21,6 +21,9 @@ include "src/glottal.cyr"
 include "src/tract.cyr"
 include "src/voice.cyr"
 include "src/phoneme.cyr"
+include "src/prosody.cyr"
+include "src/trajectory.cyr"
+include "src/sequence.cyr"
 
 alloc_init();
 
@@ -660,10 +663,11 @@ fn sp_ctx(use_ref, ctx, p, voice, n) {
     return svara_synthctx_approx(ctx, p, voice, n);
 }
 
-# What svara_synthctx_synthesize does before its class method: room for n samples,
-# a reset tract, and the voice's settings on the glottal source. 0 if refused.
+# What svara_synthctx_synthesize does before its class method for phoneme p: room
+# for n samples, a reset tract, and the voice's settings and p's tilt on the glottal
+# source. 0 if refused.
 #must_use
-fn sp_prep(ctx, voice, n) {
+fn sp_prep(ctx, voice, n, p) {
     var buf = svara_synthctx_ensure_buffer(ctx, n);
     if (buf == 0) { return 0; }
     svara_tract_reset(SvSynthCtx_tract(ctx));
@@ -675,6 +679,7 @@ fn sp_prep(ctx, voice, n) {
     svara_glottal_set_jitter(g, SvVoiceProfile_jitter(voice));
     svara_glottal_set_shimmer(g, SvVoiceProfile_shimmer(voice));
     svara_glottal_set_vibrato(g, SvVoiceProfile_vibrato_rate(voice), SvVoiceProfile_vibrato_depth(voice));
+    svara_glottal_set_spectral_tilt(g, svara_phoneme_tilt_tl(p));
     return buf;
 }
 
@@ -763,8 +768,8 @@ while (vi < vec_len(sp_voices)) {
         var cp = 0;
         while (cp < 101) {
             if (sp_shared_class(cp) == 1) {
-                var ba = sp_prep(ca, cv, cn);
-                var bb = sp_prep(cb, cv, cn);
+                var ba = sp_prep(ca, cv, cn, cp);
+                var bb = sp_prep(cb, cv, cn, cp);
                 var ea = sp_ctx(0, ca, cp, cv, cn);
                 var eb = sp_ctx(1, cb, cp, cv, cn);
                 if (ea != eb) { ctx_bad = ctx_bad + 1; }
@@ -785,6 +790,468 @@ while (vi < vec_len(sp_voices)) {
 assert_eq(ctx_bad, 0, "every context render matches 3.8.6's bit for bit");
 assert_eq(ctx_renders > 600, 1, "control: over 600 renders were compared");
 assert_eq(ctx_loud > 500, 1, "control: most of them are not silence");
+
+# ---- 3.10.0: every vowel path applies its tilt (ADR-0013) ----------------------
+# The references below are 3.9.0's vowel synths and render_planned, verbatim but for
+# their names and ADR-0013's one line, which computes the TL here rather than through
+# svara_phoneme_tilt_tl.
+
+# 3.9.0's svara_ph_synth_vowel, plus ADR-0013's one tilt line, the TL computed here.
+#must_use
+fn ref_vowel_t(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var amps = alloc(40);
+    svara_phoneme_height_adjusted_amplitudes(phoneme, amps);
+    var formants = vec_new();
+    vec_push(formants, svara_formant_new(SvVowelTarget_f1(target), SvVowelTarget_b1(target), load64(amps)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f2(target), SvVowelTarget_b2(target), load64(amps + 8)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f3(target), SvVowelTarget_b3(target), load64(amps + 16)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f4(target), SvVowelTarget_b4(target), load64(amps + 24)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f5(target), SvVowelTarget_b5(target), load64(amps + 32)));
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants(tract, formants);
+    if (svara_is_err(e) == 1) { return e; }
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var adr13_tl = f64_mul(svara_phoneme_spectral_tilt(phoneme), 0x400A934F0979A371);   # ADR-0013
+    svara_glottal_set_spectral_tilt(glottal, adr13_tl);
+    # NOTE (v2.0.1 quirk, preserved): phoneme_spectral_tilt is metadata only, not
+    # applied to the glottal source here. The Rust left it off because its tilt
+    # filter, reading dB as hertz, muted the voice: /a/'s 1.87 cost 33.6 dB. Since
+    # 3.9.0 the filter reads Klatt's TL (ADR-0012) and /a/'s tilt would cost 1.5 dB;
+    # applying it is a decision of its own, on the roadmap's 3.9.x list.
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_tract_synthesize_into(tract, glottal, buf, n);
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.9.0's svara_ph_synth_diphthong, plus ADR-0013's one tilt line, the TL computed here.
+#must_use
+fn ref_diphthong_t(phoneme, voice, sample_rate, n, room) {
+    var start = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var endt = svara_voice_apply_formant_scale(voice, svara_ph_diphthong_end_target(phoneme));
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var adr13_tl = f64_mul(svara_phoneme_spectral_tilt(phoneme), 0x400A934F0979A371);   # ADR-0013
+    svara_glottal_set_spectral_tilt(glottal, adr13_tl);
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    # Control-rate formant coefficients: re-solving the biquad bank from the
+    # interpolated target on EVERY sample (the faithful-but-slow port) dominated
+    # the diphthong cost. The glide target moves smoothly, so recomputing at a
+    # control rate of 64 samples (~1.45 ms at 44.1 kHz — standard for formant
+    # synthesizers) and holding between updates is perceptually identical while
+    # cutting the per-sample coefficient re-solve ~64x. The tract's own per-sample
+    # filtering still runs every sample; only the coefficient derivation is
+    # control-rate.
+    var cur = svara_vowel_target_new(0, 0, 0, 0, 0);
+    var ctrl = 0;
+    var i = 0;
+    while (i < n) {
+        if (ctrl == 0) {
+            svara_vowel_target_interpolate_into(start, endt, f64_div(f64_from(i), f64_from(n)), cur);
+            var e = svara_tract_set_formants_from_target(tract, cur);
+            if (svara_is_err(e) == 1) { return e; }
+            ctrl = 64;
+        }
+        ctrl = ctrl - 1;
+        store64(buf + i * 8, svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)));
+        i = i + 1;
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.9.0's svara_ph_synth_vowel_nasalized, plus ADR-0013's one tilt line, the TL computed here.
+#must_use
+fn ref_vowel_nasalized_t(phoneme, voice, sample_rate, n, nasal, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants_from_target(tract, target);
+    if (svara_is_err(e) == 1) { return e; }
+    svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var adr13_tl = f64_mul(svara_phoneme_spectral_tilt(phoneme), 0x400A934F0979A371);   # ADR-0013
+    svara_glottal_set_spectral_tilt(glottal, adr13_tl);
+    # `nasal` is caller-supplied, so onset can be NaN or huge -- saturate as
+    # Rust's `as usize` does rather than letting f64_to keep a negative value.
+    var onset_sample = svara_count_from_f64(f64_mul(SvNasalization_onset(nasal), f64_from(n)));
+    var ramp_len = n - onset_sample;
+    if (ramp_len < 1) { ramp_len = 1; }
+    var is_diph = 0;
+    var endt = 0;
+    if (svara_phoneme_class(phoneme) == SVARA_CLASS_DIPHTHONG) {
+        is_diph = 1;
+        endt = svara_voice_apply_formant_scale(voice, svara_ph_diphthong_end_target(phoneme));
+    }
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    var cur = svara_vowel_target_new(0, 0, 0, 0, 0);
+    var i = 0;
+    while (i < n) {
+        if (is_diph == 1) {
+            svara_vowel_target_interpolate_into(target, endt, f64_div(f64_from(i), f64_from(n)), cur);
+            var e2 = svara_tract_set_formants_from_target(tract, cur);
+            if (svara_is_err(e2) == 1) { return e2; }
+        }
+        if (i >= onset_sample) {
+            var nt = f64_div(f64_from(i - onset_sample), f64_from(ramp_len));
+            svara_tract_set_nasal_coupling(tract, f64_mul(SvNasalization_peak_coupling(nasal), ease_in_out_smooth(nt)));
+        }
+        store64(buf + i * 8, svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)));
+        i = i + 1;
+    }
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# 3.9.0's svara_sequence_render_planned, plus ADR-0013's one tilt line, the TL computed here.
+#must_use
+fn ref_render_planned_t(seq, voice, sample_rate) {
+    var events = SvPhonemeSequence_events(seq);
+    var n = vec_len(events);
+    if (n == 0) { return vec_new(); }
+    var in_cluster = svara_seq_detect_clusters(events);
+    var durs = svara_seq_durations(seq, in_cluster);
+    var pl = svara_seq_phoneme_list(seq);
+    var pv = 0;
+    while (pv < vec_len(pl)) {
+        if (svara_phoneme_is_valid(vec_get(pl, pv)) == 0) { return SVARA_ERR_INVALID_PHONEME; }
+        pv = pv + 1;
+    }
+    var nasals = svara_detect_nasalization(pl);
+
+    var plan = svara_trajectory_plan(pl, durs, voice, sample_rate);
+    svara_trajectory_apply_speaking_rate(plan, SvPhonemeSequence_speaking_rate(seq));
+    var total = svara_trajectory_total_samples(plan);
+    if (total == 0) { return vec_new(); }
+
+    # phoneme boundaries in samples
+    var boundaries = vec_new();
+    vec_push(boundaries, 0);
+    var offset = 0;
+    var bi = 0;
+    while (bi < n) {
+        offset = offset + svara_count_from_f64(f64_mul(vec_get(durs, bi), sample_rate));
+        vec_push(boundaries, offset);
+        bi = bi + 1;
+    }
+
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var noise = svara_rng_new(17);
+    var out = svara_alloc_vec_room(total);   # becomes the returned vec (3.8.3)
+    if (out == 0) { return SVARA_ERR_COMPUTATION; }
+
+    # One contour per event, built once. This used to be rebuilt inside the
+    # per-sample loop from a value (the event's tone) that only changes at a
+    # phoneme boundary -- 240 bytes of never-freed arena per output sample.
+    # one reusable interpolated target for the whole render
+    var target = svara_vowel_target_new(0, 0, 0, 0, 0);
+
+    var contours = vec_new();
+    var ci = 0;
+    while (ci < n) {
+        var tv = SvPhonemeEvent_tone(vec_get(events, ci));
+        if (tv == SVARA_TONE_NONE) { vec_push(contours, 0); }
+        else { vec_push(contours, svara_tone_to_contour(tv)); }
+        ci = ci + 1;
+    }
+
+    # Everything below that depends only on the event is computed when the event
+    # changes, not on every sample (3.8.1): the same arithmetic, held in locals.
+    var idx = 0;
+    var cur = 0 - 1;
+    var phoneme = 0;
+    var c = 0;
+    var voiced = 0;
+    var nasal = 0;
+    var nasal_onset = 0;
+    var nasal_len = 1;
+    var base_f0 = 0;
+    var contour = 0;
+    var cn = 0;           # the contour's points, copied once per event when they fit
+    var cxs[512];
+    var cys[512];
+    var seg_start = 0;
+    var seg_len = 1;
+    var span = 1;
+    var s = 0;
+    while (s < total) {
+        while (((idx + 1) < n) & (s >= vec_get(boundaries, idx + 1))) { idx = idx + 1; }
+        if (idx != cur) {
+            cur = idx;
+            var ev = vec_get(events, idx);
+            phoneme = SvPhonemeEvent_phoneme(ev);
+            c = svara_phoneme_class(phoneme);
+            voiced = svara_phoneme_is_voiced(phoneme);
+            var adr13_tl = f64_mul(svara_phoneme_spectral_tilt(phoneme), 0x400A934F0979A371);   # ADR-0013
+            svara_glottal_set_spectral_tilt(glottal, adr13_tl);
+            seg_start = vec_get(boundaries, idx);
+            var seg_end = vec_get(boundaries, idx + 1);
+            span = seg_end - seg_start;
+            if (span < 1) { span = 1; }
+            seg_len = span;
+            nasal = vec_get(nasals, idx);
+            if (nasal != 0) {
+                var onset_off = svara_count_from_f64(f64_mul(f64_from(seg_end - seg_start),
+                    SvNasalization_onset(nasal)));
+                nasal_onset = seg_start + onset_off;
+                nasal_len = seg_end - nasal_onset;
+                if (nasal_len < 1) { nasal_len = 1; }
+            }
+            base_f0 = svara_seq_stress_f0(SvVoiceProfile_base_f0(voice), SvPhonemeEvent_stress(ev));
+            contour = vec_get(contours, idx);
+            cn = 0 - 1;
+            if (contour != 0) {
+                var cpts = SvProsodyContour_f0_points(contour);
+                if (vec_len(cpts) <= SV_PROSODY_STACK_POINTS) {
+                    cn = vec_len(cpts);
+                    svara_prosody_fill(cpts, cn, &cxs, &cys);
+                }
+            }
+        }
+        svara_trajectory_formants_at_into(plan, s, target);
+
+        if (nasal != 0) {
+            if (s >= nasal_onset) {
+                var nt = f64_div(f64_from(s - nasal_onset), f64_from(nasal_len));
+                var nc = f64_mul(SvNasalization_peak_coupling(nasal), ease_in_out_smooth(nt));
+                svara_tract_set_nasal_coupling(tract, nc);
+                svara_tract_set_nasal_place(tract, SvNasalization_place(nasal));
+            } else {
+                svara_tract_set_nasal_coupling(tract, 0);
+            }
+        } else {
+            svara_tract_set_nasal_coupling(tract, 0);
+        }
+
+        var sfe = svara_tract_set_formants_from_target(tract, target);
+        if (svara_is_err(sfe) == 1) { sfe = 0; }   # ignored, like Rust `let _`
+
+        var effective_f0 = base_f0;
+        if (contour != 0) {
+            var tt = f64_div(f64_from(s - seg_start), f64_from(seg_len));
+            if (cn >= 0) { effective_f0 = f64_mul(base_f0, svara_prosody_f0_at_filled(&cxs, &cys, cn, tt)); }
+            else { effective_f0 = f64_mul(base_f0, svara_prosody_f0_at(contour, tt)); }
+        }
+        var f0e = svara_glottal_set_f0(glottal, effective_f0);
+        if (svara_is_err(f0e) == 1) { f0e = 0; }   # ignored, like Rust `let _`
+
+        var sample = 0;
+        if ((c == SVARA_CLASS_VOWEL) | (c == SVARA_CLASS_DIPHTHONG) | (c == SVARA_CLASS_APPROXIMANT)
+          | (c == SVARA_CLASS_LATERAL) | (c == SVARA_CLASS_NASAL) | (c == SVARA_CLASS_IMPLOSIVE)
+          | (c == SVARA_CLASS_TRILL)) {
+            sample = svara_tract_process_sample(tract, svara_glottal_next_sample(glottal));
+        } elif (c == SVARA_CLASS_FRICATIVE) {
+            var nz = f64_mul(svara_rng_next_f32(noise), F64_HALF);
+            if (voiced == 1) {
+                var voicing = f64_mul(svara_tract_process_sample(tract, svara_glottal_next_sample(glottal)), SV_PH_R04);
+                sample = f64_add(f64_mul(nz, SV_PH_R06), voicing);
+            } else {
+                sample = f64_mul(nz, SV_PH_R06);
+            }
+        } elif ((c == SVARA_CLASS_PLOSIVE) | (c == SVARA_CLASS_AFFRICATE)
+          | (c == SVARA_CLASS_CLICK) | (c == SVARA_CLASS_EJECTIVE)) {
+            var bf = f64_div(f64_from(s - seg_start), f64_from(span));
+            if (f64_lt(bf, SV_PH_R04) == 1) {
+                sample = 0;
+            } else {
+                sample = f64_mul(f64_mul(svara_rng_next_f32(noise), f64_sub(F64_ONE, bf)), F64_HALF);
+            }
+        }
+        store64(out + s * 8, sample);
+        s = s + 1;
+    }
+
+    # global attack/release envelope: ramp = clamp(total/20, 1, 256)
+    var ramp = total / 20;
+    if (ramp < 1) { ramp = 1; }
+    if (ramp > 256) { ramp = 256; }
+    var a = 0;
+    while (a < ramp) {
+        var e1 = ease_in_out_smooth(f64_div(f64_from(a), f64_from(ramp)));
+        store64(out + a * 8, f64_mul(load64(out + a * 8), e1));
+        a = a + 1;
+    }
+    var b = 0;
+    while (b < ramp) {
+        var ridx = total - 1 - b;
+        var e2 = ease_in_out_smooth(f64_div(f64_from(b), f64_from(ramp)));
+        store64(out + ridx * 8, f64_mul(load64(out + ridx * 8), e2));
+        b = b + 1;
+    }
+    return svara_vec_adopt(out, total, svara_vec_room_bytes(total));
+}
+
+# 3.9.0's svara_ph_synth_vowel, verbatim.
+#must_use
+fn ref_vowel_390(phoneme, voice, sample_rate, n, room) {
+    var target = svara_voice_apply_formant_scale(voice, svara_phoneme_formants(phoneme));
+    var amps = alloc(40);
+    svara_phoneme_height_adjusted_amplitudes(phoneme, amps);
+    var formants = vec_new();
+    vec_push(formants, svara_formant_new(SvVowelTarget_f1(target), SvVowelTarget_b1(target), load64(amps)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f2(target), SvVowelTarget_b2(target), load64(amps + 8)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f3(target), SvVowelTarget_b3(target), load64(amps + 16)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f4(target), SvVowelTarget_b4(target), load64(amps + 24)));
+    vec_push(formants, svara_formant_new(SvVowelTarget_f5(target), SvVowelTarget_b5(target), load64(amps + 32)));
+    var tract = svara_tract_new(sample_rate);
+    if (svara_is_err(tract) == 1) { return tract; }
+    var e = svara_tract_set_formants(tract, formants);
+    if (svara_is_err(e) == 1) { return e; }
+    var glottal = svara_voice_create_glottal_source(voice, sample_rate);
+    if (svara_is_err(glottal) == 1) { return SVARA_ERR_ARTICULATION; }
+    # NOTE (v2.0.1 quirk, preserved): phoneme_spectral_tilt is metadata only, not
+    # applied to the glottal source here. The Rust left it off because its tilt
+    # filter, reading dB as hertz, muted the voice: /a/'s 1.87 cost 33.6 dB. Since
+    # 3.9.0 the filter reads Klatt's TL (ADR-0012) and /a/'s tilt would cost 1.5 dB;
+    # applying it is a decision of its own, on the roadmap's 3.9.x list.
+    var buf = svara_ph_alloc(n, room);
+    if (buf == 0) { return SVARA_ERR_COMPUTATION; }
+    svara_tract_synthesize_into(tract, glottal, buf, n);
+    svara_ph_apply_envelope(buf, n);
+    return buf;
+}
+
+# Bits of two sample vecs that differ, or 1 + their length when either is an error
+# or their lengths differ.
+#must_use
+fn sp_vdiff(a, b) {
+    if ((svara_is_err(a) == 1) | (svara_is_err(b) == 1)) {
+        if (a == b) { return 0; }
+        return 1;
+    }
+    if (vec_len(a) != vec_len(b)) { return 1 + vec_len(a); }
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(a)) {
+        if (vec_get(a, i) != vec_get(b, i)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+# ================================================================
+test_group("3.10.0: a vowel's tilt as TL is its dB/octave over 3.32 octaves (ADR-0013)");
+# ================================================================
+var tt_bad = 0;
+var tt_p = 0;
+while (tt_p < 101) {
+    var tt_want = f64_mul(svara_phoneme_spectral_tilt(tt_p), 0x400A934F0979A371);
+    if (svara_phoneme_tilt_tl(tt_p) != tt_want) { tt_bad = tt_bad + 1; }
+    var tt_c = svara_phoneme_class(tt_p);
+    if ((tt_c != SVARA_CLASS_VOWEL) & (tt_c != SVARA_CLASS_DIPHTHONG)) {
+        if (svara_phoneme_tilt_tl(tt_p) != 0) { tt_bad = tt_bad + 1; }
+    }
+    tt_p = tt_p + 1;
+}
+assert_eq(tt_bad, 0, "every phoneme's TL is its tilt times log2(10), and 0 for every class but vowels");
+assert_eq(svara_phoneme_tilt_tl(SVARA_PH_VOWEL_A) > 0, 1, "control: /a/'s TL is above 0");
+var tt_used = alloc_used();
+var tt_k = 0;
+var tt_sum = 0;
+while (tt_k < 100) { tt_sum = f64_add(tt_sum, svara_phoneme_tilt_tl(SVARA_PH_VOWEL_A)); tt_k = tt_k + 1; }
+assert_eq(alloc_used() - tt_used, 0, "a hundred TL lookups allocate nothing, as a warmed context needs");
+
+# ================================================================
+test_group("3.10.0: the free path voices every vowel with its tilt");
+# ================================================================
+var fv_bad = 0;
+var fv_n = 0;
+vi = 0;
+while (vi < vec_len(sp_voices)) {
+    var fvv = vec_get(sp_voices, vi);
+    var fvl = 0;
+    while (fvl < vec_len(sp_lens)) {
+        var fn_ = vec_get(sp_lens, fvl);
+        var fp = 0;
+        while (fp < 101) {
+            var fc = svara_phoneme_class(fp);
+            if (fc == SVARA_CLASS_VOWEL) {
+                fv_bad = fv_bad + sp_diff(svara_ph_synth_vowel(fp, fvv, sp_sr, fn_, 0),
+                  ref_vowel_t(fp, fvv, sp_sr, fn_, 0), fn_);
+                fv_n = fv_n + 1;
+            }
+            if (fc == SVARA_CLASS_DIPHTHONG) {
+                fv_bad = fv_bad + sp_diff(svara_ph_synth_diphthong(fp, fvv, sp_sr, fn_, 0),
+                  ref_diphthong_t(fp, fvv, sp_sr, fn_, 0), fn_);
+                fv_n = fv_n + 1;
+            }
+            fp = fp + 1;
+        }
+        fvl = fvl + 1;
+    }
+    vi = vi + 1;
+}
+assert_eq(fv_bad, 0, "every vowel and diphthong matches 3.9.0's synth with the tilt, bit for bit");
+assert_eq(fv_n > 300, 1, "control: over 300 renders were compared");
+var fv_nas = svara_nasalization_for_nasal(SVARA_PH_NASAL_M);
+var fv_nbad = sp_diff(svara_ph_synth_vowel_nasalized(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0),
+  ref_vowel_nasalized_t(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, fv_nas, 0), 3528);
+assert_eq(fv_nbad, 0, "so does a nasalized /a/");
+var fv_old = sp_diff(svara_ph_synth_vowel(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0),
+  ref_vowel_390(SVARA_PH_VOWEL_A, svara_voice_new_male(), sp_sr, 3528, 0), 3528);
+assert_eq(fv_old > 3000, 1, "control: /a/ no longer gives 3.9.0's untilted samples");
+
+# ================================================================
+test_group("3.10.0: the context sets each phoneme's tilt, and clears it");
+# ================================================================
+var tc_ctx = svara_synthctx_new(svara_voice_new_male(), sp_sr);
+var tc_g = SvSynthCtx_glottal(tc_ctx);
+var tc_dur = 0x3FB47AE147AE147B;
+var tc_r1 = svara_synthctx_synthesize(tc_ctx, SVARA_PH_VOWEL_A, svara_voice_new_male(), tc_dur, 0);
+assert_eq(SvGlottalSource_spectral_tilt(tc_g), svara_phoneme_tilt_tl(SVARA_PH_VOWEL_A),
+  "after /a/ the source holds /a/'s TL");
+var tc_r2 = svara_synthctx_synthesize(tc_ctx, SVARA_PH_FRIC_S, svara_voice_new_male(), tc_dur, 0);
+assert_eq(SvGlottalSource_spectral_tilt(tc_g), 0, "after /s/ it holds 0, not /a/'s");
+var tc_r3 = svara_synthctx_synthesize(tc_ctx, SVARA_PH_DIPH_AI, svara_voice_new_male(), tc_dur, 0);
+assert_eq(SvGlottalSource_spectral_tilt(tc_g), svara_phoneme_tilt_tl(SVARA_PH_DIPH_AI), "after /ai/ it holds /ai/'s");
+
+# ================================================================
+test_group("3.10.0: render_planned sets each event's tilt");
+# ================================================================
+# One vowel; a consonant-vowel-vowel run with stress; a nasal before a vowel; a tone.
+var rp_bad = 0;
+var rp_seqs = vec_new();
+var rq1 = svara_sequence_new();
+svara_sequence_push(rq1, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0x3FC999999999999A, SVARA_STRESS_PRIMARY));
+vec_push(rp_seqs, rq1);
+var rq2 = svara_sequence_new();
+svara_sequence_push(rq2, svara_phoneme_event_new(SVARA_PH_FRIC_S, 0x3FB47AE147AE147B, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(rq2, svara_phoneme_event_new(SVARA_PH_VOWEL_A, 0x3FB999999999999A, SVARA_STRESS_PRIMARY));
+svara_sequence_push(rq2, svara_phoneme_event_new(SVARA_PH_VOWEL_I, 0x3FB999999999999A, SVARA_STRESS_SECONDARY));
+vec_push(rp_seqs, rq2);
+var rq3 = svara_sequence_new();
+svara_sequence_push(rq3, svara_phoneme_event_new(SVARA_PH_NASAL_M, 0x3FB47AE147AE147B, SVARA_STRESS_UNSTRESSED));
+svara_sequence_push(rq3, svara_phoneme_event_new(SVARA_PH_DIPH_AU, 0x3FC3333333333333, SVARA_STRESS_PRIMARY));
+vec_push(rp_seqs, rq3);
+var rq4 = svara_sequence_new();
+var rq4e = svara_phoneme_event_new(SVARA_PH_VOWEL_O, 0x3FC999999999999A, SVARA_STRESS_PRIMARY);
+SvPhonemeEvent_set_tone(rq4e, 2);
+svara_sequence_push(rq4, rq4e);
+vec_push(rp_seqs, rq4);
+var rqi = 0;
+while (rqi < vec_len(rp_seqs)) {
+    var rqv = 0;
+    while (rqv < vec_len(sp_voices)) {
+        var rq = vec_get(rp_seqs, rqi);
+        var rv = vec_get(sp_voices, rqv);
+        rp_bad = rp_bad + sp_vdiff(svara_sequence_render_planned(rq, rv, sp_sr), ref_render_planned_t(rq, rv, sp_sr));
+        rqv = rqv + 1;
+    }
+    rqi = rqi + 1;
+}
+assert_eq(rp_bad, 0, "render_planned matches 3.9.0's with each event's tilt, bit for bit, on four sequences");
 
 var rc = assert_summary();
 syscall(60, rc);

@@ -768,6 +768,8 @@ fn svara_sequence_render_planned(seq, voice, sample_rate) {
             phoneme = SvPhonemeEvent_phoneme(ev);
             c = svara_phoneme_class(phoneme);
             voiced = svara_phoneme_is_voiced(phoneme);
+            # A vowel's tilt for the whole event (ADR-0013); 0 for every other class.
+            svara_glottal_set_spectral_tilt(glottal, svara_phoneme_tilt_tl(phoneme));
             seg_start = vec_get(boundaries, idx);
             var seg_end = vec_get(boundaries, idx + 1);
             span = seg_end - seg_start;

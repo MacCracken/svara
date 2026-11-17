@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-11-16 — every vowel carries its tilt
+
+Minor release: output changes, by decision
+([ADR-0013](docs/adr/0013-apply-the-per-vowel-spectral-tilt.md)), the second 3.9.x quirk. Each
+vowel and diphthong has a spectral tilt, `svara_phoneme_spectral_tilt`: 0 to 2 dB/octave, from
+F1, after Stevens & Hanson. The Rust computes it and drops it, because its tilt filter muted the
+voice. 3.9.0 fixed that filter. The maintainer chose to apply the tilt in every render path,
+converted from dB/octave to the filter's TL over the 3.32 octaves from 300 Hz to 3 kHz.
+
+Measured on the free path (male, 0.2 s), against 3.9.0:
+
+| Vowel | tilt | TL | level | above 2 kHz |
+|---|---:|---:|---:|---:|
+| /a/ | 1.87 | 6.2 dB | −4.6 dB | −5.7 dB |
+| /æ/ | 1.47 | 4.9 dB | −3.3 dB | −5.0 dB |
+| /o/ | 0.78 | 2.6 dB | −1.1 dB | −2.9 dB |
+| /i/ | 0.16 | 0.5 dB | −0.4 dB | −0.6 dB |
+
+Open vowels come out darker and softer, and close vowels barely move.
+
+**What moved.** Against 3.9.0, 223,451 of the 558,721 sweep values moved, in every section that
+renders a vowel:
+
+| Section | values moved |
+|---|---:|
+| phonemes | 71,286 |
+| ctx | 11,850 |
+| pool | 14,335 |
+| seq | 80,031 |
+| spectrum | 41,102 |
+| batch | 4,847 |
+
+Nothing moved in glottal, tract, prosody, trajectory, bridge, misc or contours. Six JSON lines
+differ: the spectrum magnitudes, and the saved context and pool states, which now carry a
+vowel's tilt and its samples. In the hostile cases, 148 stream hashes and 17 raw values moved,
+with no exit code, length or non-finite count changed.
+
+A vowel now runs the tilt filter: phoneme /a/ retires 1.044x 3.9.0's instructions, and
+`render_planned` 1.005x. **1,402 assertions / 27 suites.**
+
+### Changed
+
+- **`svara_phoneme_tilt_tl(p)`** is the tilt as the filter takes it:
+  `svara_phoneme_spectral_tilt(p) × log2(10)`, and 0 for every class but vowels and diphthongs.
+- **`svara_phoneme_spectral_tilt` allocates nothing.** It reads F1 into a target on the stack; it
+  allocated one per call before. That keeps a warmed context at zero bytes per phoneme.
+- **The free path**: `svara_ph_synth_vowel`, `_diphthong` and `_vowel_nasalized` set the tilt on
+  the source each one builds. That covers `svara_phoneme_synthesize` and `svara_sequence_render`.
+- **The context**: `svara_synthctx_synthesize` sets it in its preamble for every phoneme, so a
+  consonant clears the vowel before it. That covers the pool, the batch render and
+  `svara_sequence_render_into`.
+- **`svara_sequence_render_planned`** sets each event's tilt when the event begins, on the one
+  source the render shares.
+
+### Added
+
+- **ADR-0013**, accepted. It has the per-vowel measurements, both units, the cost, and where
+  each path sets its source up.
+- **`tests/synthpaths.tcyr`: every vowel path applies its tilt** (11 assertions):
+  - the TL is the tilt times log2(10) for all 101 phonemes, 0 for consonants, and a hundred
+    lookups allocate nothing;
+  - the free path's every vowel and diphthong, at six lengths and two voices, and a nasalized /a/,
+    match 3.9.0's synth plus the one tilt line, bit for bit. Control: /a/ no longer matches
+    3.9.0's untilted samples;
+  - the context's source holds /a/'s TL after /a/, 0 after /s/, and /ai/'s after /ai/;
+  - `render_planned` matches 3.9.0's plus the one tilt line, bit for bit, on four sequences: a
+    vowel, a consonant before two stressed vowels, a nasal before a diphthong, and a toned vowel.
+
+  The reference computes the TL itself, so a wrong constant in `svara_phoneme_tilt_tl` is caught
+  too.
+- **`docs/development/integration-guide.md`** says how vowels changed, for consumers who balanced
+  against 3.9.0.
+- **7 mutants, each failing an assertion:**
+  - the tilt dropped from the vowel synth, the diphthong synth, the nasalized vowel, the context
+    preamble, and `render_planned`, one at a time;
+  - the TL read directly instead of converted;
+  - a context that sets the tilt but never clears it.
+
 ## [3.9.0] - 2026-11-16 — the glottal tilt reads its units
 
 Minor release: output changes, by decision ([ADR-0012](docs/adr/0012-the-glottal-spectral-tilt-reads-its-units.md)),

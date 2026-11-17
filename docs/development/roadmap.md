@@ -8,7 +8,7 @@
 
 | Release | Lane | Status |
 |---|---|---|
-| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
+| **3.9.x** | [The preserved Rust quirks](#39x--the-preserved-rust-quirks), and the diphthong glide | in progress; needs a decision per item. 3.9.0 read the glottal tilt as Klatt's TL (ADR-0012), 3.10.0 applied the per-vowel tilt (ADR-0013). The 3.8.x performance lane closed at 3.8.8, and its method moved to [`benchmarks.md`](../benchmarks.md#changing-a-hot-path) |
 | **3.x.x** | [SIMD, and work blocked upstream](#3xx--simd-and-work-blocked-upstream) | unscheduled |
 
 ---
@@ -25,11 +25,6 @@ The oracle left the tree in 3.7.0. Read it at tag `3.6.5`, and rebuild and run i
 [ADR-0011](../adr/0011-retire-rust-old-keep-its-bar.md)'s recipe when a decision needs
 the Rust's output rather than its source.
 
-- [ ] **The per-vowel spectral tilt.** Each vowel's tilt (`svara_phoneme_spectral_tilt`,
-      0 to 2 from F1) is computed and not applied, as in the Rust. The Rust left it off
-      because its tilt filter read dB as hertz and muted the voice. 3.9.0 fixed that
-      filter (ADR-0012), and decided this item separately: measure what each vowel's tilt
-      does through the fixed filter (/a/'s costs 1.5 dB), then decide whether to apply it.
 - [ ] **`set_speed_quotient` is ignored by the Rosenberg pulse.**
 - [ ] **`tone` is honoured only by `render_planned`.**
 - [ ] **Plosives and trills depend on the render path.** Since 3.8.7 the two paths share

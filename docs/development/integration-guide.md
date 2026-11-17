@@ -12,7 +12,7 @@ compiles into *your* binary. Add it to your `cyrius.cyml`:
 ```toml
 [deps.svara]
 git = "https://github.com/MacCracken/svara.git"
-tag = "3.9.0"
+tag = "3.10.0"
 modules = ["dist/svara.cyr"]
 ```
 
@@ -241,6 +241,12 @@ voice by about 33 dB. A voice built at soft or normal effort
 since 3.9.0: normal now sits within a dB of loud instead of 26 dB below it. Whisper is
 unchanged. Retune anything balanced against the old levels. The reasons are in
 [ADR-0012](../adr/0012-the-glottal-spectral-tilt-reads-its-units.md).
+
+**Since 3.10.0 every vowel and diphthong carries its own tilt**, in every render path
+([ADR-0013](../adr/0013-apply-the-per-vowel-spectral-tilt.md)). The value is
+`svara_phoneme_tilt_tl(p)`, which is `svara_phoneme_spectral_tilt(p)`'s dB/octave held from
+300 Hz to 3 kHz. Open vowels come out darker and softer than in 3.9.0: /a/ loses 4.6 dB
+overall and 5.7 dB above 2 kHz. Close vowels barely move: /i/ loses 0.4 dB.
 
 ## Quality scaling
 

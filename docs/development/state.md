@@ -5,6 +5,15 @@
 
 ## Version
 
+**3.10.0** (2026-11-16) — **every vowel carries its tilt.** The second 3.9.x quirk,
+decided by the maintainer in ADR-0013. The per-vowel spectral tilt, which the Rust computes
+and drops, is applied in every path: the free synths, the context, and `render_planned`
+per event. It is converted from dB/octave to the filter's TL over 3.32 octaves
+(`svara_phoneme_tilt_tl`). /a/ loses 4.6 dB overall and 5.7 dB above 2 kHz; /i/ loses 0.4
+dB. Every vowel-bearing sweep section moved (223,451 values), and nothing else.
+`tests/synthpaths.tcyr` holds each path to 3.9.0's code plus the one tilt line. **1,402
+assertions / 27 suites**, `cyrius audit` exit 0.
+
 **3.9.0** (2026-11-16) — **the glottal tilt reads its units.** The first 3.9.x quirk,
 decided by the maintainer and recorded in ADR-0012. `svara_glottal_set_spectral_tilt` was
 documented as dB/octave but read the value as a low-pass corner in hertz, the Rust's formula,
@@ -421,7 +430,7 @@ pool, batch renderer, bridge maps). The module port is complete.
 
 ## Tests
 
-1,391 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
+1,402 `.tcyr` assertions across 27 suites: error / rng / smooth / lod / formant /
 spectral / glottal / tract / voice / phoneme / prosody / trajectory / sequence /
 pool / render / bridge / **serde** / **hardening** / **allocbudget** /
 **allocrefused** / **concurrency** / **stream** / **oracle** / **integration** /
@@ -504,8 +513,8 @@ All green on the 6.7.18 pin:
 |---|---|---|
 | fmt | `cyrfmt --check <f>` | clean (46 files) |
 | lint | `cyrlint <f>` | 0 warnings, 0 untracked deferrals |
-| docs | `cyrdoc --check <f>` | 0 undocumented (377 public fns across 18 modules, plus `tests/` and `benches/`) |
-| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,391 assertions |
+| docs | `cyrdoc --check <f>` | 0 undocumented (378 public fns across 18 modules, plus `tests/` and `benches/`) |
+| tests | `cyrius test tests` / bare `cyrius test` | 27/27 suites, 1,402 assertions |
 | **examples** | `cyrius build examples/*.cyr` + run | 5/5 build and run (CI) |
 | **tests/benches lint** | `cyrfmt --check` + `cyrlint` per file | `cyrius audit` walks these now, but its lint leg sums warnings only; this step also fails on untracked deferrals |
 | **logging** | `./scripts/check-logging.sh` | builds + passes with AND without `-D LOGGING` (51 more assertions on) |
